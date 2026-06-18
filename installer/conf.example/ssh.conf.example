@@ -1,0 +1,24 @@
+# ssh.conf.example — Vorlage fuer conf/ssh.conf (Zwei-Datei-Muster).
+#
+# Auf dem Zielsystem nach conf/ssh.conf kopieren. Die echte ssh.conf
+# gehoert nie ins Repository (conf/ ist in .gitignore).
+# Werte, die in mehreren Modulen vorkommen (MAIN_USER, ADMIN_MAIL, FQDN),
+# stehen in common.conf, nicht hier.
+#
+# Herkunft des Zwei-Datei-Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
+
+# Schaltet die Login-Mail-Benachrichtigung an oder aus.
+#   yes (Default bei leerem Wert) — /etc/ssh/login-mail-notification.sh
+#       und eine pam_exec-session-Zeile in /etc/pam.d/sshd werden angelegt;
+#       bei jedem SSH-Login geht eine Mail an ADMIN_MAIL (aus common.conf).
+#   no  — die beiden Dateien werden nicht angelegt; ein eventueller Bestand
+#       wird durch uninstall entfernt, nicht durch install uebergangen.
+ENABLE_LOGIN_MAIL="yes"
+
+# Setzt den deprecated-Alias ChallengeResponseAuthentication in sshd_config.
+# Seit OpenSSH 8.7 nur noch Alias zu KbdInteractiveAuthentication.
+# Per Default gesetzt (yes) fuer Kompatibilitaet mit aelteren OpenSSH-Versionen;
+# auf aktuellen Systemen (OpenSSH >= 9.x) redundant, aber unschaedlich.
+#   yes (Default) — ChallengeResponseAuthentication yes wird gesetzt.
+#   no            — Direktive wird nicht gesetzt und, falls vorhanden, entfernt.
+ENABLE_CHALLENGE_RESPONSE_AUTH="yes"

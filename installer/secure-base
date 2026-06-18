@@ -1,0 +1,349 @@
+#!/bin/bash
+#
+# Linux Secure Base — Installer
+# Aufruf: secure-base [OPTIONEN] <install|uninstall|check|test> [<modul> ...]
+#
+# Exit-Codes:
+#   0 — Erfolg
+#   1 — Fehler
+#   2 — Aufruffehler (unbekanntes Subkommando, ungueltiges Argument)
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+readonly SCRIPT_DIR
+
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+
+# Kanonische Ausfuehrungs-Reihenfolge (nicht konfigurierbar).
+readonly INSTALL_ORDER=(
+    base postfix users ssh ufw rkhunter fail2ban
+    logging unattended restic monit
+)
+
+# Anzeige-Beschreibung je Modul fuer die Statusliste (Fallback: Modulname).
+# In lib/ui.sh (ui_init) gelesen.
+# shellcheck disable=SC2034  # cross-file in lib/ui.sh verwendet
+declare -rA SB_MODUL_LABEL=(
+    [base]="Grundkonfiguration"
+    [postfix]="Mail-Versand"
+    [users]="Hauptbenutzer"
+    [ssh]="SSH-Härtung mit TOTP"
+    [ufw]="Firewall"
+    [rkhunter]="Schadsoftware-Schutz"
+    [fail2ban]="Brute-Force-Schutz"
+    [logging]="Protokollierung und Auditing"
+    [unattended]="Automatische Sicherheitsupdates"
+    [restic]="Datensicherung"
+    [monit]="Monitoring"
+)
+
+# Globale Zustandsvariablen (vom EXIT-Trap _sb_master_finish gelesen).
+SB_DONE_COUNT=0
+SB_CURRENT_MODUL=""
+SB_TOTAL=0
+
+# Optionen
+OPT_QUIET=0
+OPT_VERBOSE=0
+OPT_DRYRUN=0
+
+# -------------------------------------------------------------------------
+# Hilfsfunktionen
+# -------------------------------------------------------------------------
+
+usage() {
+    cat >&2 <<'EOF'
+SYNOPSIS
+    secure-base [OPTIONEN] <KOMMANDO> [<modul> ...]
+
+KOMMANDOS
+    install    Module installieren und konfigurieren
+    uninstall  Module-Konfiguration zuruecknehmen (umgekehrte Reihenfolge)
+    check      Soll-Ist-Vergleich ohne Aenderungen
+    test       Scharfer Funktionstest ohne Aenderungen
+
+OPTIONEN
+    -q, --quiet    Nur WARN und ERROR ausgeben (kein INFO)
+    -v, --verbose  INFO auch auf der Shell ausgeben (sonst nur im Logfile)
+    -n, --dry-run  Trockenlauf: Statusliste sichtbar, keine Aenderungen
+    -h, --help     Diese Hilfe ausgeben
+
+EXIT STATUS
+    0  Erfolg
+    1  Fehler
+    2  Aufruffehler
+
+HINWEISE
+    Ohne Modul-Argumente laufen alle in MODULES_ENABLED (common.conf) aktivierten
+    Module in der fest vorgegebenen Reihenfolge. Mit Modul-Argumenten nur die
+    angegebenen (ebenfalls in der kanonischen Reihenfolge).
+
+    Logdateien: /var/log/secure-base/<modul>-<sub>-<ts>.log
+EOF
+    exit 2
+}
+
+#######################################
+# Prueft, ob $1 in den restlichen Argumenten enthalten ist.
+# Arguments: $1 — Suchwert, $2+ — Liste
+# Returns:   0 gefunden, 1 nicht gefunden
+#######################################
+in_list() {
+    local needle=$1
+    shift
+    local item
+    for item in "$@"; do
+        [ "$item" = "$needle" ] && return 0
+    done
+    return 1
+}
+
+#######################################
+# Validiert Modul-Argumente und gibt die Auswahl in INSTALL_ORDER-Reihenfolge
+# auf stdout aus (ein Modul pro Zeile). Ohne Argumente: alle aktivierten Module.
+# Globals:   INSTALL_ORDER, MODULES_ENABLED
+# Arguments: $* — optionale Modulnamen
+# Outputs:   stdout — ein Modulname pro Zeile
+#######################################
+select_modules() {
+    local args=("$@")
+    local m
+
+    if [ "${#args[@]}" -eq 0 ]; then
+        for m in "${INSTALL_ORDER[@]}"; do
+            if in_list "$m" "${MODULES_ENABLED[@]}"; then
+                printf '%s\n' "$m"
+            fi
+        done
+        return 0
+    fi
+
+    local arg
+    for arg in "${args[@]}"; do
+        if ! in_list "$arg" "${INSTALL_ORDER[@]}"; then
+            die "Unbekanntes Modul: $arg. Bekannte Module: ${INSTALL_ORDER[*]}"
+        fi
+        if ! in_list "$arg" "${MODULES_ENABLED[@]}"; then
+            die "Modul $arg ist nicht in MODULES_ENABLED aktiviert (in common.conf ergaenzen)"
+        fi
+    done
+
+    for m in "${INSTALL_ORDER[@]}"; do
+        if in_list "$m" "${args[@]}"; then
+            printf '%s\n' "$m"
+        fi
+    done
+}
+
+#######################################
+# Gibt die uebergebene Liste in umgekehrter Reihenfolge auf stdout aus.
+# Arguments: $* — Liste
+# Outputs:   stdout — ein Element pro Zeile
+#######################################
+reverse_array() {
+    local i
+    for ((i = $#; i >= 1; i--)); do
+        printf '%s\n' "${!i}"
+    done
+}
+
+# -------------------------------------------------------------------------
+# Abschluss-Sammelbilanz (EXIT-Trap)
+# -------------------------------------------------------------------------
+
+#######################################
+# Abschluss-Sammelbilanz des Master-Laufs. Als EXIT-Trap gesetzt;
+# feuert auch bei Fail-Fast-Abbruch eines Moduls.
+# Globals:   SB_SUB, SB_TOTAL, SB_DONE_COUNT, SB_CURRENT_MODUL
+#######################################
+_sb_master_finish() {
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+        log INFO "=== Sammelbilanz ${SB_SUB}: alle ${SB_TOTAL} Module erfolgreich ==="
+        ui_summary
+    else
+        log ERROR "=== Sammelbilanz ${SB_SUB}: ${SB_DONE_COUNT}/${SB_TOTAL} Module erledigt, Abbruch bei ${SB_CURRENT_MODUL} ==="
+        ui_summary
+    fi
+    _sb_close_log
+}
+
+# -------------------------------------------------------------------------
+# Argument-Parsing
+# -------------------------------------------------------------------------
+
+parse_args() {
+    # Langoption-Umwandlung: --opt -> -o fuer getopts
+    local args=()
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --quiet) args+=(-q) ;;
+            --verbose) args+=(-v) ;;
+            --dry-run) args+=(-n) ;;
+            --help) args+=(-h) ;;
+            --) args+=("$a") ;;
+            --*) printf 'Unbekannte Option: %s\n' "$a" >&2; exit 2 ;;
+            *) args+=("$a") ;;
+        esac
+    done
+    set -- "${args[@]}"
+
+    local opt
+    while getopts ':qvnh' opt; do
+        case "$opt" in
+            q) OPT_QUIET=1 ;;
+            v) OPT_VERBOSE=1 ;;
+            n) OPT_DRYRUN=1 ;;
+            h) usage ;;
+            \?) printf 'Unbekannte Option: -%s\n' "$OPTARG" >&2; exit 2 ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+
+    # Restargumente nach Optionen zurueck nach $@
+    _PARSED_ARGS=("$@")
+}
+
+# -------------------------------------------------------------------------
+# Hauptprogramm
+# -------------------------------------------------------------------------
+
+main() {
+    # Argument-Parsing
+    declare -a _PARSED_ARGS=()
+    parse_args "$@"
+    set -- "${_PARSED_ARGS[@]}"
+
+    # Ausgabe-Steuerung aus den Optionen ableiten (vom Log-Filter und der UI
+    # gelesen). Quiet hat Vorrang vor Verbose.
+    if [ "$OPT_QUIET" -eq 1 ]; then
+        SB_SHOW_INFO=0
+        SB_QUIET=1
+    elif [ "$OPT_VERBOSE" -eq 1 ]; then
+        SB_SHOW_INFO=1
+        SB_QUIET=0
+    else
+        SB_SHOW_INFO=0
+        SB_QUIET=0
+    fi
+    export SB_SHOW_INFO SB_QUIET
+
+    local sub=${1:-}
+    if [ -z "$sub" ] || [ "$sub" = "-h" ] || [ "$sub" = "--help" ]; then
+        usage
+    fi
+    shift
+
+    case "$sub" in
+        install | uninstall | check | test) ;;
+        *)
+            printf 'Unbekanntes Subkommando: %s\n' "$sub" >&2
+            printf 'Erwartet: install | uninstall | check | test\n' >&2
+            exit 2
+            ;;
+    esac
+
+    # root nur fuer tatsaechlich aendernde Laeufe. check, test und jeder
+    # Trockenlauf (-n) kommen ohne root aus.
+    if { [ "$sub" = "install" ] || [ "$sub" = "uninstall" ]; } && [ "$OPT_DRYRUN" -eq 0 ]; then
+        require_root
+    fi
+    load_conf "$CONF_COMMON"
+
+    if ! declare -p MODULES_ENABLED >/dev/null 2>&1; then
+        die "MODULES_ENABLED nicht definiert in $CONF_COMMON"
+    fi
+
+    # Modul-Auswahl in separatem Schritt, damit die aus select_modules
+    # gefeuerten die() nicht durch Process-Substitution maskiert werden.
+    local ausgewaehlt_raw
+    if ! ausgewaehlt_raw=$(select_modules "$@"); then
+        exit 1
+    fi
+    local ausgewaehlt=()
+    if [ -n "$ausgewaehlt_raw" ]; then
+        mapfile -t ausgewaehlt <<<"$ausgewaehlt_raw"
+    fi
+
+    if [ "$sub" = "uninstall" ] && [ "${#ausgewaehlt[@]}" -gt 0 ]; then
+        local reversed_raw
+        if ! reversed_raw=$(reverse_array "${ausgewaehlt[@]}"); then
+            exit 1
+        fi
+        mapfile -t ausgewaehlt <<<"$reversed_raw"
+    fi
+
+    # Log-Pfad fuer UI-Anzeige ableiten (Zeitstempel wird spaeter gesetzt;
+    # hier Platzhalterpfad fuer Banner)
+    local log_vorschau="${SB_LOG_DIR}/secure-base-${sub}-<ts>.log"
+
+    if [ "${#ausgewaehlt[@]}" -eq 0 ]; then
+        log INFO "Keine Module zu verarbeiten (MODULES_ENABLED leer oder Schnittmenge leer)"
+        exit 0
+    fi
+
+    # UI initialisieren und Banner zeigen
+    ui_init "$log_vorschau" "${ausgewaehlt[@]}"
+    ui_banner "$sub" "$OPT_DRYRUN"
+
+    # Logdatei oeffnen (ueberschreibt den log_vorschau-Pfad — der Banner
+    # zeigt einen naherungsweisen Pfad; fuer den echten Pfad muesste
+    # open_log vor ui_init aufgerufen werden, aber dann ist kein Banner
+    # ohne Logfile moeglich)
+    open_log secure-base "$sub"
+
+    log INFO "Sammel-Lauf gestartet: $sub (${#ausgewaehlt[@]} Modul(e): ${ausgewaehlt[*]})"
+
+    SB_SUB=$sub
+    SB_TOTAL=${#ausgewaehlt[@]}
+    trap '_sb_master_finish' EXIT
+
+    # Erste Darstellung der Statusliste
+    ui_list_draw
+
+    local total=${#ausgewaehlt[@]} idx=0
+    local modul skript
+    for modul in "${ausgewaehlt[@]}"; do
+        idx=$((idx + 1))
+        SB_CURRENT_MODUL=$modul
+
+        ui_list_update "$modul" run
+
+        skript="$SCRIPT_DIR/modules/${modul}.sh"
+        if [ ! -x "$skript" ]; then
+            ui_list_update "$modul" error "Skript fehlt oder nicht ausfuehrbar"
+            ui_message ERROR "$modul" "Modul-Skript nicht ausfuehrbar: $skript"
+            die "Modul-Skript nicht ausfuehrbar oder nicht vorhanden: $skript"
+        fi
+
+        log INFO "[$idx/$total] Starte Modul: $modul ($sub)"
+
+        local modul_rc=0
+        if [ "$OPT_DRYRUN" -eq 1 ]; then
+            log INFO "[$idx/$total] Trockenlauf — $modul wird uebersprungen"
+            sleep 0.3  # kurze Pause fuer sichtbaren Live-Effekt
+        else
+            "$skript" "$sub" || modul_rc=$?
+        fi
+
+        if [ "$modul_rc" -eq 0 ]; then
+            log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
+            ui_list_update "$modul" ok
+        else
+            log ERROR "[$idx/$total] Modul fehlgeschlagen: $modul ($sub) — Exit $modul_rc"
+            ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
+            ui_message ERROR "$modul" "Abbruch nach Fehler"
+            exit 1
+        fi
+
+        SB_DONE_COUNT=$((SB_DONE_COUNT + 1))
+    done
+    # Abschluss-Sammelbilanz uebernimmt _sb_master_finish (EXIT-Trap).
+}
+
+main "$@"

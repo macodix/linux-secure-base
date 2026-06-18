@@ -1,0 +1,25 @@
+# common.conf.example — Vorlage fuer conf/common.conf (Zwei-Datei-Muster).
+#
+# Auf dem Zielsystem nach conf/common.conf kopieren und die Platzhalter
+# durch die echten Werte ersetzen. Die echte common.conf wird nie ins
+# Repository eingecheckt.
+
+# Aktivierung der Module. Die Ausfuehrungs-Reihenfolge ist fest vorgegeben;
+# diese Liste legt nur fest, welche Module mitlaufen. Nicht benoetigte
+# Module auskommentieren oder entfernen.
+MODULES_ENABLED=(base postfix users ssh ufw rkhunter fail2ban \
+    logging unattended restic monit)
+
+# Vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
+FQDN="server.example.com"
+
+# Administrative E-Mail-Adresse fuer alle Benachrichtigungen
+# (Logwatch, fail2ban, rkhunter, unattended-upgrades, restic, monit, SSH-Login).
+ADMIN_MAIL="admin@example.com"
+
+# Hauptbenutzer-Login fuer den nicht-root-Account auf dem System
+# (wird vom users-Modul angelegt).
+MAIN_USER="hauptbenutzer"
+
+# Zeitzone fuer das System (tzdata-Schreibweise).
+TIMEZONE="Europe/Berlin"
