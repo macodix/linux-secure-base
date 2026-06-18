@@ -18,9 +18,13 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 
 Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt
 
-## Grenzen
+## Grenzen & Warnung
 
 Aufgrund der Ausgestaltung von Backup und Monitoring ist diese Installation insbesondere für Produktivsystem mit hohen Anforderungen an die Verfügbarkeit und den maximalen Datenverlust nicht geeignet!
+
+**Die Nutzung dieser Anleitung und der Scripte entbindet ausdrücklich NICHT das eigene Hirn vom selbständigen Nachdenken!**
+
+Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden, wird für die Anwendung keineerlei Gewährleistung übernommen. Niemand muss diese Anleitung und Scripte nutzen. Und wer für die Beurteilung dieser Dokumente und Scripte nicht hinreichend sachkundig ist, sollte besser die Finger davon lassen!
 
 
 ## Repository Aufbau
