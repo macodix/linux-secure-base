@@ -36,7 +36,7 @@ Die Dienste gliedern sich in zwei Gruppen: das gehärtete Grundsystem und die op
 |---|---|---|---|---|
 | Webserver | nginx (TLS-Terminierung, statische Auslieferung) | extern, Ports 80/443 | www-data | systemd |
 
-Dienste ohne Netzwerkzurgiff/-port laufen unter einem eigenen System-Benutzer ohne Login-Shell und ohne administrative Gruppenrechte. Alle Daemons starten nach Reboot und nach Absturz automatisch wieder.aufen
+Dienste ohne Netzwerkzugriff/-port laufen unter einem eigenen System-Benutzer ohne Login-Shell und ohne administrative Gruppenrechte. Alle Daemons starten nach Reboot und nach Absturz automatisch wieder.
 
 Der Webserver ist erst aktiv, wenn nginx installiert ist. Bis dahin nimmt der Server eingehend nur SSH an. 
 
@@ -51,7 +51,7 @@ Das Layout folgt den Unix-Konventionen: Konfiguration unter `/etc`, Laufzeit- un
 | `/usr/local/sbin/` | System-Skripte (Backup, Härtungsprüfung) | `root`, 700 |
 | `/etc/nginx/sites-available/` | Server-Blöcke des Webservers | `root` |
 
-Deteien mit Zugangsdaten (z. B. Zugangsdaten für SFTP Backuppfad), die nur Root liest, erhalten Mode 600. Muss ein Dienst-Benutzer eine Datei mit Zugangsdaten lesen, erhält sie Mode 640 mit einer dafür eingerichteten Gruppe.
+Dateien mit Zugangsdaten (z. B. Zugangsdaten für SFTP Backuppfad), die nur Root liest, erhalten Mode 600. Muss ein Dienst-Benutzer eine Datei mit Zugangsdaten lesen, erhält sie Mode 640 mit einer dafür eingerichteten Gruppe.
 
 ## 4. Port-Plan
 
@@ -64,7 +64,7 @@ Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden ers
 | 443 | TCP | eingehend | extern | HTTPS Webserver | offen mit Webserver |
 | 2812 | TCP | lokal | 127.0.0.1 | Monitoring-Status | nicht freigegeben (Loopback) |
 
-Auf die optionale Verschärfung, den SSH-Port zusätzlich auf bekannte Quell-Netze zu beschränken, wird bewusst verzichtet. Bei wechselndem Standort des SSH-Nutzerss führt eine Quell-Netz-Regel zur Aussperrung. Der Zugang ist über Public-Key, TOTP und `fail2ban` dreifach gesichert.
+Auf die optionale Verschärfung, den SSH-Port zusätzlich auf bekannte Quell-Netze zu beschränken, wird bewusst verzichtet. Bei wechselndem Standort des SSH-Nutzers führt eine Quell-Netz-Regel zur Aussperrung. Der Zugang ist über Public-Key, TOTP und `fail2ban` dreifach gesichert.
 
 ## 5. Ausgehende Firewall-Zielliste
 
