@@ -1,4 +1,4 @@
-# nginx
+# Webserver nginx (optional)
 
 Einrichtung des multidomain-fähigen nginx als Webserver für statische Inhalte. Je Domain ein eigener Server-Block mit eigenem Let's-Encrypt-Zertifikat. Die Begründung der Festlegungen steht im Konzept-Dokument nginx-Grundsatz.
 
