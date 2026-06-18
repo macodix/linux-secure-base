@@ -9,7 +9,7 @@ Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von
 
 [02 Mail-Versand](02-mail-versand.md)
 
-[03 Benutzer und root](3-benutzer-und-root.md)
+[03 Hauptbenutzer einrichten](03-hauptbenutzer-einrichten.md)
 
 [04 SSH-Härtung mit TOTP](04-ssh-haertung-mit-totp.md)
 
@@ -29,7 +29,7 @@ Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von
 
 [12 Härtungsprüfung](12-haertungspruefung.md)
 
-[13 nginx](13-nginx.md)
+[13 Webserver nginx](13-webserver-nginx.md)
 
 
 ## Versionshistorie
