@@ -1,4 +1,4 @@
-# Benutzer und root
+# Hauptbenutzer einrichten (SSH-Key + TOTP)
 
 Vor Einrichtung des Hauptbenutzers das TOTP-Paket installieren:
 
@@ -44,10 +44,4 @@ google-authenticator
 - „Increase the rate-limit window?" — **no** (Standard 30 s beibehalten)
 - „Enable rate-limiting?" — **yes**
 
-Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. Das vorinstallierte `sudo` bleibt erhalten, wird aber nicht genutzt — der Hauptbenutzer ist nicht Mitglied der Gruppe `sudo`. Das `root`-Passwort muss gesetzt sein:
-
-```
-passwd
-```
-
-(als `root` ausgeführt, z. B. über die initiale VPS-Konsole).
+Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. Das vorinstallierte `sudo` bleibt erhalten, wird aber nicht genutzt — der Hauptbenutzer ist nicht Mitglied der Gruppe `sudo`. Ein `root`-Passwort muss gesetzt sein.
