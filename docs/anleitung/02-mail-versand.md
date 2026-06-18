@@ -1,6 +1,8 @@
 # Mail-Versand (Postfix als Satellite)
 
-Der Mail-Versand dient ausschließlich Systembenachrichtigungen. Der MTA `postfix` wird als Satellite-System (Smarthost) eingerichtet. Der Versand läuft über einen externen SMTP-Server des Hosters. Postfix bindet nur an Loopback.
+Der Mail-Versand dient ausschließlich Systembenachrichtigungen. Der MTA `postfix` wird als Satellite-System (Smarthost) eingerichtet. Der Versand läuft über einen externen SMTP-Server des Hosters. Postfix lauscht nur auf `loopback`, nicht von außen.
+
+Für den Mailversand wird hier per default der Port 587 genutzt und muss in den Firewall-Einstellungen ausgehend offens ein.
 
 ## 1. Installation und Grundkonfiguration
 
