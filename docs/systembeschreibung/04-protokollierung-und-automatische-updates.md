@@ -5,6 +5,7 @@ Dieses Dokument beschreibt die persistente Protokollierung mit Auditing und die 
 ## Inhaltsverzeichnis
 
 1 Protokollierung und Auditing
+
 2 Automatische Sicherheitsupdates
 
 ## 1. Protokollierung und Auditing
