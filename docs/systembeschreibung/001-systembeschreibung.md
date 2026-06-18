@@ -8,8 +8,6 @@ Dieses Dokument beschreibt den Aufbau eines gehärteten Linux-Grundsystems auf e
 - die Vertrauenszonen, den
 - Port-Plan und die ausgehende Firewall-Zielliste.
 
-Die Dokumente können als Vorlage für die eigenen Dokumenation eines Seerver dienen in dem die spezfischen Information angepasst werden
-
 ## 1.1. Betriebssystem
 
 Die Dokumentation beschreibt die Einrichtung eines Linux-Server mit Ubuntu Server 26.04 LTS.
