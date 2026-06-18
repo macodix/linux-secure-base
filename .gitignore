@@ -1,0 +1,15 @@
+# Reale Konfigurationsdateien — systemspezifisch, NIE committen.
+# Nur die *.conf.example-Vorlagen gehören ins Repo.
+*.conf
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*~
+
+# Temporär
+*.tmp
+*.bak
