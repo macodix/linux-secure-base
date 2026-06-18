@@ -2,17 +2,16 @@
 
 Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumenttyp.
 
-## A. Konzept
+## A. Systembeschreibung
 
-01 [konzept/sicherheitsanforderungen.md](konzept/sicherheitsanforderungen.md) — Nichtfunktionale Sicherheitsanforderungen und Härtungsmaßstab (in Bearbeitung)
-02 [konzept/systemtopologie.md](konzept/systemtopologie.md) — Wirt, Dienste, Verzeichnis-Layout, Vertrauenszonen, Port-Plan, ausgehende Firewall-Zielliste (in Bearbeitung)
-03 [konzept/haertungskonzept.md](konzept/haertungskonzept.md) — Härtung des Grundsystems: Maßstab, Schichtenmodell, Authentifizierung, Geheimnis-Trennung, Dienst-Isolation, Härtungsprüfung (in Bearbeitung)
-04 [konzept/mail-versand.md](konzept/mail-versand.md) — Mail-Versand für Systembenachrichtigungen über Postfix als Satellite (in Bearbeitung)
-05 [konzept/protokollierung-und-automatische-updates.md](konzept/protokollierung-und-automatische-updates.md) — Persistente Protokollierung mit Auditing und automatische Sicherheitsupdates (in Bearbeitung)
-06 [konzept/datensicherung.md](konzept/datensicherung.md) — Datensicherung mit restic: Verfahren, RPO/RTO, Überwachung, Wiederherstellung (in Bearbeitung)
-07 [konzept/monitoring.md](konzept/monitoring.md) — Monitoring mit monit: überwachte Größen, Verfügbarkeitsnachweis, Benachrichtigung (in Bearbeitung)
-08 [konzept/nginx-grundsatz.md](konzept/nginx-grundsatz.md) — Begründung der Webserver-Festlegungen: Multidomain, TLS je Name über certbot/HTTP-01, Port-Strategie, Redirect, Härtung (in Bearbeitung)
+01 [systembeschreibung/01-systembeschreibung.md](systembeschreibung/01-systembeschreibung.md) — Aufbau des Grundsystems: Betriebssystem, Dienste, Verzeichnis-Layout, Vertrauenszonen, Port-Plan, ausgehende Firewall-Zielliste (in Bearbeitung)
+02 [systembeschreibung/02-haertung.md](systembeschreibung/02-haertung.md) — Sicherheitsanforderungen und Härtung: Maßstab, Schutzziele, Authentifizierung, Angriffsfläche, Brute-Force-Schutz, Zugangsdaten, Dienst-Isolation, Härtungsprüfung (in Bearbeitung)
+03 [systembeschreibung/03-mail-versand.md](systembeschreibung/03-mail-versand.md) — Mail-Versand für Systembenachrichtigungen über Postfix als Satellite (in Bearbeitung)
+04 [systembeschreibung/04-protokollierung-und-automatische-updates.md](systembeschreibung/04-protokollierung-und-automatische-updates.md) — Protokollierung mit Auditing und automatische Sicherheitsupdates (in Bearbeitung)
+05 [systembeschreibung/05-datensicherung.md](systembeschreibung/05-datensicherung.md) — Datensicherung mit restic: Verfahren, RPO/RTO, Überwachung, Wiederherstellung (in Bearbeitung)
+06 [systembeschreibung/06-monitoring.md](systembeschreibung/06-monitoring.md) — Monitoring mit monit: überwachte Größen, Verfügbarkeitsnachweis, Benachrichtigung (in Bearbeitung)
+07 [systembeschreibung/07-nginx.md](systembeschreibung/07-nginx.md) — Webserver-Grundsatz: Multidomain, TLS je Name über certbot/HTTP-01, Port-Strategie, Redirect, Härtung (in Bearbeitung)
 
-## C. Handbuch
+## C. Anleitung
 
-01 [handbuch/installation.md](handbuch/installation.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems und des multidomain-fähigen nginx (in Bearbeitung)
+01 [anleitung/00-installation.md](anleitung/00-installation.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems und des optionalen nginx-Webservers (in Bearbeitung)
