@@ -2,7 +2,6 @@
 
 Dieses Dokument legt die Anforderungen an die Härtung des Linux Grundsystems fest und beschreibt deren Umsetzung. Es benennt Maßstab und Schutzziele, sowie die Härtungsmaßnahmen.
 
-**Status:** in Bearbeitung — **Stand:** 2026-06-18
 
 ## Inhaltsverzeichnis
 
