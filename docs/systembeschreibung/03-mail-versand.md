@@ -2,6 +2,9 @@
 
 Dieses Dokument beschreibt den Mail-Versand des Grundsystems für Systembenachrichtigungen.
 
+## Inhaltsverzeichnis
+1. Zweck und Aufbau
+2. Umleitung auf die Admin-Adresse
 
 ## 1. Zweck und Aufbau
 
