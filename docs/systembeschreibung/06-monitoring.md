@@ -8,9 +8,9 @@ Dieses Dokument beschreibt das Monitoring des Grundsystems:
 
 ## Inhaltsverzeichnis
 
-1 Überwachte Größen
-2 Verfügbarkeitsnachweis
-3 Benachrichtigung
+1. Überwachte Größen
+2. Verfügbarkeitsnachweis
+3. Benachrichtigung
 
 ## 1. Überwachte Größen
 
