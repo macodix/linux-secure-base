@@ -1,0 +1,54 @@
+# Datensicherung
+
+Dieses Dokument beschreibt die Datensicherung des Grundsystems: Sicherungsverfahren und Ziel, RPO/RTO und Aufbewahrung, die Backup-Überwachung sowie Wiederherstellung und RTO-Probe.
+
+**Status:** in Bearbeitung — **Stand:** 2026-06-18
+
+## Inhaltsverzeichnis
+
+1 Sicherungsverfahren und Ziel
+2 RPO, RTO und Aufbewahrung
+3 Backup-Überwachung
+4 Wiederherstellung und RTO-Probe
+
+## 1. Sicherungsverfahren und Ziel
+
+Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Raum. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/config/restic-passphrase` mit Mode 600. Der Lauf wird täglich um 02:30 über `/etc/cron.d/secure-base-backup` als `root` ausgelöst (Skript `/usr/local/sbin/secure-base-backup.sh`, Mode 700) und sichert die systemrelevanten Pfade.
+
+Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log` und `/root`. Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen deren Pfade hinzu.
+
+Der SSH-Zugang zum SFTP-Ziel ist Vorbedingung und wird vorab manuell eingerichtet (eigener `root`-Schlüssel, Host-Alias in `/root/.ssh/config`). Das Backup-Skript prüft zu Beginn non-interaktiv die Erreichbarkeit über das sftp-Subsystem (`BatchMode`, kein `ssh host cmd`, da SFTP-only-Anbieter kein Kommando erlauben) und bricht sonst ab.
+
+Das Ziel ist vom Quellsystem getrennt und verschlüsselt. Append-only-Schutz des Ziels gegen Überschreiben oder Löschen ist im BSI-Grundschutz gefordert. restic über SFTP kann ihn nicht selbst erzwingen. Festgelegt ist als Soll: das Ziel hält vom Server aus nicht löschbare Stände vor, praktisch über die Snapshot-Funktion des Speicher-Anbieters (anbieterseitig, vom Server aus nicht erreichbar). Ob der gewählte Anbieter das leistet, prüft der Betrieb. Das Ergebnis gehört in die Betriebsdokumentation.
+
+## 2. RPO, RTO und Aufbewahrung
+
+| Größe | Sollwert | Maßgröße |
+|---|---|---|
+| Wiederherstellungspunkt (RPO) | maximal 24 h Datenverlust | Abstand zweier Sicherungsläufe |
+| Wiederherstellungszeit (RTO) | maximal 48 h bis Wiederherstellung | Dauer Neuaufbau plus Restore |
+| Aufbewahrung | 7 täglich, 4 wöchentlich, 6 monatlich | restic-`forget`-Politik |
+
+Der tägliche Lauf erfüllt RPO 24 h. Die Aufbewahrung folgt der restic-`forget`-Politik mit anschließendem `prune`.
+
+```mermaid
+flowchart LR
+    B["letzte Sicherung<br/>(restic, täglich 02:30)"] -->|"RPO: max. 24 h<br/>möglicher Datenverlust"| X["Ausfall"]
+    X -->|"RTO: max. 48 h<br/>Neuaufbau Grundsystem + restic-Restore"| W["System wiederhergestellt"]
+```
+
+## 3. Backup-Überwachung
+
+Ein ausgebliebener oder fehlgeschlagener Backup-Lauf löst einen Mail-Alarm aus. Zwei Mechanismen greifen. Das Backup-Skript meldet einen Fehlschlag direkt per Mail an die Admin-Adresse. Zusätzlich prüft das Monitoring die Frische eines Erfolgs-Kennzeichens (`/var/lib/secure-base/restic-last-success`), das das Skript nur im Erfolgspfad aktualisiert. Bleibt es länger als 26 Stunden unverändert, alarmiert das Monitoring. So wird auch ein Lauf erkannt, der gar nicht erst startet. Bei der Einrichtung wird ein Baseline-Kennzeichen gesetzt, damit vor dem ersten geplanten Lauf kein Fehlalarm entsteht.
+
+## 4. Wiederherstellung und RTO-Probe
+
+Die Wiederherstellung binnen 48 h durch den Betreiber setzt eine dokumentierte, geprobte Wiederherstellungsanweisung voraus. Die Anweisung beschreibt zwei Schritte: erstens den Neuaufbau des gehärteten Grundsystems (skriptiert/dokumentiert), zweitens den Restore der gesicherten Pfade aus dem restic-Repository.
+
+Die Wiederherstellung wird regelmäßig geprobt. Ein Test-Restore in eine Sandbox belegt die Lesbarkeit des Repositorys und die Vollständigkeit der gesicherten Pfade. Der datierte Test-Restore ist der Nachweis. Die Probe erfolgt halbjährlich sowie zusätzlich nach jeder Änderung am Backup-Umfang. Zugangs- und Schlüsseldaten für die Wiederherstellung (restic-Passphrase, SFTP-Schlüssel) sind für den Notfall sicher und getrennt vom Server zu hinterlegen.
+
+## Versionshistorie
+
+| Version | Datum | Wer | Änderung |
+|---|---|---|---|
+| 0.01 | 2026-06-18 | Claude | Erstanlage durch bereinigte Übernahme. |
