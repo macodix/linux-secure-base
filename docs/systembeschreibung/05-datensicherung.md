@@ -9,11 +9,8 @@ Dieses Dokument beschreibt die Datensicherung des Grundsystems: -
 ## Inhaltsverzeichnis
 
 1. Sicherungsverfahren und Ziel
-
 2. RPO, RTO und Aufbewahrung
-
 3. Backup-Überwachung
-
 4. Wiederherstellung und RTO-Probe
 
 ## 1. Sicherungsverfahren und Ziel
