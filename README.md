@@ -33,7 +33,7 @@ Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden,
 ## Repository Aufbau
 
 - `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
-- `docs/dokumentation/` — Systembeschreibung, Härtungskonzept.
+- `docs/systembeschreibung/` — Systembeschreibung, Härtungskonzept.
 - `docs/INDEX.md` — Navigation.
 
 
