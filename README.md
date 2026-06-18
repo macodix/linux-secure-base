@@ -16,6 +16,13 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Monitoring (via EMail)
 - optional nginx Webserver
 
+Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt
+
+## Grenzen
+
+Aufgrund der Ausgestaltung von Backup und Monitoring ist diese Installation insbesondere für Produktivsystem mit hohen Anforderungen an die Verfügbarkeit und den maximalen Datenverlust nicht geeignet!
+
+
 ## Repository Aufbau
 
 - `docs/handbuch/` — Installationsanleitung, Schritt für Schritt.
