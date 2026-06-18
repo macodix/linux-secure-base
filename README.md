@@ -16,7 +16,10 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Monitoring (via EMail)
 - optional nginx Webserver
 
-Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt
+Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt.
+
+Die Installations-Scripte werden komplett über Konfigurationsverezichnisse gesteuert.
+
 
 ## Grenzen & Warnung
 
@@ -29,8 +32,8 @@ Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden,
 
 ## Repository Aufbau
 
-- `docs/handbuch/` — Installationsanleitung, Schritt für Schritt.
-- `docs/konzept/` — Hintergründe: Sicherheitsanforderungen, Systemtopologie, Härtungskonzept.
+- `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
+- `docs/dokumentation/` — Systembeschreibung, Härtungskonzept.
 - `docs/INDEX.md` — Navigation.
 
 
