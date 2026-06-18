@@ -5,21 +5,14 @@ Dieses Dokument legt die Anforderungen an die Härtung des Linux Grundsystems fe
 
 ## Inhaltsverzeichnis
 
-1 Maßstab und Geltung
-
-2 Schutzziele und Defense-in-depth
-
-3 Authentifizierung und Zwei-Faktor
-
-4 Minimale Angriffsfläche
-
-5 Brute-Force-Schutz
-
-6 Trennung der Zugangsdaten
-
-7 Dienst-Isolation
-
-8 Härtungsprüfung
+1. Maßstab und Geltung
+2. Schutzziele und Defense-in-depth
+3. Authentifizierung und Zwei-Faktor
+4. Minimale Angriffsfläche
+5. Brute-Force-Schutz
+6. Trennung der Zugangsdaten
+7. Dienst-Isolation
+8. Härtungsprüfung
 
 ## 1. Maßstab und Geltung
 
