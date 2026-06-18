@@ -1,4 +1,4 @@
-# 1. Systembeschreibung
+# Systembeschreibung
 
 Dieses Dokument beschreibt den Aufbau eines gehärteten Linux-Grundsystems auf einem einzelnen Server: 
 
@@ -8,12 +8,12 @@ Dieses Dokument beschreibt den Aufbau eines gehärteten Linux-Grundsystems auf e
 - die Vertrauenszonen, den
 - Port-Plan und die ausgehende Firewall-Zielliste.
 
-## 1.1. Betriebssystem
+## 1. Betriebssystem
 
 Die Dokumentation beschreibt die Einrichtung eines Linux-Server mit Ubuntu Server 26.04 LTS.
 
 
-## 1.2. Dienste
+## 2. Dienste
 
 Die Dienste gliedern sich in zwei Gruppen: das gehärtete Grundsystem und die optionalen Komponenten wie Webserver.
 
@@ -40,7 +40,7 @@ Dienste ohne Netzwerkzurgiff/-port laufen unter einem eigenen System-Benutzer oh
 
 Der Webserver ist erst aktiv, wenn nginx installiert ist. Bis dahin nimmt der Server eingehend nur SSH an. 
 
-## 1.3. Verzeichnis- und Dienst-Layout
+## 3. Verzeichnis- und Dienst-Layout
 
 Das Layout folgt den Unix-Konventionen: Konfiguration unter `/etc`, Laufzeit- und Datenverzeichnisse unter `/var/lib`, System-Skripte unter `/usr/local/sbin`. 
 
@@ -53,7 +53,7 @@ Das Layout folgt den Unix-Konventionen: Konfiguration unter `/etc`, Laufzeit- un
 
 Deteien mit Zugangsdaten (z. B. Zugangsdaten für SFTP Backuppfad), die nur Root liest, erhalten Mode 600. Muss ein Dienst-Benutzer eine Datei mit Zugangsdaten lesen, erhält sie Mode 640 mit einer dafür eingerichteten Gruppe.
 
-## 1.4. Port-Plan
+## 4. Port-Plan
 
 Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden erst mit dem Webserver geöffnet, Port 80 nur temporär zur Zertifikatsausstellung und -erneuerung (Konzept-Dokument nginx-Grundsatz). Loopback-Verkehr passiert die Host-Firewall nicht, daher sind lokal gebundene Dienste in der Firewall nicht freigegeben.
 
@@ -66,7 +66,7 @@ Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden ers
 
 Auf die optionale Verschärfung, den SSH-Port zusätzlich auf bekannte Quell-Netze zu beschränken, wird bewusst verzichtet. Bei wechselndem Standort des SSH-Nutzerss führt eine Quell-Netz-Regel zur Aussperrung. Der Zugang ist über Public-Key, TOTP und `fail2ban` dreifach gesichert.
 
-## 1.5. Ausgehende Firewall-Zielliste
+## 5. Ausgehende Firewall-Zielliste
 
 Die Firewall ist `ufw` mit Default-Policy `deny` für beide Richtungen. Erlaubt werden nur die für den Betrieb nötigen Ziele. Im Grundzustand sind die Regeln port-, nicht an einen Zielhost gebunden, weil Paketquellen, DNS-Server und Git-Gegenstellen wechselnde Adressen haben. `ufw` legt zu jeder Regel automatisch das IPv6-Pendant an.
 
