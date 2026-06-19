@@ -7,7 +7,7 @@
 # Aktivierung der Module. Die Ausfuehrungs-Reihenfolge ist fest vorgegeben;
 # diese Liste legt nur fest, welche Module mitlaufen. Nicht benoetigte
 # Module auskommentieren oder entfernen.
-MODULES_ENABLED=(base postfix users ssh ufw rkhunter fail2ban \
+MODULES_ENABLED=(base postfix users ssh ufw fail2ban rkhunter \
     logging unattended restic monit)
 
 # Vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
