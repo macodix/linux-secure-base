@@ -11,7 +11,7 @@
 #
 # Globals (gesetzt von open_log, gelesen von _sb_close_log):
 #   SB_LOG_DIR, SB_FILTER_OUT_PID, SB_FILTER_ERR_PID
-#   SB_WARN_COUNT, SB_ERROR_COUNT
+#   SB_WARN_COUNT, SB_ERROR_COUNT, SB_CURRENT_LOG, SB_UI_TTY_FD
 
 # Log-Verzeichnis: als root nach /var/log, sonst (check/test/Trockenlauf ohne
 # root) in ein temporaeres Verzeichnis.
@@ -24,6 +24,11 @@ readonly SB_LOG_DIR
 
 SB_FILTER_OUT_PID=""
 SB_FILTER_ERR_PID=""
+# Pfad der zuletzt geoeffneten Logdatei (von open_log gesetzt).
+SB_CURRENT_LOG=""
+# FD des echten Terminals, gesetzt von open_log wenn stdout ein TTY ist.
+# Leere Zeichenkette = kein TTY-UI-Modus.
+SB_UI_TTY_FD=""
 
 # Zaehler fuer WARN/ERROR-Meldungen im laufenden Prozess.
 # Subshells zaehlen nicht (Module loggen Mehrzeiler ueber Prozesssubstitution).
@@ -82,42 +87,38 @@ ensure_log_dir() {
 }
 
 #######################################
-# Liest Zeilen aus stdin und schreibt:
-#   - zeitgestempelt ins Logfile (Audit-Trail),
-#   - am TTY eingefaerbt (WARN gelb, ERROR rot) oder roh in eine Pipe.
-# Doppel-Zeitstempel und Farbe im Logfile werden so verhindert.
-# Globals:   —
+# Liest Zeilen aus stdin und schreibt sie zeitgestempelt ins Logfile.
+# Am Terminal erscheinen Zeilen nur im Verbose-Modus (SB_SHOW_INFO=1),
+# und nur wenn kein TTY-UI aktiv ist (SB_UI_TTY_FD gesetzt). WARN/ERROR
+# am Terminal verantwortet ui_message, nicht dieser Filter.
+# Globals:   SB_SHOW_INFO, SB_UI_TTY_FD
 # Arguments: $1 — Pfad zur Logdatei
-# Outputs:   stdout (weitergeleitet), Logfile
+# Outputs:   Logfile (immer); stdout nur im Non-TTY-Verbose-Modus
 #######################################
 _sb_log_filter() {
-    local lf=$1 line ts tty=0
-    [ -t 1 ] && tty=1
+    local lf=$1 line ts
     while IFS= read -r line; do
         printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1
         printf '%s %s\n' "$ts" "$line" >>"$lf"
-        # INFO-Zeilen erscheinen am Terminal nur im Verbose-Modus; das Logfile
-        # erhaelt sie immer (vollstaendiger Audit-Trail).
+        # Im TTY-UI-Modus erscheinen Log-Zeilen nie am Terminal —
+        # die UI zeichnet den Zustand; WARN/ERROR ruft ui_message auf.
+        [ -n "${SB_UI_TTY_FD:-}" ] && continue
+        # Non-TTY: Verbose-Filter
         case "$line" in
             INFO*) [ "${SB_SHOW_INFO:-0}" -eq 1 ] || continue ;;
         esac
-        if [ "$tty" -eq 1 ]; then
-            case "$line" in
-                WARN*) printf '\033[33m%s\033[0m\n' "$line" ;;
-                ERROR*) printf '\033[31m%s\033[0m\n' "$line" ;;
-                *) printf '%s\n' "$line" ;;
-            esac
-        else
-            printf '%s\n' "$line"
-        fi
+        printf '%s\n' "$line"
     done
 }
 
 #######################################
 # Oeffnet die Logdatei und leitet stdout/stderr ueber _sb_log_filter.
-# Der EXIT-Trap _sb_close_log wartet auf die Filtersubprozesse.
+# Ist stdout beim Aufruf ein TTY, wird der echte Terminal-FD in
+# SB_UI_TTY_FD festgehalten, damit ui.sh direkt ans Terminal schreiben
+# kann — vorbei am Filter. Der Filter gibt dann keine Zeilen ans Terminal
+# aus (TTY-UI-Modus, s. _sb_log_filter).
 # Logfile: /var/log/secure-base/<modul>-<sub>-<ts>.log, Mode 0640.
-# Globals:   SB_FILTER_OUT_PID, SB_FILTER_ERR_PID
+# Globals:   SB_FILTER_OUT_PID, SB_FILTER_ERR_PID, SB_UI_TTY_FD
 # Arguments: $1 — Modulname, $2 — Subkommando
 #######################################
 open_log() {
@@ -127,6 +128,14 @@ open_log() {
     ts=$(date +%Y%m%d-%H%M%S)
     ensure_log_dir
     local logfile="${SB_LOG_DIR}/${modul}-${subkommando}-${ts}.log"
+    SB_CURRENT_LOG=$logfile
+    export SB_CURRENT_LOG
+    # Terminal-FD vor der Umleitung sichern (nur wenn stdout ein TTY ist).
+    if [ -t 1 ]; then
+        exec 3>&1
+        SB_UI_TTY_FD=3
+        export SB_UI_TTY_FD
+    fi
     exec > >(umask 0027; _sb_log_filter "$logfile")
     SB_FILTER_OUT_PID=$!
     exec 2> >(umask 0027; _sb_log_filter "$logfile" >&2)
