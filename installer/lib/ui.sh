@@ -71,13 +71,17 @@ declare -A _UI_LABEL=()
 ui_init() {
     local logpath=$1
     shift
-    [ -t 1 ] && _UI_TTY=1 || _UI_TTY=0
-    # Nach open_log zeigt FD 1 auf den Log-Filter; SB_UI_TTY_FD haelt den
-    # echten Terminal-FD. Ist die Variable noch nicht gesetzt, ist open_log
-    # noch nicht aufgerufen worden und FD 1 ist noch das Terminal.
+    # TTY-Modus bestimmen. Nach open_log ist FD 1 auf den Log-Filter
+    # umgeleitet — daher NICHT ueber [ -t 1 ] erkennen. SB_UI_TTY_FD haelt
+    # den echten Terminal-FD, falls stdout beim Start ein TTY war.
     if [ -n "${SB_UI_TTY_FD:-}" ]; then
+        _UI_TTY=1
         _UI_OUT=${SB_UI_TTY_FD}
+    elif [ -t 1 ]; then
+        _UI_TTY=1
+        _UI_OUT=1
     else
+        _UI_TTY=0
         _UI_OUT=1
     fi
     _UI_LOG_PATH=$logpath
