@@ -10,15 +10,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+SCRIPT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 readonly SCRIPT_DIR
 
-# shellcheck source=../lib/common.sh
+# shellcheck source=../../lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="ssh"
 readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
-readonly CONF_MODULE="$SCRIPT_DIR/conf/${MODULE}.conf"
 
 readonly SSHD_CONFIG="/etc/ssh/sshd_config"
 readonly PAM_SSHD="/etc/pam.d/sshd"
@@ -201,7 +200,6 @@ warn_sitzungs_verifikation() {
 do_install() {
     require_root
     load_conf "$CONF_COMMON"
-    load_conf "$CONF_MODULE"
     require_common_keys_or_die
     require_packages_or_die
     require_user_login_artifacts_or_die
@@ -298,7 +296,6 @@ do_uninstall() {
 do_check() {
     require_root
     load_conf "$CONF_COMMON"
-    load_conf "$CONF_MODULE"
     require_common_keys_or_die
 
     local rc=0

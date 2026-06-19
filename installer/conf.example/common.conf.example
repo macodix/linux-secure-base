@@ -2,7 +2,12 @@
 #
 # Auf dem Zielsystem nach conf/common.conf kopieren und die Platzhalter
 # durch die echten Werte ersetzen. Die echte common.conf wird nie ins
-# Repository eingecheckt.
+# Repository eingecheckt. Alle Modul-Einstellungen stehen in dieser einen
+# Datei, gegliedert nach Abschnitten.
+#
+# Herkunft des Zwei-Datei-Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
+
+# == Allgemein ==
 
 # Aktivierung der Module. Die Ausfuehrungs-Reihenfolge ist fest vorgegeben;
 # diese Liste legt nur fest, welche Module mitlaufen. Nicht benoetigte
@@ -23,3 +28,21 @@ MAIN_USER="hauptbenutzer"
 
 # Zeitzone fuer das System (tzdata-Schreibweise).
 TIMEZONE="Europe/Berlin"
+
+# == ssh ==
+
+# Schaltet die Login-Mail-Benachrichtigung an oder aus.
+#   yes (Default bei leerem Wert) — /etc/ssh/login-mail-notification.sh
+#       und eine pam_exec-session-Zeile in /etc/pam.d/sshd werden angelegt;
+#       bei jedem SSH-Login geht eine Mail an ADMIN_MAIL.
+#   no  — die beiden Dateien werden nicht angelegt; ein eventueller Bestand
+#       wird durch uninstall entfernt, nicht durch install uebergangen.
+ENABLE_LOGIN_MAIL="yes"
+
+# Setzt den deprecated-Alias ChallengeResponseAuthentication in sshd_config.
+# Seit OpenSSH 8.7 nur noch Alias zu KbdInteractiveAuthentication.
+# Per Default gesetzt (yes) fuer Kompatibilitaet mit aelteren OpenSSH-Versionen;
+# auf aktuellen Systemen (OpenSSH >= 9.x) redundant, aber unschaedlich.
+#   yes (Default) — ChallengeResponseAuthentication yes wird gesetzt.
+#   no            — Direktive wird nicht gesetzt und, falls vorhanden, entfernt.
+ENABLE_CHALLENGE_RESPONSE_AUTH="yes"
