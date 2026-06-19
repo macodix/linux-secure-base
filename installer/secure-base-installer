@@ -20,7 +20,7 @@ readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
 
 # Kanonische Ausfuehrungs-Reihenfolge (nicht konfigurierbar).
 readonly INSTALL_ORDER=(
-    base postfix users ssh ufw rkhunter fail2ban
+    base postfix users ssh ufw fail2ban rkhunter
     logging unattended restic monit
 )
 
@@ -33,8 +33,8 @@ declare -rA SB_MODUL_LABEL=(
     [users]="Hauptbenutzer"
     [ssh]="SSH-Härtung mit TOTP"
     [ufw]="Firewall"
-    [rkhunter]="Schadsoftware-Schutz"
     [fail2ban]="Brute-Force-Schutz"
+    [rkhunter]="Schadsoftware-Schutz"
     [logging]="Protokollierung und Auditing"
     [unattended]="Automatische Sicherheitsupdates"
     [restic]="Datensicherung"
