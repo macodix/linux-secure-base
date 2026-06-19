@@ -46,3 +46,18 @@ ENABLE_LOGIN_MAIL="yes"
 #   yes (Default) — ChallengeResponseAuthentication yes wird gesetzt.
 #   no            — Direktive wird nicht gesetzt und, falls vorhanden, entfernt.
 ENABLE_CHALLENGE_RESPONSE_AUTH="yes"
+
+# == postfix ==
+
+# SMTP-Smarthost (Relay), an den Postfix als Satellite ausliefert.
+RELAY_HOST="smtp.example.com"
+
+# Port des Smarthosts (Submission/STARTTLS ueblich 587).
+RELAY_PORT="587"
+
+# Benutzername fuer die SMTP-Authentifizierung am Smarthost.
+RELAY_USER="user@example.com"
+
+# Passwort fuer die SMTP-Authentifizierung. Leer lassen, dann fragt das
+# install interaktiv danach (kein Echo, nichts im Logfile).
+RELAY_PASSWORD=""
