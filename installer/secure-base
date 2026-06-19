@@ -45,6 +45,8 @@ declare -rA SB_MODUL_LABEL=(
 SB_DONE_COUNT=0
 SB_CURRENT_MODUL=""
 SB_TOTAL=0
+# Fehlertext des abgebrochenen Moduls; in lib/ui.sh (ui_summary) gelesen.
+SB_FAIL_TEXT=""
 
 # Optionen
 OPT_QUIET=0
@@ -149,6 +151,20 @@ reverse_array() {
     for ((i = $#; i >= 1; i--)); do
         printf '%s\n' "${!i}"
     done
+}
+
+#######################################
+# Liest die letzte ERROR-Meldung aus dem neuesten Logfile eines Moduls.
+# Arguments: $1 — Modulname, $2 — Subkommando
+# Globals:   SB_LOG_DIR
+# Outputs:   stdout — Meldungstext ohne Zeitstempel/Stufe, oder leer
+#######################################
+_letzte_fehlerzeile() {
+    local modul=$1 sub=$2 lf
+    # Zeitstempel im Dateinamen sortieren chronologisch; neuestes zuletzt.
+    lf=$(printf '%s\n' "${SB_LOG_DIR}/${modul}-${sub}-"*.log | sort | tail -1)
+    [ -f "$lf" ] || return 0
+    grep ' ERROR ' "$lf" 2>/dev/null | tail -1 | sed -E 's/^[^ ]+ +ERROR +//'
 }
 
 # -------------------------------------------------------------------------
@@ -330,9 +346,10 @@ main() {
             ui_list_update "$modul" ok
         else
             log ERROR "[$idx/$total] Modul fehlgeschlagen: $modul ($sub) — Exit $modul_rc"
-            # Nur ui_list_update — keine zusaetzliche ui_message, da sonst
-            # der Eintrag doppelt erscheint (Fehlerzeile + Liste).
             ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
+            # Konkrete Fehlermeldung aus dem Modul-Logfile fuer die Abbruch-Anzeige.
+            # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
+            SB_FAIL_TEXT=$(_letzte_fehlerzeile "$modul" "$sub")
             exit 1
         fi
 
