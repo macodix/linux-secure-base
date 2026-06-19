@@ -156,15 +156,9 @@ _ui_rule() {
 #######################################
 ui_list_draw() {
     [ "${SB_QUIET:-0}" -eq 1 ] && return
-    if [ "$_UI_TTY" -eq 0 ]; then
-        local m
-        for m in "${_UI_MODULES[@]}"; do
-            local sym
-            sym=$(_ui_symbol "${_UI_STATE[$m]}" 0)
-            printf '  %s  %-12s  %s\n' "$sym" "$m" "${_UI_LABEL[$m]}"
-        done
-        return
-    fi
+    # Die Live-Statusliste ist reine Anzeige und gehoert nicht ins Logfile;
+    # nur am TTY zeichnen.
+    [ "$_UI_TTY" -eq 1 ] || return 0
     # TTY: jede Zeile vor dem Schreiben loeschen (tput el / \033[K), damit
     # Reste laengerer Vorgaenger-Zeilen nicht stehen bleiben.
     local m count=0
@@ -190,12 +184,8 @@ ui_list_update() {
         _UI_LABEL["$modul"]=$label
     fi
     [ "${SB_QUIET:-0}" -eq 1 ] && return
-    if [ "$_UI_TTY" -eq 0 ]; then
-        local sym
-        sym=$(_ui_symbol "$zustand" 0)
-        printf '  %s  %-12s  %s\n' "$sym" "$modul" "${_UI_LABEL[$modul]}"
-        return
-    fi
+    # Zustand wurde aktualisiert; gezeichnet wird nur am TTY.
+    [ "$_UI_TTY" -eq 1 ] || return 0
     # Cursor um _UI_LIST_LINES Zeilen hoch, dann Liste neu zeichnen.
     # tput-Sequenz direkt ans echte Terminal (FD _UI_OUT), nicht als Text
     # in den Log-Filter. tput-Fehler ignorieren (kein Terminal vorhanden).
@@ -217,10 +207,9 @@ ui_message() {
     local stufe=$1 modul=$2
     shift 2
     local text="$*"
-    if [ "$_UI_TTY" -eq 0 ]; then
-        printf '  %s  %s  %s\n' "$stufe" "$modul" "$text" >&2
-        return
-    fi
+    # Reine Anzeige; im Datei-/Pipe-Modus steht die Meldung bereits als
+    # WARN/ERROR-Zeile im Logfile.
+    [ "$_UI_TTY" -eq 1 ] || return 0
     # Cursor vor die Liste setzen, Meldung mit Clear-to-EOL schreiben,
     # dann Liste neu zeichnen. Alle Ausgaben direkt ans echte Terminal (FD _UI_OUT).
     if [ "$_UI_LIST_LINES" -gt 0 ]; then
@@ -247,25 +236,20 @@ ui_message() {
 #######################################
 ui_banner() {
     [ "${SB_QUIET:-0}" -eq 1 ] && return
+    # Banner ist reine Bildschirm-Anzeige; nicht ins Logfile.
+    [ "$_UI_TTY" -eq 1 ] || return 0
     local modus=$1 dryrun=${2:-0}
-    if [ "$_UI_TTY" -eq 1 ]; then
-        printf '\n' >&"$_UI_OUT"
-        _ui_rule "Linux Secure Base · Installer 1.0"
-        printf '\n' >&"$_UI_OUT"
-        if [ "$dryrun" -eq 1 ]; then
-            printf '%b  Modus %-10s  [TROCKENLAUF — keine Aenderungen]%b\n' \
-                "$_SB_C_YELLOW" "$modus" "$_SB_C_RESET" >&"$_UI_OUT"
-        else
-            printf '  Modus %-10s\n' "$modus" >&"$_UI_OUT"
-        fi
-        printf '  Log   %s\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
-        printf '\n' >&"$_UI_OUT"
+    printf '\n' >&"$_UI_OUT"
+    _ui_rule "Linux Secure Base · Installer 1.0"
+    printf '\n' >&"$_UI_OUT"
+    if [ "$dryrun" -eq 1 ]; then
+        printf '%b  Modus %-10s  [TROCKENLAUF — keine Aenderungen]%b\n' \
+            "$_SB_C_YELLOW" "$modus" "$_SB_C_RESET" >&"$_UI_OUT"
     else
-        printf '=== Linux Secure Base · Installer 1.0 · Modus: %s' "$modus"
-        [ "$dryrun" -eq 1 ] && printf ' [TROCKENLAUF]'
-        printf ' ===\n'
-        printf 'Log: %s\n' "${_UI_LOG_PATH:-—}"
+        printf '  Modus %-10s\n' "$modus" >&"$_UI_OUT"
     fi
+    printf '  Log   %s\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
+    printf '\n' >&"$_UI_OUT"
 }
 
 #######################################
@@ -275,6 +259,8 @@ ui_banner() {
 # Arguments: keine
 #######################################
 ui_summary() {
+    # Reine Anzeige; im Datei-/Pipe-Modus genuegt die Sammelbilanz-Logzeile.
+    [ "$_UI_TTY" -eq 1 ] || return 0
     local total=0 ok=0 warn=0 err=0
     local m
     for m in "${_UI_MODULES[@]}"; do
@@ -302,35 +288,24 @@ ui_summary() {
         done
     fi
 
-    if [ "$_UI_TTY" -eq 1 ]; then
+    printf '\n' >&"$_UI_OUT"
+    if [ "$err" -gt 0 ]; then
+        _ui_rule "Abgebrochen"
         printf '\n' >&"$_UI_OUT"
-        if [ "$err" -gt 0 ]; then
-            _ui_rule "Abgebrochen"
-            printf '\n' >&"$_UI_OUT"
-            printf '%b  ✗  Abbruch bei %s — %s%b\033[K\n' \
-                "$_SB_C_RED" "$fail_modul" "${SB_FAIL_TEXT:-Ursache im Logfile}" "$_SB_C_RESET" >&"$_UI_OUT"
-            printf '%b  %d/%d Module · %d Fehler · %d Warnungen · %s%b\033[K\n' \
-                "$_SB_C_RED" "$ok" "$total" "$err" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
-        elif [ "$warn" -gt 0 ]; then
-            _ui_rule "Fertig"
-            printf '\n' >&"$_UI_OUT"
-            printf '%b  %d/%d Module · 0 Fehler · %d Warnungen · %s%b\n' \
-                "$_SB_C_YELLOW" "$ok" "$total" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
-        else
-            _ui_rule "Fertig"
-            printf '\n' >&"$_UI_OUT"
-            printf '%b  %d/%d Module · 0 Fehler · 0 Warnungen · %s%b\n' \
-                "$_SB_C_GREEN" "$ok" "$total" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
-        fi
-        printf '  Log: %s\n\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
+        printf '%b  ✗  Abbruch bei %s — %s%b\033[K\n' \
+            "$_SB_C_RED" "$fail_modul" "${SB_FAIL_TEXT:-Ursache im Logfile}" "$_SB_C_RESET" >&"$_UI_OUT"
+        printf '%b  %d/%d Module · %d Fehler · %d Warnungen · %s%b\033[K\n' \
+            "$_SB_C_RED" "$ok" "$total" "$err" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
+    elif [ "$warn" -gt 0 ]; then
+        _ui_rule "Fertig"
+        printf '\n' >&"$_UI_OUT"
+        printf '%b  %d/%d Module · 0 Fehler · %d Warnungen · %s%b\n' \
+            "$_SB_C_YELLOW" "$ok" "$total" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
     else
-        if [ "$err" -gt 0 ]; then
-            printf 'Abgebrochen bei %s: %s\n' "$fail_modul" "${SB_FAIL_TEXT:-siehe Logfile}"
-            printf '=== %d/%d ok · %d Fehler · %d Warnungen · %s · Log: %s ===\n' \
-                "$ok" "$total" "$err" "$warn" "$dauer" "${_UI_LOG_PATH:-—}"
-        else
-            printf '=== Fertig: %d/%d ok · %d Fehler · %d Warnungen · %s · Log: %s ===\n' \
-                "$ok" "$total" "$err" "$warn" "$dauer" "${_UI_LOG_PATH:-—}"
-        fi
+        _ui_rule "Fertig"
+        printf '\n' >&"$_UI_OUT"
+        printf '%b  %d/%d Module · 0 Fehler · 0 Warnungen · %s%b\n' \
+            "$_SB_C_GREEN" "$ok" "$total" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
     fi
+    printf '  Log: %s\n\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
 }
