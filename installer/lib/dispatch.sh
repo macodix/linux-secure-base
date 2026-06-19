@@ -97,6 +97,10 @@ dispatch() {
     SB_SUB=$sub
     trap '_sb_finish' EXIT
 
+    # Start-Marker ins zentrale Logfile: grenzt Modul-Laeufe lesbar ab und
+    # dient dem Installer als Anker fuer die Fehlersuche dieses Laufs.
+    log INFO "--- Modul ${modul} (${sub}) ---"
+
     case "$sub" in
         install) do_install "$@" ;;
         uninstall) do_uninstall "$@" ;;

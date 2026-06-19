@@ -154,15 +154,24 @@ reverse_array() {
 }
 
 #######################################
-# Liest die Fehlermeldung des zuletzt fehlgeschlagenen Moduls aus
-# SB_LAST_ERROR_FILE. Die Datei wird von die() synchron beschrieben,
-# bevor das Modul endet — daher keine Race-Condition mit dem Log-Filter.
-# Globals:   SB_LAST_ERROR_FILE
+# Liest die letzte ERROR-Meldung des aktuellen Modul-Laufs aus dem
+# zentralen Logfile. Eine einzige Quelle — kein separater Status-Mechanismus.
+# Globals:   SB_CURRENT_LOG
+# Arguments: $1 — Modulname, $2 — Subkommando
 # Outputs:   stdout — Meldungstext, oder leer
 #######################################
 _letzte_fehlerzeile() {
-    [ -f "${SB_LAST_ERROR_FILE}" ] || return 0
-    cat "${SB_LAST_ERROR_FILE}" 2>/dev/null || true
+    local modul=$1 sub=$2
+    [ -f "${SB_CURRENT_LOG:-}" ] || return 0
+    # Ab dem letzten Modul-Start-Marker (von dispatch geschrieben) die letzte
+    # ERROR-Zeile lesen. So zaehlt nur der aktuelle Modul-Lauf; das zentrale
+    # Logfile ist die einzige Quelle.
+    local zeile
+    zeile=$(grep -nF -- "--- Modul ${modul} (${sub}) ---" "${SB_CURRENT_LOG}" \
+        | tail -1 | cut -d: -f1)
+    [ -n "$zeile" ] || return 0
+    tail -n "+${zeile}" "${SB_CURRENT_LOG}" 2>/dev/null \
+        | grep ' ERROR ' | tail -1 | sed -E 's/^[^ ]+ +ERROR +//'
 }
 
 # -------------------------------------------------------------------------
@@ -330,8 +339,11 @@ main() {
 
         skript="$SCRIPT_DIR/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
-            ui_list_update "$modul" error "Skript fehlt oder nicht ausfuehrbar"
-            die "Modul-Skript nicht ausfuehrbar oder nicht vorhanden: $skript"
+            log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/modules/"
+            ui_list_update "$modul" error "nicht installiert"
+            # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
+            SB_FAIL_TEXT="Modul ${modul} nicht installiert (${modul}.sh fehlt)"
+            exit 1
         fi
 
         log INFO "[$idx/$total] Starte Modul: $modul ($sub)"
@@ -348,12 +360,12 @@ main() {
             log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
             ui_list_update "$modul" ok
         else
+            # Fehlermeldung des Moduls ab dessen Start-Marker aus dem Logfile,
+            # BEVOR der Installer seine eigene ERROR-Zeile schreibt.
+            # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
+            SB_FAIL_TEXT=$(_letzte_fehlerzeile "$modul" "$sub")
             log ERROR "[$idx/$total] Modul fehlgeschlagen: $modul ($sub) — Exit $modul_rc"
             ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
-            # Konkrete Fehlermeldung aus SB_LAST_ERROR_FILE (von die() synchron
-            # geschrieben, racefrei da Modul bereits beendet).
-            # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
-            SB_FAIL_TEXT=$(_letzte_fehlerzeile)
             exit 1
         fi
 

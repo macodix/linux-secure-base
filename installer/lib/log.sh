@@ -4,7 +4,7 @@
 #
 # Bietet:
 #   log             — strukturierte Ausgabe (INFO/WARN/ERROR)
-#   die             — Fehler loggen, .last-error schreiben, Skript beenden
+#   die             — Fehler loggen und Skript beenden
 #   ensure_log_dir  — Log-Verzeichnis idempotent anlegen
 #   open_log        — zentrales Logfile oeffnen, stdout/stderr umleiten
 #   _sb_close_log   — Filtersubprozesse am Exit abwarten
@@ -26,12 +26,6 @@ readonly SB_LOG_DIR
 # Installation der logrotate-Konfiguration (installer/logrotate.d/secure-base)
 # nach /etc/logrotate.d/secure-base erfolgt durch das logging-Modul/Deployment.
 readonly SB_LOG_FILE="${SB_LOG_DIR}/secure-base.log"
-
-# Pfad der Statusdatei fuer die letzte Fehlermeldung.
-# Wird von die() synchron beschrieben; der Installer liest sie nach
-# Modulfehlschlag aus, um eine Race-Condition mit dem asynchronen
-# Log-Filter zu vermeiden.
-readonly SB_LAST_ERROR_FILE="${SB_LOG_DIR}/.last-error"
 
 SB_FILTER_OUT_PID=""
 SB_FILTER_ERR_PID=""
@@ -78,19 +72,11 @@ log() {
 }
 
 #######################################
-# Loggt eine Fehlermeldung, schreibt sie synchron in SB_LAST_ERROR_FILE
-# und beendet das Skript mit Exit-Code 1.
-# SB_LAST_ERROR_FILE wird vom Installer nach Modulfehlschlag gelesen
-# (racefrei, da synchron vor dem exit geschrieben).
+# Loggt eine Fehlermeldung und beendet das Skript mit Exit-Code 1.
 # Arguments: $* — Fehlermeldung
 #######################################
 die() {
     log ERROR "$*"
-    # Synchron schreiben — der Installer liest diese Datei erst nach
-    # Rueckkehr des Modulprozesses, daher keine Race-Condition.
-    if [ -n "${SB_LOG_DIR:-}" ]; then
-        printf '%s\n' "$*" >"${SB_LAST_ERROR_FILE}" 2>/dev/null || true
-    fi
     exit 1
 }
 
