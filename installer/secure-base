@@ -278,24 +278,19 @@ main() {
         mapfile -t ausgewaehlt <<<"$reversed_raw"
     fi
 
-    # Log-Pfad fuer UI-Anzeige ableiten (Zeitstempel wird spaeter gesetzt;
-    # hier Platzhalterpfad fuer Banner)
-    local log_vorschau="${SB_LOG_DIR}/secure-base-${sub}-<ts>.log"
-
     if [ "${#ausgewaehlt[@]}" -eq 0 ]; then
         log INFO "Keine Module zu verarbeiten (MODULES_ENABLED leer oder Schnittmenge leer)"
         exit 0
     fi
 
-    # UI initialisieren und Banner zeigen
-    ui_init "$log_vorschau" "${ausgewaehlt[@]}"
-    ui_banner "$sub" "$OPT_DRYRUN"
-
-    # Logdatei oeffnen (ueberschreibt den log_vorschau-Pfad — der Banner
-    # zeigt einen naherungsweisen Pfad; fuer den echten Pfad muesste
-    # open_log vor ui_init aufgerufen werden, aber dann ist kein Banner
-    # ohne Logfile moeglich)
+    # Logdatei zuerst oeffnen: setzt SB_UI_TTY_FD (echtes Terminal-FD) und
+    # SB_CURRENT_LOG (echter Logpfad) bevor die UI initialisiert wird.
+    # So bekommt ui_init den richtigen FD und ui_banner den echten Pfad.
     open_log secure-base "$sub"
+
+    # UI initialisieren und Banner zeigen
+    ui_init "$SB_CURRENT_LOG" "${ausgewaehlt[@]}"
+    ui_banner "$sub" "$OPT_DRYRUN"
 
     log INFO "Sammel-Lauf gestartet: $sub (${#ausgewaehlt[@]} Modul(e): ${ausgewaehlt[*]})"
 
@@ -317,7 +312,6 @@ main() {
         skript="$SCRIPT_DIR/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
             ui_list_update "$modul" error "Skript fehlt oder nicht ausfuehrbar"
-            ui_message ERROR "$modul" "Modul-Skript nicht ausfuehrbar: $skript"
             die "Modul-Skript nicht ausfuehrbar oder nicht vorhanden: $skript"
         fi
 
@@ -336,8 +330,9 @@ main() {
             ui_list_update "$modul" ok
         else
             log ERROR "[$idx/$total] Modul fehlgeschlagen: $modul ($sub) — Exit $modul_rc"
+            # Nur ui_list_update — keine zusaetzliche ui_message, da sonst
+            # der Eintrag doppelt erscheint (Fehlerzeile + Liste).
             ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
-            ui_message ERROR "$modul" "Abbruch nach Fehler"
             exit 1
         fi
 
