@@ -6,10 +6,10 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+SCRIPT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 readonly SCRIPT_DIR
 
-# shellcheck source=../lib/common.sh
+# shellcheck source=../../lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="base"

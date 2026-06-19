@@ -337,9 +337,9 @@ main() {
 
         ui_list_update "$modul" run
 
-        skript="$SCRIPT_DIR/modules/${modul}.sh"
+        skript="$SCRIPT_DIR/lib/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
-            log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/modules/"
+            log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/lib/modules/"
             ui_list_update "$modul" error "nicht installiert"
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
             SB_FAIL_TEXT="Modul ${modul} nicht installiert (${modul}.sh fehlt)"
