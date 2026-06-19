@@ -307,8 +307,8 @@ ui_summary() {
         if [ "$err" -gt 0 ]; then
             _ui_rule "Abgebrochen"
             printf '\n' >&"$_UI_OUT"
-            printf '%b  ✗  Abbruch bei %s — Ursache im Logfile%b\033[K\n' \
-                "$_SB_C_RED" "$fail_modul" "$_SB_C_RESET" >&"$_UI_OUT"
+            printf '%b  ✗  Abbruch bei %s — %s%b\033[K\n' \
+                "$_SB_C_RED" "$fail_modul" "${SB_FAIL_TEXT:-Ursache im Logfile}" "$_SB_C_RESET" >&"$_UI_OUT"
             printf '%b  %d/%d Module · %d Fehler · %d Warnungen · %s%b\033[K\n' \
                 "$_SB_C_RED" "$ok" "$total" "$err" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
         elif [ "$warn" -gt 0 ]; then
@@ -325,8 +325,9 @@ ui_summary() {
         printf '  Log: %s\n\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
     else
         if [ "$err" -gt 0 ]; then
-            printf '=== Abgebrochen bei %s: %d/%d ok · %d Fehler · %d Warnungen · %s · Log: %s ===\n' \
-                "$fail_modul" "$ok" "$total" "$err" "$warn" "$dauer" "${_UI_LOG_PATH:-—}"
+            printf 'Abgebrochen bei %s: %s\n' "$fail_modul" "${SB_FAIL_TEXT:-siehe Logfile}"
+            printf '=== %d/%d ok · %d Fehler · %d Warnungen · %s · Log: %s ===\n' \
+                "$ok" "$total" "$err" "$warn" "$dauer" "${_UI_LOG_PATH:-—}"
         else
             printf '=== Fertig: %d/%d ok · %d Fehler · %d Warnungen · %s · Log: %s ===\n' \
                 "$ok" "$total" "$err" "$warn" "$dauer" "${_UI_LOG_PATH:-—}"
