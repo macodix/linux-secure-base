@@ -6,6 +6,7 @@
 # do_install/do_uninstall/do_check/do_test.
 #
 # Das aufrufende Modul muss diese vier Funktionen definieren.
+# Im Regelfall ueber den Installer secure-base-installer aufrufen.
 
 # Modul und Subkommando des laufenden Dispatch — von dispatch gesetzt,
 # vom EXIT-Trap _sb_finish gelesen. Global, weil der Trap auf dem
@@ -55,7 +56,7 @@ EXIT STATUS
 
 HINWEIS
     Einzelmodul der Linux Secure Base. Im Regelfall ueber den Installer
-    'secure-base' aufrufen, nicht direkt.
+    secure-base-installer aufrufen, nicht direkt.
 EOF
 }
 
@@ -84,11 +85,11 @@ dispatch() {
     shift
 
     # root nur fuer aendernde Laeufe; check/test kommen ohne root aus
-    # (konsistent zum Installer secure-base).
+    # (konsistent zum Installer secure-base-installer).
     case "$sub" in
         install | uninstall) require_root ;;
     esac
-    open_log "$modul" "$sub"
+    open_log
     # _sb_finish ersetzt den _sb_close_log-Trap aus open_log und ruft
     # _sb_close_log selbst. Modul/Sub global, da der Trap erst nach
     # Rueckkehr aus dispatch feuert.

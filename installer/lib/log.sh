@@ -3,11 +3,11 @@
 # secure-base Helper: Logging und Ausgabe
 #
 # Bietet:
-#   log          — strukturierte Ausgabe (INFO/WARN/ERROR)
-#   die          — Fehler loggen und Skript beenden
-#   ensure_log_dir — /var/log/secure-base/ idempotent anlegen
-#   open_log     — Logdatei öffnen, stdout/stderr umleiten
-#   _sb_close_log — Filtersubprozesse am Exit abwarten
+#   log             — strukturierte Ausgabe (INFO/WARN/ERROR)
+#   die             — Fehler loggen, .last-error schreiben, Skript beenden
+#   ensure_log_dir  — Log-Verzeichnis idempotent anlegen
+#   open_log        — zentrales Logfile oeffnen, stdout/stderr umleiten
+#   _sb_close_log   — Filtersubprozesse am Exit abwarten
 #
 # Globals (gesetzt von open_log, gelesen von _sb_close_log):
 #   SB_LOG_DIR, SB_FILTER_OUT_PID, SB_FILTER_ERR_PID
@@ -22,13 +22,27 @@ else
 fi
 readonly SB_LOG_DIR
 
+# Fester Name des zentralen Logfiles (Append-Modus, alle Laeufe).
+# Installation der logrotate-Konfiguration (installer/logrotate.d/secure-base)
+# nach /etc/logrotate.d/secure-base erfolgt durch das logging-Modul/Deployment.
+readonly SB_LOG_FILE="${SB_LOG_DIR}/secure-base.log"
+
+# Pfad der Statusdatei fuer die letzte Fehlermeldung.
+# Wird von die() synchron beschrieben; der Installer liest sie nach
+# Modulfehlschlag aus, um eine Race-Condition mit dem asynchronen
+# Log-Filter zu vermeiden.
+readonly SB_LAST_ERROR_FILE="${SB_LOG_DIR}/.last-error"
+
 SB_FILTER_OUT_PID=""
 SB_FILTER_ERR_PID=""
 # Pfad der zuletzt geoeffneten Logdatei (von open_log gesetzt).
-SB_CURRENT_LOG=""
+# Nicht ueberschreiben, wenn bereits durch den Installer-Prozess exportiert
+# (Modul laeuft als Kindprozess und soll denselben Logpfad erben).
+: "${SB_CURRENT_LOG:=}"
 # FD des echten Terminals, gesetzt von open_log wenn stdout ein TTY ist.
-# Leere Zeichenkette = kein TTY-UI-Modus.
-SB_UI_TTY_FD=""
+# Leere Zeichenkette = kein TTY-UI-Modus. Ebenfalls nicht ueberschreiben
+# wenn durch den Installer-Prozess exportiert.
+: "${SB_UI_TTY_FD:=}"
 
 # Zaehler fuer WARN/ERROR-Meldungen im laufenden Prozess.
 # Subshells zaehlen nicht (Module loggen Mehrzeiler ueber Prozesssubstitution).
@@ -64,16 +78,24 @@ log() {
 }
 
 #######################################
-# Loggt eine Fehlermeldung und beendet das Skript mit Exit-Code 1.
+# Loggt eine Fehlermeldung, schreibt sie synchron in SB_LAST_ERROR_FILE
+# und beendet das Skript mit Exit-Code 1.
+# SB_LAST_ERROR_FILE wird vom Installer nach Modulfehlschlag gelesen
+# (racefrei, da synchron vor dem exit geschrieben).
 # Arguments: $* — Fehlermeldung
 #######################################
 die() {
     log ERROR "$*"
+    # Synchron schreiben — der Installer liest diese Datei erst nach
+    # Rueckkehr des Modulprozesses, daher keine Race-Condition.
+    if [ -n "${SB_LOG_DIR:-}" ]; then
+        printf '%s\n' "$*" >"${SB_LAST_ERROR_FILE}" 2>/dev/null || true
+    fi
     exit 1
 }
 
 #######################################
-# Legt /var/log/secure-base/ idempotent an (root:adm, 0750).
+# Legt das Log-Verzeichnis idempotent an (root:adm, 0750).
 #######################################
 ensure_log_dir() {
     if [ -d "$SB_LOG_DIR" ]; then
@@ -93,10 +115,14 @@ ensure_log_dir() {
 # am Terminal verantwortet ui_message, nicht dieser Filter.
 # Globals:   SB_SHOW_INFO, SB_UI_TTY_FD
 # Arguments: $1 — Pfad zur Logdatei
-# Outputs:   Logfile (immer); stdout nur im Non-TTY-Verbose-Modus
+#            $2 — "err" wenn dieser Filter fuer stderr-Eingabe benutzt
+#                 wird; dann geht die Terminal-Ausgabe auf stderr statt
+#                 stdout, um Doppel-Eintrag im Logfile zu vermeiden.
+# Outputs:   Logfile (immer); FD 1 (stdout-Filter) bzw. FD 2 (stderr-Filter)
+#            im Non-TTY-Verbose-Modus
 #######################################
 _sb_log_filter() {
-    local lf=$1 line ts
+    local lf=$1 is_err=${2:-} line ts
     while IFS= read -r line; do
         printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1
         printf '%s %s\n' "$ts" "$line" >>"$lf"
@@ -107,27 +133,45 @@ _sb_log_filter() {
         case "$line" in
             INFO*) [ "${SB_SHOW_INFO:-0}" -eq 1 ] || continue ;;
         esac
-        printf '%s\n' "$line"
+        if [ "$is_err" = "err" ]; then
+            printf '%s\n' "$line" >&2
+        else
+            printf '%s\n' "$line"
+        fi
     done
 }
 
 #######################################
-# Oeffnet die Logdatei und leitet stdout/stderr ueber _sb_log_filter.
+# Oeffnet das zentrale Logfile und leitet stdout/stderr ueber _sb_log_filter.
+#
+# Wird aufgerufen vom Installer (secure-base-installer) und von Modulen
+# (via dispatch), die ohne Installer direkt gestartet werden.
+#
+# Laeuft das Modul als Kindprozess des Installers, ist SB_CURRENT_LOG
+# bereits exportiert. In diesem Fall werden keine neuen Filter geoeffnet —
+# stdout/stderr fliessen bereits ueber die geerbten FDs in den
+# Installer-Filter. Nur _sb_close_log wird als Trap eingetragen.
+#
 # Ist stdout beim Aufruf ein TTY, wird der echte Terminal-FD in
 # SB_UI_TTY_FD festgehalten, damit ui.sh direkt ans Terminal schreiben
-# kann — vorbei am Filter. Der Filter gibt dann keine Zeilen ans Terminal
-# aus (TTY-UI-Modus, s. _sb_log_filter).
-# Logfile: /var/log/secure-base/<modul>-<sub>-<ts>.log, Mode 0640.
-# Globals:   SB_FILTER_OUT_PID, SB_FILTER_ERR_PID, SB_UI_TTY_FD
-# Arguments: $1 — Modulname, $2 — Subkommando
+# kann — vorbei am Filter.
+#
+# Logfile: ${SB_LOG_DIR}/secure-base.log (Append-Modus, kein Zeitstempel
+# im Namen). Der Installer schreibt je Lauf eine Trennzeile.
+# Globals:   SB_FILTER_OUT_PID, SB_FILTER_ERR_PID, SB_UI_TTY_FD,
+#            SB_CURRENT_LOG
+# Arguments: keine
 #######################################
 open_log() {
-    local modul=$1
-    local subkommando=$2
-    local ts
-    ts=$(date +%Y%m%d-%H%M%S)
     ensure_log_dir
-    local logfile="${SB_LOG_DIR}/${modul}-${subkommando}-${ts}.log"
+    # Wenn SB_CURRENT_LOG bereits gesetzt ist, laeuft dieses Skript als
+    # Kindprozess des Installers. stdout/stderr sind bereits in den
+    # Installer-Filter umgeleitet — keine neuen Filter oeffnen.
+    if [ -n "${SB_CURRENT_LOG:-}" ]; then
+        trap '_sb_close_log' EXIT
+        return
+    fi
+    local logfile="$SB_LOG_FILE"
     SB_CURRENT_LOG=$logfile
     export SB_CURRENT_LOG
     # Terminal-FD vor der Umleitung sichern (nur wenn stdout ein TTY ist).
@@ -138,7 +182,11 @@ open_log() {
     fi
     exec > >(umask 0027; _sb_log_filter "$logfile")
     SB_FILTER_OUT_PID=$!
-    exec 2> >(umask 0027; _sb_log_filter "$logfile" >&2)
+    # Der stderr-Filter erbt FD 1 = stdout-Filter-Schreib-Ende (da exec > >(...)
+    # bereits gesetzt ist). Mit dem "err"-Parameter schreibt _sb_log_filter
+    # seine Terminal-Ausgabe auf FD 2 statt FD 1, sodass kein Zeilenduplikat
+    # ueber den stdout-Filter ins Logfile gelangt.
+    exec 2> >(umask 0027; _sb_log_filter "$logfile" err)
     SB_FILTER_ERR_PID=$!
     trap '_sb_close_log' EXIT
 }
