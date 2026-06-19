@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Linux Secure Base — Installer
-# Aufruf: secure-base [OPTIONEN] <install|uninstall|check|test> [<modul> ...]
+# Aufruf: secure-base-installer [OPTIONEN] <install|uninstall|check|test> [<modul> ...]
 #
 # Exit-Codes:
 #   0 — Erfolg
@@ -60,7 +60,7 @@ OPT_DRYRUN=0
 usage() {
     cat >&2 <<'EOF'
 SYNOPSIS
-    secure-base [OPTIONEN] <KOMMANDO> [<modul> ...]
+    secure-base-installer [OPTIONEN] <KOMMANDO> [<modul> ...]
 
 KOMMANDOS
     install    Module installieren und konfigurieren
@@ -84,7 +84,7 @@ HINWEISE
     Module in der fest vorgegebenen Reihenfolge. Mit Modul-Argumenten nur die
     angegebenen (ebenfalls in der kanonischen Reihenfolge).
 
-    Logdateien: /var/log/secure-base/<modul>-<sub>-<ts>.log
+    Logdatei: /var/log/secure-base/secure-base.log (Append-Modus, alle Laeufe)
 EOF
     exit 2
 }
@@ -154,17 +154,15 @@ reverse_array() {
 }
 
 #######################################
-# Liest die letzte ERROR-Meldung aus dem neuesten Logfile eines Moduls.
-# Arguments: $1 — Modulname, $2 — Subkommando
-# Globals:   SB_LOG_DIR
-# Outputs:   stdout — Meldungstext ohne Zeitstempel/Stufe, oder leer
+# Liest die Fehlermeldung des zuletzt fehlgeschlagenen Moduls aus
+# SB_LAST_ERROR_FILE. Die Datei wird von die() synchron beschrieben,
+# bevor das Modul endet — daher keine Race-Condition mit dem Log-Filter.
+# Globals:   SB_LAST_ERROR_FILE
+# Outputs:   stdout — Meldungstext, oder leer
 #######################################
 _letzte_fehlerzeile() {
-    local modul=$1 sub=$2 lf
-    # Zeitstempel im Dateinamen sortieren chronologisch; neuestes zuletzt.
-    lf=$(printf '%s\n' "${SB_LOG_DIR}/${modul}-${sub}-"*.log | sort | tail -1)
-    [ -f "$lf" ] || return 0
-    grep ' ERROR ' "$lf" 2>/dev/null | tail -1 | sed -E 's/^[^ ]+ +ERROR +//'
+    [ -f "${SB_LAST_ERROR_FILE}" ] || return 0
+    cat "${SB_LAST_ERROR_FILE}" 2>/dev/null || true
 }
 
 # -------------------------------------------------------------------------
@@ -302,7 +300,12 @@ main() {
     # Logdatei zuerst oeffnen: setzt SB_UI_TTY_FD (echtes Terminal-FD) und
     # SB_CURRENT_LOG (echter Logpfad) bevor die UI initialisiert wird.
     # So bekommt ui_init den richtigen FD und ui_banner den echten Pfad.
-    open_log secure-base "$sub"
+    open_log
+
+    # Trennzeile je Lauf im Append-File, damit Laeufe unterscheidbar sind.
+    local lauf_ts
+    printf -v lauf_ts '%(%Y-%m-%d %H:%M:%S)T' -1
+    log INFO "=== secure-base-installer · ${sub} · ${lauf_ts} ==="
 
     # UI initialisieren und Banner zeigen
     ui_init "$SB_CURRENT_LOG" "${ausgewaehlt[@]}"
@@ -347,9 +350,10 @@ main() {
         else
             log ERROR "[$idx/$total] Modul fehlgeschlagen: $modul ($sub) — Exit $modul_rc"
             ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
-            # Konkrete Fehlermeldung aus dem Modul-Logfile fuer die Abbruch-Anzeige.
+            # Konkrete Fehlermeldung aus SB_LAST_ERROR_FILE (von die() synchron
+            # geschrieben, racefrei da Modul bereits beendet).
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
-            SB_FAIL_TEXT=$(_letzte_fehlerzeile "$modul" "$sub")
+            SB_FAIL_TEXT=$(_letzte_fehlerzeile)
             exit 1
         fi
 
