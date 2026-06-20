@@ -13,7 +13,7 @@
 # diese Liste legt nur fest, welche Module mitlaufen. Nicht benoetigte
 # Module auskommentieren oder entfernen.
 MODULES_ENABLED=(base postfix users ssh ufw fail2ban rkhunter \
-    logging unattended restic monit)
+    logging unattended restic monit lynis)
 
 # Vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
 FQDN="server.example.com"

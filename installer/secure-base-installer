@@ -20,7 +20,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 # Kanonische Ausfuehrungs-Reihenfolge (nicht konfigurierbar).
 readonly INSTALL_ORDER=(
     base postfix users ssh ufw fail2ban rkhunter
-    logging unattended restic monit
+    logging unattended restic monit lynis
 )
 
 # Anzeige-Beschreibung je Modul fuer die Statusliste (Fallback: Modulname).
@@ -38,6 +38,7 @@ declare -rA SB_MODUL_LABEL=(
     [unattended]="Automatische Sicherheitsupdates"
     [restic]="Datensicherung"
     [monit]="Monitoring"
+    [lynis]="Härtungsprüfung"
 )
 
 # Globale Zustandsvariablen (vom EXIT-Trap _sb_master_finish gelesen).
