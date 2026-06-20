@@ -13,11 +13,11 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="base"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
-# base hat keine modulspezifische .conf — alle Werte aus common.conf.
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
+# base hat keine modulspezifische .conf — alle Werte aus secure-base.conf.
 
 #######################################
-# Prueft, dass die fuer base noetigen Keys in common.conf gesetzt sind.
+# Prueft, dass die fuer base noetigen Keys in secure-base.conf gesetzt sind.
 # Globals:   FQDN, TIMEZONE
 #######################################
 require_base_keys() {

@@ -17,7 +17,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="ssh"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly SSHD_CONFIG="/etc/ssh/sshd_config"
 readonly PAM_SSHD="/etc/pam.d/sshd"
@@ -28,7 +28,7 @@ readonly LOGIN_MAIL_SCRIPT="/etc/ssh/login-mail-notification.sh"
 # -------------------------------------------------------------------------
 
 #######################################
-# Prueft die aus common.conf gelesenen Pflicht-Keys:
+# Prueft die aus secure-base.conf gelesenen Pflicht-Keys:
 #   MAIN_USER  — nicht leer, POSIX-Login-Format, nicht Systembenutzer
 #   ADMIN_MAIL — nicht leer, enthaelt '@'
 #   FQDN       — nicht leer, enthaelt Punkt
@@ -36,7 +36,7 @@ readonly LOGIN_MAIL_SCRIPT="/etc/ssh/login-mail-notification.sh"
 #######################################
 require_common_keys_or_die() {
     [ -n "${MAIN_USER:-}" ] \
-        || die "MAIN_USER ist leer — bitte in common.conf setzen."
+        || die "MAIN_USER ist leer — bitte in secure-base.conf setzen."
     [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
         || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
     case "$MAIN_USER" in
@@ -50,11 +50,11 @@ require_common_keys_or_die() {
             ;;
     esac
     [ -n "${ADMIN_MAIL:-}" ] \
-        || die "ADMIN_MAIL ist leer — bitte in common.conf setzen."
+        || die "ADMIN_MAIL ist leer — bitte in secure-base.conf setzen."
     [[ "$ADMIN_MAIL" == *"@"* ]] \
         || die "ADMIN_MAIL ist kein Mail-Format: $ADMIN_MAIL"
     [ -n "${FQDN:-}" ] \
-        || die "FQDN ist leer — bitte in common.conf setzen."
+        || die "FQDN ist leer — bitte in secure-base.conf setzen."
     [[ "$FQDN" == *.* ]] \
         || die "FQDN ist kein voller FQDN (kein Punkt): $FQDN"
 }

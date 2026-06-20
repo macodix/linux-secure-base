@@ -18,7 +18,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="unattended"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly UU_CONF="/etc/apt/apt.conf.d/50unattended-upgrades"
 readonly PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
@@ -56,11 +56,11 @@ require_unattended_conf() {
     # wird. Schliesst Anfuehrungszeichen, Semikolon, Leerzeichen und
     # insbesondere Zeilenumbruch aus.
     if ! [[ "${ADMIN_MAIL:-}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
-        die "ADMIN_MAIL ('${ADMIN_MAIL:-}') ist leer oder keine gueltige Mail-Adresse (erwartet z. B. admin@example.com). In common.conf korrigieren."
+        die "ADMIN_MAIL ('${ADMIN_MAIL:-}') ist leer oder keine gueltige Mail-Adresse (erwartet z. B. admin@example.com). In secure-base.conf korrigieren."
     fi
     local reboot=${AUTO_REBOOT:-true}
     if [ "$reboot" != "true" ] && [ "$reboot" != "false" ]; then
-        die "AUTO_REBOOT ('$reboot') muss 'true' oder 'false' sein. In common.conf korrigieren."
+        die "AUTO_REBOOT ('$reboot') muss 'true' oder 'false' sein. In secure-base.conf korrigieren."
     fi
     local rt=${AUTO_REBOOT_TIME:-23:45}
     local dt=${APT_DAILY_TIME:-23:15}
@@ -69,7 +69,7 @@ require_unattended_conf() {
     for name in AUTO_REBOOT_TIME:"$rt" APT_DAILY_TIME:"$dt" APT_DAILY_UPGRADE_TIME:"$ut"; do
         val=${name#*:}
         if ! valid_hhmm "$val"; then
-            die "${name%%:*} ('$val') ist keine gueltige Uhrzeit im Format HH:MM. In common.conf korrigieren."
+            die "${name%%:*} ('$val') ist keine gueltige Uhrzeit im Format HH:MM. In secure-base.conf korrigieren."
         fi
     done
     # Reihenfolge ist nur eine Empfehlung — kein Abbruch, nur Hinweis.
@@ -148,7 +148,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird hier bewusst NICHT geladen/validiert: der
+    # secure-base.conf wird hier bewusst NICHT geladen/validiert: der
     # Rueckbau ist konfig-unabhaengig und muss auch bei fehlender/defekter
     # Conf durchlaufen (fail-safe).
 

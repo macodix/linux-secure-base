@@ -2,7 +2,7 @@
 #
 # Linux Secure Base — Modul ufw
 # Firewall installieren, Default-Policy deny incoming/outgoing setzen,
-# die in common.conf gelisteten Ports oeffnen und die Firewall aktivieren.
+# die in secure-base.conf gelisteten Ports oeffnen und die Firewall aktivieren.
 # Sitzungs-kritisch: check/test ohne Service-Eingriff.
 # Aufruf: ufw.sh {install|uninstall|check|test}
 
@@ -15,7 +15,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="ufw"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # --- Konfig-Pruefung -------------------------------------------------
 
@@ -24,7 +24,7 @@ readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
 validate_port_list() {
     local name=$1
     if ! declare -p "$name" >/dev/null 2>&1; then
-        die "$name ist in common.conf nicht gesetzt."
+        die "$name ist in secure-base.conf nicht gesetzt."
     fi
     local -n _ports="$name"
     local p
@@ -35,7 +35,7 @@ validate_port_list() {
     done
 }
 
-# Prueft die drei Port-Listen aus common.conf.
+# Prueft die drei Port-Listen aus secure-base.conf.
 require_ufw_conf_or_die() {
     validate_port_list ALLOW_IN_TCP
     validate_port_list ALLOW_OUT_TCP
@@ -51,7 +51,7 @@ require_ssh_port_or_die() {
             return 0
         fi
     done
-    die "ALLOW_IN_TCP enthaelt keinen Port 22 — die Firewall wuerde den SSH-Verwaltungszugang aussperren. Bitte 22 in common.conf ergaenzen."
+    die "ALLOW_IN_TCP enthaelt keinen Port 22 — die Firewall wuerde den SSH-Verwaltungszugang aussperren. Bitte 22 in secure-base.conf ergaenzen."
 }
 
 # --- Regelsatz-Vergleich (check/test) --------------------------------
@@ -124,7 +124,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird hier bewusst NICHT geladen/validiert: der Rueckbau
+    # secure-base.conf wird hier bewusst NICHT geladen/validiert: der Rueckbau
     # ist konfig-unabhaengig und muss auch bei fehlender/defekter Conf
     # durchlaufen (fail-safe).
     if ! pkg_installed ufw; then
@@ -179,9 +179,9 @@ do_check() {
     fi
 
     if rules_match; then
-        log INFO "check: Regelsatz stimmt mit common.conf ueberein"
+        log INFO "check: Regelsatz stimmt mit secure-base.conf ueberein"
     else
-        log ERROR "check: Regelsatz weicht von common.conf ab"
+        log ERROR "check: Regelsatz weicht von secure-base.conf ab"
         log ERROR "  erwartet:  $(expected_rules | sort | tr '\n' ' ')"
         log ERROR "  vorhanden: $(actual_rules | sort | tr '\n' ' ')"
         rc=1
@@ -198,9 +198,9 @@ do_test() {
     local rc=0
 
     if rules_match; then
-        log INFO "test: Regelsatz stimmt mit common.conf ueberein"
+        log INFO "test: Regelsatz stimmt mit secure-base.conf ueberein"
     else
-        log ERROR "test: Regelsatz weicht von common.conf ab"
+        log ERROR "test: Regelsatz weicht von secure-base.conf ab"
         rc=1
     fi
 

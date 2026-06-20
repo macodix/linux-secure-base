@@ -1,7 +1,7 @@
-# common.conf.example — Vorlage fuer conf/common.conf (Zwei-Datei-Muster).
+# secure-base.conf.example — Vorlage fuer conf/secure-base.conf (Zwei-Datei-Muster).
 #
-# Auf dem Zielsystem nach conf/common.conf kopieren und die Platzhalter
-# durch die echten Werte ersetzen. Die echte common.conf wird nie ins
+# Auf dem Zielsystem nach conf/secure-base.conf kopieren und die Platzhalter
+# durch die echten Werte ersetzen. Die echte secure-base.conf wird nie ins
 # Repository eingecheckt. Alle Modul-Einstellungen stehen in dieser einen
 # Datei, gegliedert nach Abschnitten.
 #
