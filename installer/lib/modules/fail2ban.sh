@@ -153,12 +153,7 @@ do_check() {
 
     local rc=0
 
-    if pkg_installed fail2ban; then
-        log INFO "check: Paket fail2ban installiert"
-    else
-        log ERROR "check: Paket fail2ban nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages fail2ban || exit 1
 
     check_svc_enabled fail2ban || rc=1
 

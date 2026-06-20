@@ -270,12 +270,7 @@ do_check() {
 
     local rc=0
 
-    if pkg_installed monit; then
-        log INFO "check: Paket monit installiert"
-    else
-        log ERROR "check: Paket monit nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages monit || exit 1
 
     check_svc_enabled monit || rc=1
 

@@ -210,12 +210,7 @@ do_check() {
     upgrade=${APT_DAILY_UPGRADE_TIME:-23:30}
 
     # (1) Paket installiert.
-    if pkg_installed unattended-upgrades; then
-        log INFO "check: Paket unattended-upgrades installiert"
-    else
-        log ERROR "check: Paket unattended-upgrades nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages unattended-upgrades || exit 1
 
     # (2) Allowed-Origins-Block aktiv (drei Origins). Anchored mit
     #     fuehrendem Whitespace -> auskommentierte //-Zeilen matchen nicht.
