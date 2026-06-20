@@ -246,9 +246,13 @@ do_install() {
     if [ -s "$ga" ]; then
         log INFO "TOTP-Secret von $MAIN_USER bereits vorhanden — google-authenticator uebersprungen"
     elif [ "$TOTP_DELIVERY" = "mail" ]; then
-        # google-authenticator non-interaktiv; Output verwerfen (enthaelt
-        # Secret/QR — NICHT ins Logfile, NICHT aufs Terminal).
-        su -l "$MAIN_USER" -c 'google-authenticator -t -d -W -r 3 -R 30 -f' \
+        # google-authenticator fragt trotz aller Flags interaktiv
+        # "Enter code from app (-1 to skip)" — '-1' ueberspringt diese
+        # Verifikation (im mail-Zweig zwingend, da der Nutzer das Secret
+        # erst per Mail erhaelt). Output verwerfen (enthaelt Secret/QR —
+        # NICHT ins Logfile, NICHT aufs Terminal).
+        printf '%s\n' -1 \
+            | su -l "$MAIN_USER" -c 'google-authenticator -t -d -W -r 3 -R 30 -f' \
             >/dev/null 2>&1
         totp_per_mail "$MAIN_USER" "$ga"
         log INFO "TOTP-Secret fuer $MAIN_USER erzeugt und per Mail an ADMIN_MAIL versendet"
