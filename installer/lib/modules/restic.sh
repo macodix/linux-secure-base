@@ -23,7 +23,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="restic"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 readonly PASSPHRASE_FILE="/root/config/restic-passphrase"
 
 # --- Hilfsfunktionen -------------------------------------------------
@@ -60,16 +60,16 @@ sftp_ensure_dir() {
 # leer sein (Leer-Wert-Fallback).
 require_restic_conf() {
     if ! [[ "${FQDN:-}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
-        die "FQDN ('${FQDN:-}') ist leer oder kein gueltiger Hostname (erwartet z. B. server.example.com). In common.conf korrigieren."
+        die "FQDN ('${FQDN:-}') ist leer oder kein gueltiger Hostname (erwartet z. B. server.example.com). In secure-base.conf korrigieren."
     fi
     if ! [[ "${ADMIN_MAIL:-}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
-        die "ADMIN_MAIL ('${ADMIN_MAIL:-}') ist leer oder keine gueltige Mail-Adresse (erwartet z. B. admin@example.com). In common.conf korrigieren."
+        die "ADMIN_MAIL ('${ADMIN_MAIL:-}') ist leer oder keine gueltige Mail-Adresse (erwartet z. B. admin@example.com). In secure-base.conf korrigieren."
     fi
     if ! [[ "${SFTP_HOST_ALIAS:-}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        die "SFTP_HOST_ALIAS ('${SFTP_HOST_ALIAS:-}') ist leer oder enthaelt ungueltige Zeichen (erlaubt: A-Z a-z 0-9 . _ -). Muss ein bestehender Alias aus /root/.ssh/config sein. In common.conf korrigieren."
+        die "SFTP_HOST_ALIAS ('${SFTP_HOST_ALIAS:-}') ist leer oder enthaelt ungueltige Zeichen (erlaubt: A-Z a-z 0-9 . _ -). Muss ein bestehender Alias aus /root/.ssh/config sein. In secure-base.conf korrigieren."
     fi
     if ! [[ "${SFTP_PATH:-}" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
-        die "SFTP_PATH ('${SFTP_PATH:-}') ist leer oder kein gueltiger absoluter Pfad (ohne Whitespace/Sonderzeichen). In common.conf korrigieren."
+        die "SFTP_PATH ('${SFTP_PATH:-}') ist leer oder kein gueltiger absoluter Pfad (ohne Whitespace/Sonderzeichen). In secure-base.conf korrigieren."
     fi
 }
 
@@ -181,7 +181,7 @@ do_install() {
         if [ "$current" = "$newpass" ]; then
             log INFO "restic install: Repo-Passphrase unveraendert — uebersprungen"
         elif restic -r "$repo" -p "$PASSPHRASE_FILE" cat config >/dev/null 2>&1; then
-            die "RESTIC_PASSPHRASE weicht von der bestehenden $PASSPHRASE_FILE ab, mit der das Repo aktuell erreichbar und entschluesselbar ist. Ueberschreiben wuerde das Repo verwaisen lassen. RESTIC_PASSPHRASE in common.conf auf den korrekten Wert setzen, oder Datei/Repo bewusst manuell zuruecksetzen."
+            die "RESTIC_PASSPHRASE weicht von der bestehenden $PASSPHRASE_FILE ab, mit der das Repo aktuell erreichbar und entschluesselbar ist. Ueberschreiben wuerde das Repo verwaisen lassen. RESTIC_PASSPHRASE in secure-base.conf auf den korrekten Wert setzen, oder Datei/Repo bewusst manuell zuruecksetzen."
         elif ! sftp_reachable >/dev/null 2>&1; then
             die "RESTIC_PASSPHRASE weicht von der bestehenden Passphrase-Datei ab, und das SFTP-Ziel ist gerade NICHT erreichbar — ob dahinter ein mit der alten Passphrase entschluesselbares Repo liegt, laesst sich nicht feststellen. Ueberschreiben unterbleibt. SFTP-Ziel pruefen und install erneut starten."
         else
@@ -228,9 +228,9 @@ EOF
 do_uninstall() {
     require_root
     # restic.conf wird NICHT geladen: der Rueckbau ist konfig-unabhaengig.
-    # Ausnahme common.conf: Backup-Skript und Cron-Datei sind FQDN-benannt,
+    # Ausnahme secure-base.conf: Backup-Skript und Cron-Datei sind FQDN-benannt,
     # daher wird FQDN benoetigt. Direktes source (statt load_conf), damit ein
-    # fehlendes/defektes common.conf den fail-safe Teardown nicht abbricht.
+    # fehlendes/defektes secure-base.conf den fail-safe Teardown nicht abbricht.
     # Der SFTP-Zugang (Schluessel, /root/.ssh/config) gehoert der Vorbedingung
     # und wird NICHT angefasst.
     local fqdn=""
@@ -239,7 +239,7 @@ do_uninstall() {
         source "$CONF_COMMON"
         fqdn=${FQDN:-}
         # FQDN gegen den Namens-Zeichensatz pruefen, bevor er in Dateipfade
-        # geht (kein Pfad-Traversal aus einem manipulierten common.conf).
+        # geht (kein Pfad-Traversal aus einem manipulierten secure-base.conf).
         if ! [[ "$fqdn" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
             fqdn=""
         fi

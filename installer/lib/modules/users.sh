@@ -14,7 +14,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="users"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # ---------------------------------------------------------------------
 # Eingangs-Validierung
@@ -27,7 +27,7 @@ readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
 #     vor allem fuer do_uninstall mit UNINSTALL_REMOVE_USER=yes)
 require_main_user_or_die() {
     [ -n "${MAIN_USER:-}" ] \
-        || die "MAIN_USER ist leer — bitte in common.conf setzen."
+        || die "MAIN_USER ist leer — bitte in secure-base.conf setzen."
     [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
         || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
     case "$MAIN_USER" in

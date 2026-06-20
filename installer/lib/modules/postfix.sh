@@ -13,7 +13,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="postfix"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly MAIN_CF="/etc/postfix/main.cf"
 readonly SASL_PASSWD="/etc/postfix/sasl_passwd"
@@ -21,17 +21,17 @@ readonly RECIPIENT_CANONICAL="/etc/postfix/recipient_canonical"
 readonly ALIASES="/etc/aliases"
 readonly POSTFIX_PACKAGES=(postfix mailutils libsasl2-modules ca-certificates)
 
-# Prueft, dass die fuer postfix noetigen Keys in common.conf gesetzt sind.
+# Prueft, dass die fuer postfix noetigen Keys in secure-base.conf gesetzt sind.
 # RELAY_PASSWORD ist KEIN Pflicht-Key — leer-Wert loest interaktive Eingabe
 # aus. FQDN, RELAY_HOST: sanity-Check gegen Newline/Whitespace, damit der
 # debconf-Heredoc und der relayhost-Eintrag nicht durch einen Tippfehler in
 # der conf zerschossen werden koennen.
 require_postfix_keys() {
-    [ -n "${FQDN:-}" ]        || die "FQDN nicht gesetzt in common.conf"
-    [ -n "${ADMIN_MAIL:-}" ]  || die "ADMIN_MAIL nicht gesetzt in common.conf"
-    [ -n "${RELAY_HOST:-}" ]  || die "RELAY_HOST nicht gesetzt in common.conf"
-    [ -n "${RELAY_PORT:-}" ]  || die "RELAY_PORT nicht gesetzt in common.conf"
-    [ -n "${RELAY_USER:-}" ]  || die "RELAY_USER nicht gesetzt in common.conf"
+    [ -n "${FQDN:-}" ]        || die "FQDN nicht gesetzt in secure-base.conf"
+    [ -n "${ADMIN_MAIL:-}" ]  || die "ADMIN_MAIL nicht gesetzt in secure-base.conf"
+    [ -n "${RELAY_HOST:-}" ]  || die "RELAY_HOST nicht gesetzt in secure-base.conf"
+    [ -n "${RELAY_PORT:-}" ]  || die "RELAY_PORT nicht gesetzt in secure-base.conf"
+    [ -n "${RELAY_USER:-}" ]  || die "RELAY_USER nicht gesetzt in secure-base.conf"
     [[ "$FQDN" =~ ^[A-Za-z0-9.-]+$ ]] \
         || die "FQDN enthaelt unerlaubte Zeichen (nur [A-Za-z0-9.-]): $FQDN"
     [[ "$RELAY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] \
@@ -85,7 +85,7 @@ EOF
     #    Passwort-Hygiene: relay_password darf NIE per log/printf/echo
     #    ausgegeben werden — read -s-Prompt nur Aufforderungstext, kein
     #    Echo der Eingabe ins Logfile.
-    # RELAY_PASSWORD wird per load_conf aus common.conf gesourct;
+    # RELAY_PASSWORD wird per load_conf aus secure-base.conf gesourct;
     # statisch nicht erkennbar, daher SC2153 unterdruecken.
     # shellcheck disable=SC2153
     local relay_password="${RELAY_PASSWORD:-}"
@@ -233,7 +233,7 @@ do_test() {
     load_conf "$CONF_COMMON"
     # do_test braucht nur ADMIN_MAIL — die RELAY_*-Keys sind nur fuer install
     # relevant; zur Testzeit nimmt postfix die in main.cf geschriebenen Werte.
-    [ -n "${ADMIN_MAIL:-}" ] || die "ADMIN_MAIL nicht gesetzt in common.conf"
+    [ -n "${ADMIN_MAIL:-}" ] || die "ADMIN_MAIL nicht gesetzt in secure-base.conf"
 
     log INFO "Test-Mail an $ADMIN_MAIL absetzen"
     echo "secure-base postfix self-test ($(date --iso-8601=seconds))" \

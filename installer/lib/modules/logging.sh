@@ -18,7 +18,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="logging"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly JOURNALD_CONF="/etc/systemd/journald.conf"
 readonly LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
@@ -43,14 +43,14 @@ logwatch_mailfrom() {
 # Ableitbarkeit. Bricht sonst mit die ab.
 require_logging_mail() {
     if [ -z "${ADMIN_MAIL:-}" ]; then
-        die "ADMIN_MAIL nicht gesetzt in common.conf — Logwatch-Empfaenger fehlt."
+        die "ADMIN_MAIL nicht gesetzt in secure-base.conf — Logwatch-Empfaenger fehlt."
     fi
     # FQDN-Zeichensatz pruefen: nur Buchstaben, Ziffern, Punkt und Bindestrich.
     if ! [[ "${FQDN:-}" =~ ^[A-Za-z0-9.-]+$ ]]; then
-        die "FQDN ('${FQDN:-}') enthaelt unzulaessige Zeichen (erlaubt: Buchstaben, Ziffern, '.', '-'). FQDN in common.conf korrigieren."
+        die "FQDN ('${FQDN:-}') enthaelt unzulaessige Zeichen (erlaubt: Buchstaben, Ziffern, '.', '-'). FQDN in secure-base.conf korrigieren."
     fi
     if [ -z "$(logwatch_mailfrom)" ]; then
-        die "Kein Logwatch-Absender ableitbar: FQDN ('${FQDN:-}') enthaelt keine Domain. FQDN in common.conf als vollstaendigen Hostnamen mit Domain setzen (z. B. srv001.example.com)."
+        die "Kein Logwatch-Absender ableitbar: FQDN ('${FQDN:-}') enthaelt keine Domain. FQDN in secure-base.conf als vollstaendigen Hostnamen mit Domain setzen (z. B. srv001.example.com)."
     fi
 }
 
@@ -146,7 +146,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird hier bewusst NICHT geladen/validiert: der Rueckbau
+    # secure-base.conf wird hier bewusst NICHT geladen/validiert: der Rueckbau
     # ist konfig-unabhaengig und muss auch bei fehlender/defekter Conf
     # durchlaufen (fail-safe).
 

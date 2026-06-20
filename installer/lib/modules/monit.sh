@@ -18,7 +18,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="monit"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly MONITRC="/etc/monit/monitrc"
 readonly CONFD="/etc/monit/conf.d"
@@ -228,7 +228,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird bewusst NICHT geladen: der Rueckbau ist
+    # secure-base.conf wird bewusst NICHT geladen: der Rueckbau ist
     # konfig-unabhaengig (feste Datei-/Marker-Namen) und muss auch bei
     # fehlender/defekter Conf durchlaufen (fail-safe).
     if ! pkg_installed monit; then

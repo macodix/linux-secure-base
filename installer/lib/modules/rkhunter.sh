@@ -17,7 +17,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="rkhunter"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly RK_DEFAULT="/etc/default/rkhunter"
 readonly RK_CONF="/etc/rkhunter.conf"
@@ -45,13 +45,13 @@ rkhunter_mailfrom() {
 # Ableitbarkeit. Bricht sonst ab.
 require_rkhunter_mail() {
     if [ -z "${ADMIN_MAIL:-}" ]; then
-        die "ADMIN_MAIL nicht gesetzt in common.conf — rkhunter-Empfaenger fehlt."
+        die "ADMIN_MAIL nicht gesetzt in secure-base.conf — rkhunter-Empfaenger fehlt."
     fi
     if ! [[ "${FQDN:-}" =~ ^[A-Za-z0-9.-]+$ ]]; then
-        die "FQDN ('${FQDN:-}') enthaelt unzulaessige Zeichen (erlaubt: Buchstaben, Ziffern, '.', '-'). FQDN in common.conf korrigieren."
+        die "FQDN ('${FQDN:-}') enthaelt unzulaessige Zeichen (erlaubt: Buchstaben, Ziffern, '.', '-'). FQDN in secure-base.conf korrigieren."
     fi
     if [ -z "$(rkhunter_mailfrom)" ]; then
-        die "Kein rkhunter-Absender ableitbar: FQDN ('${FQDN:-}') enthaelt keine Domain. FQDN in common.conf als vollstaendigen Hostnamen mit Domain setzen (z. B. srv001.example.com)."
+        die "Kein rkhunter-Absender ableitbar: FQDN ('${FQDN:-}') enthaelt keine Domain. FQDN in secure-base.conf als vollstaendigen Hostnamen mit Domain setzen (z. B. srv001.example.com)."
     fi
 }
 
@@ -99,7 +99,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird bewusst NICHT geladen: der Rueckbau ist
+    # secure-base.conf wird bewusst NICHT geladen: der Rueckbau ist
     # konfig-unabhaengig und muss auch bei fehlender/defekter Conf
     # durchlaufen (fail-safe).
     #

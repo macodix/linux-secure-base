@@ -16,7 +16,7 @@ readonly SCRIPT_DIR
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # Kanonische Ausfuehrungs-Reihenfolge (nicht konfigurierbar).
 readonly INSTALL_ORDER=(
@@ -80,7 +80,7 @@ EXIT STATUS
     2  Aufruffehler
 
 HINWEISE
-    Ohne Modul-Argumente laufen alle in MODULES_ENABLED (common.conf) aktivierten
+    Ohne Modul-Argumente laufen alle in MODULES_ENABLED (secure-base.conf) aktivierten
     Module in der fest vorgegebenen Reihenfolge. Mit Modul-Argumenten nur die
     angegebenen (ebenfalls in der kanonischen Reihenfolge).
 
@@ -130,7 +130,7 @@ select_modules() {
             die "Unbekanntes Modul: $arg. Bekannte Module: ${INSTALL_ORDER[*]}"
         fi
         if ! in_list "$arg" "${MODULES_ENABLED[@]}"; then
-            die "Modul $arg ist nicht in MODULES_ENABLED aktiviert (in common.conf ergaenzen)"
+            die "Modul $arg ist nicht in MODULES_ENABLED aktiviert (in secure-base.conf ergaenzen)"
         fi
     done
 

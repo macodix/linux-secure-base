@@ -17,7 +17,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="fail2ban"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly JAIL_CONF="/etc/fail2ban/jail.conf"
 readonly JAIL_LOCAL="/etc/fail2ban/jail.local"
@@ -115,7 +115,7 @@ do_install() {
 
     # Aussperr-Hinweis.
     if [ -z "${IGNOREIP:-}" ]; then
-        log WARN "fail2ban aktiv OHNE IGNOREIP-Whitelist: der sshd-Jail kann die eigene Admin-IP nach wiederholten Fehl-Logins temporaer bannen (Default: bantime 10m, maxretry 5). DRINGEND empfohlen: vor dem Scharfschalten — besonders ohne erreichbare Out-of-Band-/Provider-Konsole — die eigene Management-IP via IGNOREIP in common.conf eintragen. Rettungswege bei Selbst-Bann: in einer noch offenen Sitzung 'fail2ban-client set sshd unbanip <IP>', andernfalls Out-of-Band-/Provider-Konsole."
+        log WARN "fail2ban aktiv OHNE IGNOREIP-Whitelist: der sshd-Jail kann die eigene Admin-IP nach wiederholten Fehl-Logins temporaer bannen (Default: bantime 10m, maxretry 5). DRINGEND empfohlen: vor dem Scharfschalten — besonders ohne erreichbare Out-of-Band-/Provider-Konsole — die eigene Management-IP via IGNOREIP in secure-base.conf eintragen. Rettungswege bei Selbst-Bann: in einer noch offenen Sitzung 'fail2ban-client set sshd unbanip <IP>', andernfalls Out-of-Band-/Provider-Konsole."
     else
         log INFO "fail2ban aktiv mit IGNOREIP-Whitelist — Admin-IP vom Bannen ausgenommen."
     fi
@@ -123,7 +123,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    # common.conf wird bewusst NICHT geladen: der Rueckbau ist
+    # secure-base.conf wird bewusst NICHT geladen: der Rueckbau ist
     # konfig-unabhaengig und muss auch bei fehlender/defekter Conf
     # durchlaufen (fail-safe).
     if ! pkg_installed fail2ban; then
