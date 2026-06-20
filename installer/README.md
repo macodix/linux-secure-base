@@ -73,7 +73,7 @@ git clone https://github.com/macodix/linux-secure-base.git
 ### 2. Installer Verzeichnis
 
 ```
-cd linux-secure-base/installer
+cd linux-secure-base-main/installer
 ```
 
 ### 3. Beispiel-Konfigurationsdatei kopieren
@@ -102,11 +102,15 @@ MAIN_USER=""                   # Benutzernamen des Hauptbenutzers (z. B. für Zu
 MAIN_USER_PASSWORD=""          # *optional*, wird abgefragt wenn nicht gesetzt
 MAIN_USER_PUBKEY=""            # *entweder* SSH Public Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
 MAIN_USER_PUBKEY_FILE=""       # *oder* einen Pfad zu der Datei mit dem Public Key angeben
+TOTP_DELIVERY="terminal"       # *optional*, wenn auf 'mail' gesetzt wird Google Authenticator Secret und QR-Code an ADMIN_MAIL geschickt
 
 # == restic ==
 SFTP_HOST_ALIAS=""             # der Hostname des Backup SFTP-Servers in der ~/.ssh/config (SFTP Zugang dort konfigurieren)
 SFTP_PATH=""                   # Backup-Verzeichnis auf dem Backup Server
 RESTIC_PASSPPHRASE=""          # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
+
+# == monit ==
+MONIT_MAIL_FROM=""             # Absender Adress für Monitoring Mail Alerts
 ```
 
 Alle anderen Werte können bei Bedarf natürlich auch angepasst werden.
