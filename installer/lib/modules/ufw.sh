@@ -151,12 +151,7 @@ do_check() {
 
     local rc=0
 
-    if pkg_installed ufw; then
-        log INFO "check: Paket ufw installiert"
-    else
-        log ERROR "check: Paket ufw nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages ufw || exit 1
 
     check_svc_enabled ufw || rc=1
 

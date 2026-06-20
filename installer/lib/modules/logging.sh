@@ -236,12 +236,7 @@ do_check() {
     fi
 
     # (3) logwatch installiert.
-    if pkg_installed logwatch; then
-        log INFO "check: Paket logwatch installiert"
-    else
-        log ERROR "check: Paket logwatch nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages logwatch || exit 1
 
     # (4) logwatch-Direktiven (MailTo/MailFrom ERE-maskiert).
     local mailto_re mailfrom_re

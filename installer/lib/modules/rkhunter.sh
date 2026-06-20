@@ -137,12 +137,7 @@ do_check() {
 
     local rc=0
 
-    if pkg_installed rkhunter; then
-        log INFO "check: Paket rkhunter installiert"
-    else
-        log ERROR "check: Paket rkhunter nicht installiert — Soll-Zustand nicht erfuellt"
-        exit 1
-    fi
+    check_packages rkhunter || exit 1
 
     local recipient rcpt_re mail_cmd_re
     recipient=${ADMIN_MAIL:-}
