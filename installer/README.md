@@ -41,7 +41,6 @@ Der `secure-base-installer` dient dazu den Prozess der Installation eines gehär
 Diese Anleitung führt von einem frischen Server bis zum gehärteten System.
 Sie ist bewusst knapp gehalten und in dieser Form vollständig lauffähig — die
 Details stehen weiter unten.
-Die Kurzanleitung 
 
 
 ## Voraussetzungen
@@ -85,29 +84,29 @@ cp conf/secure-base.conf.example conf/secure-base.conf
 
 ### 4. Konfiguration anpassen (Mindestanforderungen)
 
-Die Konfigurationsdatei `secure-base.conf` mit einem Editor öffnen und mindestens folgende Werte eintragen/ändern:
+Die Konfigurationsdatei `secure-base.conf` mit einem Editor öffnen und mindestens folgende Werte eintragen:
 
 ```
 # == Allgemein ==
-FQDN="server.example.com"         # vollständiger Servername mit Domain
-ADMIN_MAIL="admin@example.com"    # die E-Mail-Adresse für administrative Benachrichtigungen (z. B. Monitoring)
+FQDN=""                        # vollständiger Servername mit Domain
+ADMIN_MAIL=""                  # die E-Mail-Adresse für administrative Benachrichtigungen (z. B. Monitoring)
 
 # == postfix ==
-RELAY_HOST="smtp.example.com"     # Name des SMTP Servers
-RELAY_PORT="587"                  # *optional*, falls der SMTP-Server nicht auf Port 587 hört
-RELAY_USER="user@example.com"     # Username (meist E-Mail-Adresse) des SMTP Users von RELAY_HOST
-RELAY_PASSWORD=""                 # *optional*, wird abgefragt wenn nicht gesetzt 
+RELAY_HOST=""                  # Name des SMTP Servers
+RELAY_PORT="587"               # *optional*, falls der SMTP-Server nicht auf Port 587 hört
+RELAY_USER=""                  # Username (meist E-Mail-Adresse) des SMTP Users von RELAY_HOST
+RELAY_PASSWORD=""              # *optional*, wird abgefragt wenn nicht gesetzt 
 
 # == users ==
-MAIN_USER="hauptbenutzer"         # Benutzernamen des Hauptbenutzers (z. B. für Zugriff via SSH)
-MAIN_USER_PASSWORD=""             # *optional*, wird abgefragt wenn nicht gesetzt
-MAIN_USER_PUBKEY=""               # *entweder* SSH Public Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
-MAIN_USERP_PUBKEY_FILE=""         # *oder* einen Pfad zu der Datei mit dem Public Key angeben
+MAIN_USER=""                   # Benutzernamen des Hauptbenutzers (z. B. für Zugriff via SSH)
+MAIN_USER_PASSWORD=""          # *optional*, wird abgefragt wenn nicht gesetzt
+MAIN_USER_PUBKEY=""            # *entweder* SSH Public Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
+MAIN_USER_PUBKEY_FILE=""       # *oder* einen Pfad zu der Datei mit dem Public Key angeben
 
-# == restic
-SFTP_HOST_ALIAS="restic-backup"   # der Hostname des Backup SFTP-Servers in der ~/.ssh/config (SFTP Zugang dort konfigurieren)
-SFTP_PATH="/backups/<hostname>"   # Backup-Verzeichnis auf dem Backup Server
-RESTIC_PASSWORD=""                # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
+# == restic ==
+SFTP_HOST_ALIAS=""             # der Hostname des Backup SFTP-Servers in der ~/.ssh/config (SFTP Zugang dort konfigurieren)
+SFTP_PATH=""                   # Backup-Verzeichnis auf dem Backup Server
+RESTIC_PASSPPHRASE=""          # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
 ```
 
 Alle anderen Werte können bei Bedarf natürlich auch angepasst werden.
@@ -146,7 +145,7 @@ funktioniert nicht:
 |---|---|---|
 | `FQDN` | Allgemein | vollständiger Hostname des Servers |
 | `ADMIN_MAIL` | Allgemein | Zieladresse aller Systembenachrichtigungen |
-| `MAIN_USER` | Allgemein | Login des nicht-root-Hauptbenutzers |
+| `MAIN_USER` | users | Login des nicht-root-Hauptbenutzers |
 | `MAIN_USER_PUBKEY` *oder* `MAIN_USER_PUBKEY_FILE` | users | SSH-Public-Key des Hauptbenutzers — **ohne ihn kein SSH-Login** |
 | `RELAY_HOST`, `RELAY_PORT`, `RELAY_USER` | postfix | SMTP-Smarthost für den Mail-Versand |
 | `SFTP_HOST_ALIAS`, `SFTP_PATH` | restic | SFTP-Ziel für das Backup |
@@ -157,7 +156,7 @@ den SSH-Zugang aus — der Installer bricht in diesem Fall ab.
 ## Passwörter
 
 Die Passwort-Einträge `RELAY_PASSWORD`, `MAIN_USER_PASSWORD` und `RESTIC_PASSPHRASE`
-können auch leer gelassen werden. In diesem Fall werden bei `secure-base-install install`
+können auch leer gelassen werden. In diesem Fall werden bei `secure-base-installer install`
 die Passwörter interaktiv abgefragt.
 
 ## Module aktivieren
