@@ -14,11 +14,11 @@ Installiert und härtet ein Ubuntu-Grundsystem („Linux Secure Base") in 12 Mod
 - monatliche Härtungsprüfung.
 
 Die Reihenfolge der Module ist dabei fest voreingestellt und kann nicht verändert werden.
-Jedes Modul ist aber auch einzeln auführbar.
+Jedes Modul ist aber auch einzeln ausführbar.
 
-Der ˋsecure-base-installerˋ bietet auch Befehle zur Überorüfung ˋsecure-base-installer checkˋ bzw. zum Test der Installation an (ˋsecure-base-installer testˋ)
+Der `secure-base-installer` bietet auch Befehle zur Überprüfung `secure-base-installer check` bzw. zum Test der Installation an (`secure-base-installer test`)
 
-Der ˋsecure-base-installerˋ dient dazu den Prozess der Installation eines gehärtetetn Server zu standardisieren und zu beschleunigen. Mehr Infomartionen, auch die Funktioneweise der einzlen Module, stehen im ˋdocsˋ-Verzeichnis in diesem Repo.
+Der `secure-base-installer` dient dazu den Prozess der Installation eines gehärteten Server zu standardisieren und zu beschleunigen. Mehr Informationen, auch die Funktionsweise der einzelnen Module, stehen im `docs`-Verzeichnis in diesem Repo.
 
 ---
 # Inhalt
@@ -57,14 +57,14 @@ Die Kurzanleitung
 
 ### 1. Den Installer herunterladen
 
-**a) Entweder mit ˋwgetˋ**
+**a) Entweder mit `wget`**
 
 ```sh
 wget -qO- https://github.com/macodix/linux-secure-base/archive/refs/heads/main.tar.gz | tar xz
 mv linux-secure-base-main linux-secure-base
 ```
 
-**b) oder mit ˋgitˋ**
+**b) oder mit `git`**
 
 ```sh
 apt update && apt install -y git
@@ -77,7 +77,7 @@ git clone https://github.com/macodix/linux-secure-base.git
 cd linux-secure-base/installer
 ```
 
-### 3. Besipiel-Konfigurationsdatei kopieren
+### 3. Beispiel-Konfigurationsdatei kopieren
 
 ```
 cp conf/secure-base.conf.example conf/secure-base.conf
@@ -85,23 +85,23 @@ cp conf/secure-base.conf.example conf/secure-base.conf
 
 ### 4. Konfiguration anpassen (Mindestanforderungen)
 
-Die Konfigurationsdatei ˋsecure-base.confˋ mit einem Editor öffnen und mindestens folgende Werte eintragen/ändern:
+Die Konfigurationsdatei `secure-base.conf` mit einem Editor öffnen und mindestens folgende Werte eintragen/ändern:
 
 ```
 # == Allgemein ==
-FQDN="server.example.com"         # vollständige Servername mit Domain
-ADMIN_MAIL="admin@example.com"    # die EMail-Adress für administrative Nebachrichtigungen (z. B. Monitoring)
+FQDN="server.example.com"         # vollständiger Servername mit Domain
+ADMIN_MAIL="admin@example.com"    # die E-Mail-Adresse für administrative Benachrichtigungen (z. B. Monitoring)
 
 # == postfix ==
 RELAY_HOST="smtp.example.com"     # Name des SMTP Servers
-RELAY_PORT="587"                  # *optional*, fall SMTP Server nicht auf Port 587 hört
-RELAY_USER="user@example.com"     # Username (meist EMail-Adresse) des SMTP Users von RELAY_HOST
+RELAY_PORT="587"                  # *optional*, falls der SMTP-Server nicht auf Port 587 hört
+RELAY_USER="user@example.com"     # Username (meist E-Mail-Adresse) des SMTP Users von RELAY_HOST
 RELAY_PASSWORD=""                 # *optional*, wird abgefragt wenn nicht gesetzt 
 
 # == users ==
 MAIN_USER="hauptbenutzer"         # Benutzernamen des Hauptbenutzers (z. B. für Zugriff via SSH)
 MAIN_USER_PASSWORD=""             # *optional*, wird abgefragt wenn nicht gesetzt
-MAIN_USER_PUBKEY=""               # *entweder* SSH Pubic Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
+MAIN_USER_PUBKEY=""               # *entweder* SSH Public Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
 MAIN_USERP_PUBKEY_FILE=""         # *oder* einen Pfad zu der Datei mit dem Public Key angeben
 
 # == restic
@@ -115,7 +115,7 @@ Alle anderen Werte können bei Bedarf natürlich auch angepasst werden.
 
 ### 5. Installation
 
-Optional kann eine Testlauf (dry-run) der Installation gestartet werden mit:
+Optional kann ein Testlauf (dry-run) der Installation gestartet werden mit:
 ```
  ./secure-base-installer -n install
 ```
@@ -127,11 +127,11 @@ Oder direkt die Installation gestartet werden:
 
 ### H I N W E I S E
 
->Während der Installation wird SSH Konfiguration geändert. Es wird eindrücklich empfohlen, vor schließen des ˋrootˋ-Terminals dden SSH Zugang des Haupbenutzers zu testen.
+>Während der Installation wird SSH Konfiguration geändert. Es wird eindrücklich empfohlen, vor dem Schließen des `root`-Terminals den SSH Zugang des Hauptbenutzers zu testen.
 >
 >Die Konfigurations-Datei sollte unmittelbar nach der Installation vom Server entfernt oder gelöscht werden
 >
->Für mehr Information über den Installationsverlauf kann die Logdatei ˋ/var/log/secure-base/secure-base.logˋ prer ˋtail -fˋ in einem zweiten Terminal überwacht werden.
+>Für mehr Information über den Installationsverlauf kann die Logdatei `/var/log/secure-base/secure-base.log` per `tail -f` in einem zweiten Terminal überwacht werden.
 
 ---
 
@@ -163,13 +163,13 @@ die Passwörter interaktiv abgefragt.
 ## Module aktivieren
 
 `MODULES_ENABLED` legt fest, **welche** Module installiert werden. Die **Reihenfolge** ist
-allerdings fest vorgegeben und unabhängig von dieser Liste. Nicht gwünschte Module könnnen 
-hier entfernet werden.
+allerdings fest vorgegeben und unabhängig von dieser Liste. Nicht gewünschte Module können 
+hier entfernt werden.
 
 
 ## Weitere Konfigurationseinstellungen
 
-Zur Erklärung weitere Einstellungen in der Konfigurationsdatei bitte die Kommentare in
+Zur Erklärung weiterer Einstellungen in der Konfigurationsdatei bitte die Kommentare in
 der Datei beachten.
 
 ---
@@ -190,8 +190,8 @@ secure-base-installer [OPTIONEN] <KOMMANDO> [<modul> ...]
 | `test` | Scharfer Funktionstest, ändert nichts |
 
 Ohne Modul-Argumente laufen alle in `MODULES_ENABLED` aktivierten Module.
-Mit den Modul-Argumenten können auch einzelene Module installiertm deinstalliert
-oder pegrüft (test, check) werden:
+Mit den Modul-Argumenten können auch einzelne Module installiert, deinstalliert
+oder geprüft (test, check) werden:
 
 ```sh
 ./secure-base-installer check              # alle aktivierten Module prüfen
