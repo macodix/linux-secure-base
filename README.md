@@ -34,7 +34,7 @@ Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden,
 
 Dieses Projekt steht unter der **GNU General Public License v3.0** (GPL-3.0) — siehe [LICENSE](LICENSE). Wer die Scripte verändert und weitergibt, muss den Quellcode ebenfalls unter der GPL offenlegen; so bleiben Änderungen offen und nachprüfbar.
 
-Copyright (C) 2026 macodix
+Copyright (C) 2026 macodix / Martin Henkel
 
 Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistung (siehe „Grenzen & Warnung" oben und den vollen Lizenztext in [LICENSE](LICENSE)).
 
