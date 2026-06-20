@@ -403,4 +403,35 @@ do_test() {
     return 0
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   MAIN_USER, TOTP_DELIVERY (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Hauptbenutzer"
+    doc_packages libpam-google-authenticator
+    doc_users "$(doc_val MAIN_USER)" sudo ssh-users
+    doc_files_begin
+    doc_file "/home/$(doc_val MAIN_USER)/.ssh/authorized_keys" \
+        "SSH-Public-Key hinterlegt"
+    doc_file "/home/$(doc_val MAIN_USER)/.google_authenticator" \
+        "TOTP-Secret (Zustellung: $(doc_val TOTP_DELIVERY))"
+    doc_note "Passwort und TOTP-Material werden nicht dokumentiert (Secret)."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

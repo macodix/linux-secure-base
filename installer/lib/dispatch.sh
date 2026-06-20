@@ -3,9 +3,9 @@
 # secure-base Helper: Subkommando-Dispatch fuer Module
 #
 # Bietet dispatch — validiert Subkommando, oeffnet das Log und ruft
-# do_install/do_uninstall/do_check/do_test.
+# do_install/do_uninstall/do_check/do_test/do_doc.
 #
-# Das aufrufende Modul muss diese vier Funktionen definieren.
+# Das aufrufende Modul muss diese fuenf Funktionen definieren.
 # Im Regelfall ueber den Installer secure-base-installer aufrufen.
 
 # Modul und Subkommando des laufenden Dispatch — von dispatch gesetzt,
@@ -21,14 +21,19 @@ SB_SUB=""
 #######################################
 _sb_finish() {
     local rc=$?
-    local status
-    if [ "$rc" -eq 0 ] && [ "$SB_ERROR_COUNT" -eq 0 ]; then
-        status=ERFOLG
-    else
-        status=FEHLER
+    # Im doc-Lauf keine Abschlussbilanz und kein Leerzeilen-Trenner ausgeben:
+    # doc_build faengt stdout des Kindprozesses ab; INFO geht auf stdout und
+    # wuerde den Markdown verunreinigen (Plan 2.9).
+    if [ "$SB_SUB" != "doc" ]; then
+        local status
+        if [ "$rc" -eq 0 ] && [ "$SB_ERROR_COUNT" -eq 0 ]; then
+            status=ERFOLG
+        else
+            status=FEHLER
+        fi
+        log INFO "=== ${SB_MODUL} ${SB_SUB}: ${status} (${SB_WARN_COUNT} Warnungen, ${SB_ERROR_COUNT} Fehler) ==="
+        printf '\n'
     fi
-    log INFO "=== ${SB_MODUL} ${SB_SUB}: ${status} (${SB_WARN_COUNT} Warnungen, ${SB_ERROR_COUNT} Fehler) ==="
-    printf '\n'
     _sb_close_log
 }
 
@@ -92,7 +97,7 @@ dispatch() {
             _dispatch_usage "$modul"
             exit 2
             ;;
-        install | uninstall | check | test) ;;
+        install | uninstall | check | test | doc) ;;
         *)
             printf 'unbekanntes Subkommando: %s\n\n' "$sub" >&2
             _dispatch_usage "$modul"
@@ -103,6 +108,7 @@ dispatch() {
 
     # root nur fuer aendernde Laeufe; check/test kommen ohne root aus
     # (konsistent zum Installer secure-base-installer).
+    # doc ist rein lesend und benoetigt ebenfalls kein root (Plan 2.9).
     case "$sub" in
         install | uninstall) require_root ;;
     esac
@@ -116,12 +122,15 @@ dispatch() {
 
     # Start-Marker ins zentrale Logfile: grenzt Modul-Laeufe lesbar ab und
     # dient dem Installer als Anker fuer die Fehlersuche dieses Laufs.
-    log INFO "--- Modul ${modul} (${sub}) ---"
+    # Im doc-Lauf unterdrueckt: doc_build faengt stdout ab; INFO geht auf
+    # stdout und wuerde den Markdown verunreinigen (Plan 2.9).
+    [ "$sub" = "doc" ] || log INFO "--- Modul ${modul} (${sub}) ---"
 
     case "$sub" in
         install) do_install "$@" ;;
         uninstall) do_uninstall "$@" ;;
         check) do_check "$@" ;;
         test) do_test "$@" ;;
+        doc) do_doc "$@" ;;
     esac
 }

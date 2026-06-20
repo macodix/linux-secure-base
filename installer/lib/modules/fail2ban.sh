@@ -233,4 +233,34 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   JAIL_LOCAL (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Brute-Force-Schutz"
+    doc_packages fail2ban
+    doc_files_begin
+    doc_file "$JAIL_LOCAL" \
+        "Kopie von jail.conf (schuetzt Konfig gegen Updates)" \
+        "ignoreip = 127.0.0.1/8 ::1 $(doc_val IGNOREIP)"
+    doc_services fail2ban
+    doc_note "sshd-Jail ist in der Standardkonfiguration aktiv."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

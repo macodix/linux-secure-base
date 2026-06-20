@@ -394,4 +394,43 @@ do_test() {
     return 1
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   SSHD_CONFIG, PAM_SSHD, LOGIN_MAIL_SCRIPT (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "SSH-Haertung mit TOTP"
+    doc_files_begin
+    doc_file "$SSHD_CONFIG" \
+        "PermitRootLogin no" \
+        "PasswordAuthentication no" \
+        "PubkeyAuthentication yes" \
+        "AllowGroups ssh-users" \
+        "AuthenticationMethods publickey,keyboard-interactive" \
+        "ChallengeResponseAuthentication $(doc_val ENABLE_CHALLENGE_RESPONSE_AUTH)"
+    doc_file "$PAM_SSHD" \
+        "@include common-auth auskommentiert (TOTP-Bypass-Schutz)" \
+        "auth required pam_google_authenticator.so"
+    if [ "$(doc_val ENABLE_LOGIN_MAIL)" != "no" ]; then
+        doc_file "$LOGIN_MAIL_SCRIPT" \
+            "SSH-Login-Mail an $(doc_val ADMIN_MAIL) (via pam_exec)"
+    fi
+    doc_note "openssh-server und libpam-google-authenticator werden nicht installiert (Systempakete)."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"
