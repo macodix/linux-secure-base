@@ -1,4 +1,4 @@
-# secure-base-installer
+# Beschreubung secure-base-installer
 
 Installiert und härtet ein Ubuntu-Grundsystem („Linux Secure Base") in 12 Modulen:
 - Grundkonfiguration,
@@ -18,15 +18,25 @@ Jedes Modul ist aber auch einzeln auführbar.
 
 Der ˋsecure-base-installerˋ bietet auch Befehle zur Überorüfung ˋsecure-base-installer checkˋ bzw. zum Test der Installation an (ˋsecure-base-installer testˋ)
 
----
+Der ˋsecure-base-installerˋ dient dazu den Prozess der Installation eines gehärtetetn Server zu standardisieren und zu beschleunigen. Mehr Infomartionen, auch die Funktioneweise der einzlen Module, stehen im ˋdocsˋ-Verzeichnis in diesem Repo.
 
-## Schnellstart
+---
+# Inhalt
+
+**Kurzanleitung**
+
+
+
+
+# Kurzanleitung
 
 Diese Anleitung führt von einem frischen Server bis zum gehärteten System.
 Sie ist bewusst knapp gehalten und in dieser Form vollständig lauffähig — die
 Details stehen weiter unten.
+Die Kurzanleitung 
 
-### Voraussetzungen
+
+## Voraussetzungen
 
 - **Ubuntu Server 26.04 LTS**, minimal mit SSH
 - **root-Zugang** auf dem Zielserver
@@ -35,9 +45,9 @@ Details stehen weiter unten.
 - ein über **SFTP erreichbarer Speicherplatz** für das Backup
 - ein **SMTP-Smarthost** (Relay) mit Zugangsdaten für den Mail-Versand
 
-### Schritte
+## In 5 Schritten
 
-####1. Den Installer herunterladen####
+### 1. Den Installer herunterladen
 
 **a) Entweder mit ˋwgetˋ**
 
@@ -53,22 +63,67 @@ apt update && apt install -y git
 git clone https://github.com/macodix/linux-secure-base.git
 ```
 
-####2. In 
+### 2. Installer Verzeichnis
+
+```
 cd linux-secure-base/installer
+```
 
-# 2. Konfiguration aus der Vorlage anlegen
+### 3. Besipiel-Konfigurationsdatei kopieren
+
+```
 cp conf/secure-base.conf.example conf/secure-base.conf
+```
 
-# 3. Pflichtwerte eintragen (siehe Tabelle unten — mindestens FQDN,
-#    ADMIN_MAIL, MAIN_USER, TIMEZONE, MAIN_USER_PUBKEY, RELAY_*, SFTP_*)
-nano conf/secure-base.conf
+### 4. Konfiguration anpassen (Mindestanforderungen)
 
-# 4. Trockenlauf — zeigt die Modul-Reihenfolge, ändert nichts
-./secure-base-installer -n install
+Die Konfigurationsdatei ˋsecure-base.confˋ mit einem Editor öffnen und mindestens folgende Werte eintragen/ändern:
 
-# 5. Installation starten
+```
+# == Allgemein ==
+FQDN="server.example.com"         # vollständige Servername mit Domain
+ADMIN_MAIL="admin@example.com"    # die EMail-Adress für administrative Nebachrichtigungen (z. B. Monitoring)
+
+# == postfix ==
+RELAY_HOST="smtp.example.com"     # Name des SMTP Servers
+RELAY_PORT="587"                  # *optional*, fall SMTP Server nicht auf Port 587 hört
+RELAY_USER="user@example.com"     # Username (meist EMail-Adresse) des SMTP Users von RELAY_HOST
+RELAY_PASSWORD=""                 # *optional*, wird abgefragt wenn nicht gesetzt 
+
+# == users ==
+MAIN_USER="hauptbenutzer"         # Benutzernamen des Hauptbenutzers (z. B. für Zugriff via SSH)
+MAIN_USER_PASSWORD=""             # *optional*, wird abgefragt wenn nicht gesetzt
+MAIN_USER_PUBKEY=""               # *entweder* SSH Pubic Key (i. d. R. eine Zeile, z. B. "ssh-ed25519 AAAA ..... user@laptop")
+MAIN_USERP_PUBKEY_FILE=""         # *oder* einen Pfad zu der Datei mit dem Public Key angeben
+
+# == restic
+SFTP_HOST_ALIAS="restic-backup"   # der Hostname des Backup SFTP-Servers in der ~/.ssh/config (SFTP Zugang dort konfigurieren)
+SFTP_PATH="/backups/<hostname>"   # Backup-Verzeichnis auf dem Backup Server
+RESTIC_PASSWORD=""                # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
+```
+
+Alle anderen Werte können bei Bedarf natürlich auch angepasst werden.
+
+
+### 5. Installation
+
+Optional kann eine Testlauf (dry-run) der Installation gestartet werden mit:
+```
+ ./secure-base-installer -n install
+```
+
+Oder direkt die Installation gestartet werden:
+```
 ./secure-base-installer install
 ```
+
+### H I N W E I S E
+
+Während der Installation wird SSH Konfiguration geändert. Es wird eindrücklich empfohlen, vor schließen des ˋrootˋ-Terminals dden SSH Zugang des Haupbenutzers zu testen.
+
+Die Konfigurations-Datei sollte unmittelbar nach der Installation vom Server entfernt oder gelöscht werden
+
+Für mehr Information über den Installationsverlauf kann die Logdatei ˋ/var/log/secure-base/secure-base.logˋ prer ˋtail -fˋ in einem zweiten Terminal überwacht werden.
 
 > **Aussperr-Schutz — bitte lesen.** Die SSH-Härtung deaktiviert den
 > Passwort-Login; ab dann kommst du nur noch per Key **und** TOTP herein.
