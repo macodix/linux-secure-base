@@ -41,4 +41,4 @@ Für ' nginx` wird ein eigenes AppArmor-Profil erstellt, da weder das `nginx`-Pa
 
 | Version | Datum | Wer | Änderung |
 |---|---|---|---|
-| 0.01 | 2026-06-18 | Claude | Erstanlage. |
+| 0.01 | 2026-06-18 | macodix | Erstanlage. |
