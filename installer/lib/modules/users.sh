@@ -1,0 +1,349 @@
+#!/bin/bash
+#
+# Linux Secure Base — Modul users
+# Hauptbenutzer, ssh-users-Gruppe, TOTP. Setzt das root-Passwort
+# NICHT — prueft es nur als Vorbedingung.
+# Aufruf: users.sh {install|uninstall|check|test}
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+readonly SCRIPT_DIR
+
+# shellcheck source=../../lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+readonly MODULE="users"
+readonly CONF_COMMON="$SCRIPT_DIR/conf/common.conf"
+
+# ---------------------------------------------------------------------
+# Eingangs-Validierung
+# ---------------------------------------------------------------------
+
+# Buendelt alle Eingangschecks fuer MAIN_USER:
+#  1) nicht leer
+#  2) POSIX-Login-Format (kleingeschrieben, ohne Sonderzeichen)
+#  3) Blacklist gegen System-/systemd-Accounts (Aussperr-/Loesch-Schutz,
+#     vor allem fuer do_uninstall mit UNINSTALL_REMOVE_USER=yes)
+require_main_user_or_die() {
+    [ -n "${MAIN_USER:-}" ] \
+        || die "MAIN_USER ist leer — bitte in common.conf setzen."
+    [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
+        || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
+    case "$MAIN_USER" in
+        root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|nobody|messagebus|sshd)
+            die "MAIN_USER darf kein Systembenutzer sein: $MAIN_USER" ;;
+        systemd-*)
+            die "MAIN_USER darf kein systemd-Systembenutzer sein: $MAIN_USER" ;;
+    esac
+}
+
+# Prueft als Vorbedingung, dass das root-Konto bereits ein Passwort
+# hat (shadow-Hash weder leer noch '!' noch '*'). Das Modul setzt das
+# root-Passwort bewusst NICHT.
+require_root_passwd_or_die() {
+    local hash
+    hash="$(getent shadow root | cut -d: -f2)"
+    if [ -z "$hash" ] || [ "$hash" = '!' ] || [ "$hash" = '*' ]; then
+        die "root-Passwort ist nicht gesetzt — bitte vor users-Modul-Lauf auf der Server-Konsole per passwd setzen."
+    fi
+}
+
+# ---------------------------------------------------------------------
+# Helfer
+# ---------------------------------------------------------------------
+
+# Setzt das Passwort fuer <user>, wenn shadow-Hash leer/!/* ist.
+# Bei leerer Globaler (Name in <pwd_var>) interaktive Eingabe ohne Echo.
+# Klartextwerte werden nach erfolgreichem chpasswd aus dem Speicher
+# entfernt (lokal und referenzierte Global).
+set_password_if_missing() {
+    local user="$1" pwd_var="$2"
+    local pwd="${!pwd_var:-}"
+    local hash
+    hash="$(getent shadow "$user" | cut -d: -f2)"
+    if [ -n "$hash" ] && [ "$hash" != '!' ] && [ "$hash" != '*' ]; then
+        log INFO "Passwort fuer $user bereits gesetzt — uebersprungen"
+        return 0
+    fi
+    if [ -z "$pwd" ]; then
+        printf 'Passwort fuer %s eingeben: ' "$user" >&2
+        IFS= read -rs pwd
+        printf '\n' >&2
+    fi
+    printf '%s:%s\n' "$user" "$pwd" | chpasswd
+    unset pwd
+    unset "$pwd_var"
+    log INFO "Passwort fuer $user gesetzt"
+}
+
+# Pause nach TOTP-QR-Anzeige (google-authenticator druckt QR-Code,
+# otpauth-URL und Notfall-Codes direkt aufs Terminal).
+pause_after_totp() {
+    log INFO "QR-Code mit der Authenticator-App scannen, Notfall-Codes sicher hinterlegen."
+    printf 'ENTER druecken, sobald erledigt. ' >&2
+    read -r _
+}
+
+# Prueft Datei/Verzeichnis auf exakten Mode und Owner. Bei Abweichung
+# ERROR-Log und Rueckgabewert 1.
+check_mode_owner() {
+    local path="$1" mode_soll="$2" owner_soll="$3"
+    local mode owner
+    mode="$(stat -c '%a' "$path")"
+    owner="$(stat -c '%U:%G' "$path")"
+    if [ "$mode" != "$mode_soll" ]; then
+        log ERROR "$path: Mode $mode, erwartet $mode_soll"
+        return 1
+    fi
+    if [ "$owner" != "$owner_soll" ]; then
+        log ERROR "$path: Owner $owner, erwartet $owner_soll"
+        return 1
+    fi
+}
+
+# Prueft, dass Gruppe und "andere" keinen Zugriff haben
+# (Mode-Maske & 077 == 0). Verwendet fuer das TOTP-Secret
+# ~/.google_authenticator.
+check_owner_only_mode() {
+    local path="$1" owner_soll="$2"
+    local mode owner
+    mode="$(stat -c '%a' "$path")"
+    owner="$(stat -c '%U:%G' "$path")"
+    if (( (8#$mode) & 077 )); then
+        log ERROR "$path: Mode $mode erlaubt Gruppe-/Welt-Zugriff — erwartet '?00' (z. B. 0400, 0600, 0700)"
+        return 1
+    fi
+    if [ "$owner" != "$owner_soll" ]; then
+        log ERROR "$path: Owner $owner, erwartet $owner_soll"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------
+# Subkommandos
+# ---------------------------------------------------------------------
+
+do_install() {
+    require_root
+    load_conf "$CONF_COMMON"
+    require_main_user_or_die
+
+    # 1. Paket installieren (idempotent ueber pkg_installed).
+    pkg_install libpam-google-authenticator
+
+    # 2. Gruppe ssh-users anlegen.
+    if ! getent group ssh-users >/dev/null; then
+        groupadd ssh-users
+        log INFO "Gruppe ssh-users angelegt"
+    else
+        log INFO "Gruppe ssh-users existiert bereits — uebersprungen"
+    fi
+
+    # 3. Hauptbenutzer anlegen oder Mitgliedschaft/Shell nachziehen.
+    if ! getent passwd "$MAIN_USER" >/dev/null; then
+        useradd -m -s /bin/bash -G ssh-users "$MAIN_USER"
+        log INFO "Benutzer $MAIN_USER angelegt"
+    else
+        log INFO "Benutzer $MAIN_USER existiert bereits — Mitgliedschaft/Shell pruefen"
+        if ! id -nG "$MAIN_USER" | tr ' ' '\n' | grep -qx ssh-users; then
+            usermod -a -G ssh-users "$MAIN_USER"
+            log INFO "$MAIN_USER zu ssh-users hinzugefuegt"
+        fi
+        if [ "$(getent passwd "$MAIN_USER" | cut -d: -f7)" != "/bin/bash" ]; then
+            usermod -s /bin/bash "$MAIN_USER"
+            log INFO "Login-Shell von $MAIN_USER auf /bin/bash gesetzt"
+        fi
+    fi
+
+    # 4. root-Passwort-Vorbedingung pruefen, dann Hauptbenutzer-Passwort
+    #    setzen. Das Modul setzt das root-Passwort NICHT.
+    require_root_passwd_or_die
+    set_password_if_missing "$MAIN_USER" MAIN_USER_PASSWORD
+
+    # 5. SSH-Pubkey hinterlegen.
+    local home pubkey authkeys
+    home="$(getent passwd "$MAIN_USER" | cut -d: -f6)"
+    install -d -m 0700 -o "$MAIN_USER" -g "$MAIN_USER" "$home/.ssh"
+    if [ -n "${MAIN_USER_PUBKEY:-}" ]; then
+        pubkey="$MAIN_USER_PUBKEY"
+    elif [ -n "${MAIN_USER_PUBKEY_FILE:-}" ] && [ -r "$MAIN_USER_PUBKEY_FILE" ]; then
+        pubkey="$(cat "$MAIN_USER_PUBKEY_FILE")"
+    else
+        printf 'SSH-Public-Key fuer %s einfuegen (eine Zeile): ' "$MAIN_USER" >&2
+        IFS= read -r pubkey
+    fi
+    # Aussperr-Schutz: leerer oder syntaktisch defekter Pubkey darf
+    # nicht durchgehen — sonst landet $MAIN_USER unter ssh-Haertung
+    # (PasswordAuthentication=no) ohne brauchbaren Pubkey.
+    [ -n "$pubkey" ] \
+        || die "Kein Pubkey fuer $MAIN_USER — Abbruch (Aussperr-Schutz)."
+    [[ "$pubkey" =~ ^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-nistp[0-9]+)[[:space:]] ]] \
+        || die "Pubkey-Format unbekannt: '${pubkey:0:40}...' — Abbruch (Aussperr-Schutz)."
+    authkeys="$home/.ssh/authorized_keys"
+    if [ ! -e "$authkeys" ]; then
+        install -m 0600 -o "$MAIN_USER" -g "$MAIN_USER" /dev/null "$authkeys"
+    else
+        # Bestehende Datei: Mode/Owner defensiv auf Soll setzen.
+        chmod 0600 "$authkeys"
+        chown "$MAIN_USER:$MAIN_USER" "$authkeys"
+    fi
+    if ! grep -qxF "$pubkey" "$authkeys"; then
+        printf '%s\n' "$pubkey" >> "$authkeys"
+        log INFO "Pubkey fuer $MAIN_USER hinterlegt"
+    else
+        log INFO "Pubkey fuer $MAIN_USER bereits hinterlegt — uebersprungen"
+    fi
+
+    # 6. TOTP-Secret erzeugen und Pause fuer QR-Scan.
+    local ga="$home/.google_authenticator"
+    if [ -s "$ga" ]; then
+        log INFO "TOTP-Secret von $MAIN_USER bereits vorhanden — google-authenticator uebersprungen"
+    else
+        # WICHTIG: TOTP-Output (QR-Code, otpauth-URL, Notfall-Codes)
+        # NICHT ins Logfile spiegeln. stdin/stdout/stderr direkt auf das
+        # Controlling-Terminal lenken.
+        su -l "$MAIN_USER" -c 'google-authenticator -t -d -W -r 3 -R 30 -f' \
+            </dev/tty >/dev/tty 2>/dev/tty
+        log INFO "TOTP-Secret fuer $MAIN_USER erzeugt"
+        pause_after_totp
+    fi
+}
+
+do_uninstall() {
+    require_root
+    load_conf "$CONF_COMMON"
+    # Speicher-Hygiene: do_uninstall braucht MAIN_USER_PASSWORD nicht.
+    unset MAIN_USER_PASSWORD
+    require_main_user_or_die
+
+    local remove="${UNINSTALL_REMOVE_USER:-no}"
+    case "$remove" in
+        yes|no) ;;
+        *) die "UNINSTALL_REMOVE_USER muss 'yes' oder 'no' sein, ist: $remove" ;;
+    esac
+
+    if getent passwd "$MAIN_USER" >/dev/null \
+        && id -nG "$MAIN_USER" | tr ' ' '\n' | grep -qx ssh-users; then
+        gpasswd -d "$MAIN_USER" ssh-users
+        log INFO "Mitgliedschaft $MAIN_USER in ssh-users geloest"
+    fi
+    if getent group ssh-users >/dev/null; then
+        groupdel ssh-users
+        log INFO "Gruppe ssh-users entfernt"
+    fi
+
+    if [ "$remove" = "yes" ]; then
+        if getent passwd "$MAIN_USER" >/dev/null; then
+            # Aktive Prozesse des Hauptbenutzers beenden — sonst
+            # schlaegt userdel -r fehl.
+            pkill -TERM -u "$MAIN_USER" || true
+            sleep 2
+            pkill -KILL -u "$MAIN_USER" || true
+            if ! userdel -r "$MAIN_USER"; then
+                die "userdel -r $MAIN_USER fehlgeschlagen — laufende Prozesse oder Mountpoints im Home pruefen und manuell entfernen"
+            fi
+            log INFO "Benutzer $MAIN_USER mit Home-Verzeichnis entfernt (UNINSTALL_REMOVE_USER=yes)"
+        else
+            log INFO "Benutzer $MAIN_USER existiert nicht — userdel uebersprungen"
+        fi
+    else
+        log INFO "Hauptbenutzer, Home, Passwoerter, TOTP, Pubkey bleiben unveraendert (UNINSTALL_REMOVE_USER=no)"
+    fi
+
+    log INFO "root-Passwort bleibt unveraendert"
+    log INFO "Paket libpam-google-authenticator bleibt installiert (gehoert zum ssh-Modul-Bedarf)"
+}
+
+do_check() {
+    require_root
+    load_conf "$CONF_COMMON"
+    require_main_user_or_die
+
+    local rc=0
+    local home authkeys ga shadowhash
+
+    check_packages libpam-google-authenticator || rc=1
+
+    if ! getent group ssh-users >/dev/null; then
+        log ERROR "Gruppe ssh-users existiert nicht"
+        rc=1
+    fi
+    if ! getent passwd "$MAIN_USER" >/dev/null; then
+        log ERROR "Benutzer $MAIN_USER existiert nicht"
+        # Ohne den User koennen die folgenden Pfad-Pruefungen nicht
+        # mehr aufgeloest werden — sofortiger Abbruch.
+        return 1
+    fi
+    if [ "$(getent passwd "$MAIN_USER" | cut -d: -f7)" != "/bin/bash" ]; then
+        log ERROR "$MAIN_USER hat nicht /bin/bash als Login-Shell"
+        rc=1
+    fi
+    if ! id -nG "$MAIN_USER" | tr ' ' '\n' | grep -qx ssh-users; then
+        log ERROR "$MAIN_USER ist nicht in der Gruppe ssh-users"
+        rc=1
+    fi
+    shadowhash="$(getent shadow "$MAIN_USER" | cut -d: -f2)"
+    if [ -z "$shadowhash" ] || [ "$shadowhash" = '!' ] || [ "$shadowhash" = '*' ]; then
+        log ERROR "$MAIN_USER hat kein gesetztes Login-Passwort"
+        rc=1
+    fi
+    shadowhash="$(getent shadow root | cut -d: -f2)"
+    if [ -z "$shadowhash" ] || [ "$shadowhash" = '!' ] || [ "$shadowhash" = '*' ]; then
+        log ERROR "root hat kein gesetztes Passwort"
+        rc=1
+    fi
+
+    home="$(getent passwd "$MAIN_USER" | cut -d: -f6)"
+    if [ ! -d "$home/.ssh" ]; then
+        log ERROR "$home/.ssh existiert nicht"
+        rc=1
+    else
+        check_mode_owner "$home/.ssh" 700 "$MAIN_USER:$MAIN_USER" || rc=1
+    fi
+    authkeys="$home/.ssh/authorized_keys"
+    if [ ! -f "$authkeys" ]; then
+        log ERROR "$authkeys existiert nicht"
+        rc=1
+    else
+        check_mode_owner "$authkeys" 600 "$MAIN_USER:$MAIN_USER" || rc=1
+        if [ ! -s "$authkeys" ]; then
+            log ERROR "$authkeys ist leer"
+            rc=1
+        fi
+    fi
+    ga="$home/.google_authenticator"
+    if [ ! -f "$ga" ]; then
+        log ERROR "$ga existiert nicht"
+        rc=1
+    else
+        check_owner_only_mode "$ga" "$MAIN_USER:$MAIN_USER" || rc=1
+        if [ ! -s "$ga" ]; then
+            log ERROR "$ga ist leer"
+            rc=1
+        fi
+    fi
+    return "$rc"
+}
+
+do_test() {
+    require_root
+    load_conf "$CONF_COMMON"
+    require_main_user_or_die
+
+    local rc=0
+    if ! su -l "$MAIN_USER" -c 'test -r ~/.google_authenticator'; then
+        log WARN "TOTP-Secret aus Sicht von $MAIN_USER nicht lesbar"
+        rc=1
+    fi
+    if ! su -l "$MAIN_USER" -c 'test -r ~/.ssh/authorized_keys'; then
+        log WARN "authorized_keys aus Sicht von $MAIN_USER nicht lesbar"
+        rc=1
+    fi
+    if [ "$rc" -eq 0 ]; then
+        log INFO "users test: Hauptbenutzer kann seine Login-Dateien lesen"
+    fi
+    return 0
+}
+
+dispatch "$MODULE" "$@"

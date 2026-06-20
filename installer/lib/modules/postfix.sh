@@ -168,23 +168,10 @@ do_check() {
     local exit_code=0
 
     # Pakete.
-    local pkg
-    for pkg in "${POSTFIX_PACKAGES[@]}"; do
-        if pkg_installed "$pkg"; then
-            log INFO "Paket installiert: $pkg"
-        else
-            log ERROR "Paket fehlt: $pkg"
-            exit_code=1
-        fi
-    done
+    check_packages "${POSTFIX_PACKAGES[@]}" || exit_code=1
 
     # Dienst.
-    if svc_active postfix && [ "$(systemctl is-enabled postfix)" = "enabled" ]; then
-        log INFO "postfix.service active+enabled"
-    else
-        log ERROR "postfix.service nicht active+enabled"
-        exit_code=1
-    fi
+    check_svc_enabled postfix || exit_code=1
 
     # main.cf-Direktiven via postconf -n.
     local key value soll
@@ -216,19 +203,7 @@ do_check() {
     done
 
     # Eigene Dateien.
-    local mode
-    if [ -f "$SASL_PASSWD" ]; then
-        mode=$(stat -c '%a' "$SASL_PASSWD")
-        if [ "$mode" = "600" ]; then
-            log INFO "$SASL_PASSWD OK (Mode 600)"
-        else
-            log ERROR "$SASL_PASSWD Mode-Mismatch: ist $mode, soll 600"
-            exit_code=1
-        fi
-    else
-        log ERROR "$SASL_PASSWD fehlt"
-        exit_code=1
-    fi
+    check_file_mode "$SASL_PASSWD" 600 "root:root" || exit_code=1
     if [ -f "$RECIPIENT_CANONICAL" ]; then
         log INFO "$RECIPIENT_CANONICAL OK"
     else

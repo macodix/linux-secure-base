@@ -61,3 +61,113 @@ RELAY_USER="user@example.com"
 # Passwort fuer die SMTP-Authentifizierung. Leer lassen, dann fragt das
 # install interaktiv danach (kein Echo, nichts im Logfile).
 RELAY_PASSWORD=""
+
+# == users ==
+
+# Login-Passwort des Hauptbenutzers (Klartext).
+# Leer lassen fuer interaktive Eingabe waehrend install (read -s, kein
+# Echo; landet nur in chpasswd-stdin, nicht in diese Datei zurueck).
+MAIN_USER_PASSWORD=""
+
+# SSH-Public-Key des Hauptbenutzers (Inhalt einer .pub-Datei).
+# Bevorzugt vor MAIN_USER_PUBKEY_FILE, wenn nicht leer.
+# Beispiel: ssh-ed25519 AAAA... user@laptop
+MAIN_USER_PUBKEY=""
+
+# Alternativ: Pfad zu einer .pub-Datei, falls MAIN_USER_PUBKEY leer ist.
+# Wird gelesen, dann verworfen — der Pfad wandert nicht in die
+# authorized_keys.
+MAIN_USER_PUBKEY_FILE=""
+
+# Force-Schalter fuer uninstall:
+#   no  (Default) — nur Gruppe ssh-users und Mitgliedschaft zurueck;
+#                   Hauptbenutzer, Home, Passwoerter, TOTP, Pubkey
+#                   bleiben unveraendert.
+#   yes           — zusaetzlich userdel -r "$MAIN_USER" — Benutzer mit
+#                   Home-Verzeichnis entfernen; TOTP und Pubkey gehen
+#                   verloren.
+UNINSTALL_REMOVE_USER="no"
+
+# == ufw ==
+
+# Eingehend erlaubte TCP-Ports. MUSS 22 (SSH) enthalten, sonst sperrt
+# die Firewall den Verwaltungszugang aus (das install-Skript bricht
+# ohne 22 mit Fehler ab).
+ALLOW_IN_TCP=(22)
+
+# Ausgehend erlaubte TCP-Ports:
+#   587 — Submission/STARTTLS (Postfix-Relay; muss zu RELAY_PORT passen)
+#    80 — HTTP  (apt, ACME)
+#   443 — HTTPS (apt, Git, API-Calls)
+#    53 — DNS (TCP)
+#    22 — SSH  (Git-Push, restic-SFTP-Backup)
+ALLOW_OUT_TCP=(587 80 443 53 22)
+
+# Ausgehend erlaubte UDP-Ports:
+#    53 — DNS (UDP)
+ALLOW_OUT_UDP=(53)
+
+# == fail2ban ==
+
+# Optionale IP-/CIDR-Whitelist (leerzeichengetrennt), die fail2ban nie
+# bannt. Hier die eigene Admin-/Management-IP eintragen, um sich nicht
+# nach wiederholten Fehl-Logins selbst auszusperren. Die Loopback-
+# Adressen (127.0.0.1/8 ::1) bleiben immer erhalten und muessen hier
+# NICHT wiederholt werden. Leer = keine zusaetzliche Whitelist.
+# Beispiel: IGNOREIP="203.0.113.7 198.51.100.0/24"
+IGNOREIP=""
+
+# == logging ==
+
+# Maximaler Plattenverbrauch des persistenten Journals (journald
+# SystemMaxUse). Leer = 1G (Doku-Default). Beispiel: "2G", "500M".
+JOURNALD_MAX_USE=""
+
+# Aufbewahrungsfrist des persistenten Journals (journald
+# MaxRetentionSec). Leer = 3month (Doku-Default). Beispiel: "6month",
+# "4week".
+JOURNALD_MAX_RETENTION=""
+
+# == unattended ==
+
+# Automatischer Reboot nach Updates, die einen Neustart verlangen
+# (z. B. Kernel). "true" oder "false". Leer = true (Doku-Default).
+AUTO_REBOOT="true"
+
+# Uhrzeit des automatischen Reboots (HH:MM). Leer = 23:45 (Doku-Default).
+AUTO_REBOOT_TIME="23:45"
+
+# Uhrzeit der taeglichen Paketlisten-Aktualisierung (apt-daily.timer,
+# HH:MM). Leer = 23:15 (Doku-Default).
+APT_DAILY_TIME="23:15"
+
+# Uhrzeit des taeglichen Upgrade-Laufs (apt-daily-upgrade.timer, HH:MM).
+# Sollte zwischen APT_DAILY_TIME und AUTO_REBOOT_TIME liegen, damit
+# Updates vor dem Reboot installiert sind. Leer = 23:30 (Doku-Default).
+APT_DAILY_UPGRADE_TIME="23:30"
+
+# == restic ==
+
+# Host-Alias aus /root/.ssh/config (muss dort bereits konfiguriert sein).
+# Geht in die Repo-URL (sftp:<alias>:<pfad>) und die ssh-Aufrufe.
+SFTP_HOST_ALIAS="restic-backup"
+
+# Zielpfad des Repos auf dem SFTP-Server. install legt ihn bei Bedarf an
+# (mkdir -p, idempotent - ein vorhandenes Verzeichnis ist unkritisch).
+# Der Elternpfad muss fuer den SFTP-Benutzer beschreibbar sein.
+SFTP_PATH="/backups/<hostname>"
+
+# Passphrase zur Verschluesselung des Backup-Repos (NICHT der SSH-Key).
+# Leer lassen, um beim Lauf einmalig per Eingabe (ohne Echo) zu setzen
+# bzw. eine bereits vorhandene /root/config/restic-passphrase zu behalten.
+RESTIC_PASSPHRASE=""
+
+# == monit ==
+
+# Absender-Adresse der monit-Alarm-Mails (Feld "from:" im mail-format).
+MONIT_MAIL_FROM="monit@example.com"
+
+# Welche Checks unter /etc/monit/conf.d/ angelegt werden.
+# Erlaubte Werte: system rootfs sshd postfix fail2ban ufw cron rkhunter restic
+# Default: alle neun.
+CHECKS_ENABLED=(system rootfs sshd postfix fail2ban ufw cron rkhunter restic)

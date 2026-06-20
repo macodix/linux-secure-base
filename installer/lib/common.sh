@@ -22,5 +22,7 @@ source "${_sb_lib_dir}/svc.sh"
 source "${_sb_lib_dir}/file.sh"
 # shellcheck source=dispatch.sh
 source "${_sb_lib_dir}/dispatch.sh"
+# shellcheck source=check.sh
+source "${_sb_lib_dir}/check.sh"
 
 unset _sb_lib_dir
