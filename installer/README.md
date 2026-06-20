@@ -222,3 +222,11 @@ und `docs/systembeschreibung/` (Hintergründe und Festlegungen).
   der Mail verwenden.
 - **conf-Datei:** Mode root-only, nie ins Repo (`gitignored`). Sensible Werte
   bevorzugt leer lassen und interaktiv eingeben.
+
+---
+
+## Lizenz
+
+GNU General Public License v3.0 (GPL-3.0) — siehe [`LICENSE`](../LICENSE) im
+Repository-Wurzelverzeichnis. Bereitstellung ohne Gewährleistung, Einsatz auf
+eigene Verantwortung (siehe „Grenzen & Warnung" im Haupt-README).
