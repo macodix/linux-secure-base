@@ -88,6 +88,18 @@ MAIN_USER_PUBKEY_FILE=""
 #                   verloren.
 UNINSTALL_REMOVE_USER="no"
 
+# Zustellung des TOTP-Secrets bei der Einrichtung:
+#   terminal (Default) — QR-Code, Secret und Notfall-Codes erscheinen am
+#                        Bildschirm; das install pausiert zum Scannen.
+#   mail               — QR-Bild (Anhang) und Secret gehen an ADMIN_MAIL,
+#                        das install laeuft ohne Pause durch (unattended).
+#                        SICHERHEITSHINWEIS: Der QR-Code enthaelt das Secret;
+#                        per Mail liegt der zweite Faktor im Postfach und ist
+#                        nur transportverschluesselt. Mail nach der
+#                        Einrichtung sofort loeschen. Benoetigt ADMIN_MAIL
+#                        und ein funktionsfaehiges Mail-Relay (postfix-Modul).
+TOTP_DELIVERY="terminal"
+
 # == ufw ==
 
 # Eingehend erlaubte TCP-Ports. MUSS 22 (SSH) enthalten, sonst sperrt

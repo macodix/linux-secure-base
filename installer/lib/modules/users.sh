@@ -84,6 +84,39 @@ pause_after_totp() {
     read -r _
 }
 
+# Versendet das TOTP-Secret als QR-Bild (Anhang) und Text an ADMIN_MAIL.
+# Sicherheitskritisch: Secret und Notfall-Codes duerfen NICHT ins Logfile —
+# kein log-Aufruf mit diesen Werten. Das temporaere QR-PNG (enthaelt das
+# Secret) wird in jedem Pfad wieder entfernt.
+# Arguments: $1 — Benutzer, $2 — Pfad der .google_authenticator-Datei
+# Globals:   ADMIN_MAIL
+totp_per_mail() {
+    local user=$1 ga_file=$2
+    local secret fqdn url emergency qr_png
+    secret=$(head -1 "$ga_file")
+    fqdn=$(hostname -f)
+    url="otpauth://totp/${user}@${fqdn}?secret=${secret}&issuer=${fqdn}"
+    emergency=$(grep -E '^[0-9]{8}$' "$ga_file" || true)
+
+    qr_png=$(mktemp --suffix=.png)
+    chmod 600 "$qr_png"
+    qrencode -o "$qr_png" "$url"
+
+    if ! {
+        printf 'Zwei-Faktor-Einrichtung fuer %s@%s.\n\n' "$user" "$fqdn"
+        printf 'QR-Code im Anhang mit der Authenticator-App scannen,\n'
+        printf 'oder das Secret manuell eintragen:\n\n'
+        printf '  Secret: %s\n' "$secret"
+        printf '  URL:    %s\n\n' "$url"
+        printf 'Notfall-Codes (getrennt und sicher aufbewahren):\n%s\n\n' "$emergency"
+        printf 'Diese Mail nach der Einrichtung loeschen.\n'
+    } | mail -A "$qr_png" -s "Einrichtung user $user" "$ADMIN_MAIL"; then
+        rm -f "$qr_png"
+        die "TOTP-Mail an $ADMIN_MAIL fehlgeschlagen"
+    fi
+    rm -f "$qr_png"
+}
+
 # Prueft Datei/Verzeichnis auf exakten Mode und Owner. Bei Abweichung
 # ERROR-Log und Rueckgabewert 1.
 check_mode_owner() {
@@ -128,8 +161,22 @@ do_install() {
     load_conf "$SB_CONF"
     require_main_user_or_die
 
-    # 1. Paket installieren (idempotent ueber pkg_installed).
+    # TOTP-Zustellung: terminal (QR am Bildschirm, Default) oder mail
+    # (Secret/QR an ADMIN_MAIL — schwaecht die Faktor-Trennung, daher optional).
+    TOTP_DELIVERY="${TOTP_DELIVERY:-terminal}"
+    case "$TOTP_DELIVERY" in
+        terminal) ;;
+        mail)
+            [ -n "${ADMIN_MAIL:-}" ] \
+                || die "TOTP_DELIVERY=mail braucht ADMIN_MAIL in secure-base.conf"
+            require_cmd mail
+            ;;
+        *) die "TOTP_DELIVERY muss 'terminal' oder 'mail' sein: $TOTP_DELIVERY" ;;
+    esac
+
+    # 1. Pakete installieren (idempotent ueber pkg_installed).
     pkg_install libpam-google-authenticator
+    [ "$TOTP_DELIVERY" = "mail" ] && pkg_install qrencode
 
     # 2. Gruppe ssh-users anlegen.
     if ! getent group ssh-users >/dev/null; then
@@ -194,10 +241,17 @@ do_install() {
         log INFO "Pubkey fuer $MAIN_USER bereits hinterlegt — uebersprungen"
     fi
 
-    # 6. TOTP-Secret erzeugen und Pause fuer QR-Scan.
+    # 6. TOTP-Secret erzeugen; Zustellung per Terminal (Default) oder Mail.
     local ga="$home/.google_authenticator"
     if [ -s "$ga" ]; then
         log INFO "TOTP-Secret von $MAIN_USER bereits vorhanden — google-authenticator uebersprungen"
+    elif [ "$TOTP_DELIVERY" = "mail" ]; then
+        # google-authenticator non-interaktiv; Output verwerfen (enthaelt
+        # Secret/QR — NICHT ins Logfile, NICHT aufs Terminal).
+        su -l "$MAIN_USER" -c 'google-authenticator -t -d -W -r 3 -R 30 -f' \
+            >/dev/null 2>&1
+        totp_per_mail "$MAIN_USER" "$ga"
+        log INFO "TOTP-Secret fuer $MAIN_USER erzeugt und per Mail an ADMIN_MAIL versendet"
     else
         # WICHTIG: TOTP-Output (QR-Code, otpauth-URL, Notfall-Codes)
         # NICHT ins Logfile spiegeln. stdin/stdout/stderr direkt auf das
