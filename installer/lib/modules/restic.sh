@@ -23,7 +23,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="restic"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 readonly PASSPHRASE_FILE="/root/config/restic-passphrase"
 
 # --- Hilfsfunktionen -------------------------------------------------
@@ -125,7 +124,7 @@ EOF
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_restic_conf
 
     local repo backup_script cron_file
@@ -234,9 +233,9 @@ do_uninstall() {
     # Der SFTP-Zugang (Schluessel, /root/.ssh/config) gehoert der Vorbedingung
     # und wird NICHT angefasst.
     local fqdn=""
-    if [ -r "$CONF_COMMON" ]; then
+    if [ -r "$SB_CONF" ]; then
         # shellcheck disable=SC1090
-        source "$CONF_COMMON"
+        source "$SB_CONF"
         fqdn=${FQDN:-}
         # FQDN gegen den Namens-Zeichensatz pruefen, bevor er in Dateipfade
         # geht (kein Pfad-Traversal aus einem manipulierten secure-base.conf).
@@ -255,7 +254,7 @@ do_uninstall() {
             fi
         done
     else
-        log WARN "restic uninstall: FQDN aus $CONF_COMMON nicht ermittelbar — Backup-Skript und Cron-Datei NICHT entfernt (manuell pruefen: /usr/local/sbin/<fqdn>-backup.sh, /etc/cron.d/<fqdn>-backup)."
+        log WARN "restic uninstall: FQDN aus $SB_CONF nicht ermittelbar — Backup-Skript und Cron-Datei NICHT entfernt (manuell pruefen: /usr/local/sbin/<fqdn>-backup.sh, /etc/cron.d/<fqdn>-backup)."
     fi
 
     # Paket entfernen (ohne --purge). Passphrase und remote Repo bleiben
@@ -273,7 +272,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_restic_conf
 
     local rc=0
@@ -291,7 +290,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_restic_conf
 
     local rc=0

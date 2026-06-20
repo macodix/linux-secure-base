@@ -16,7 +16,6 @@ readonly SCRIPT_DIR
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # Kanonische Ausfuehrungs-Reihenfolge (nicht konfigurierbar).
 readonly INSTALL_ORDER=(
@@ -69,10 +68,11 @@ KOMMANDOS
     test       Scharfer Funktionstest ohne Aenderungen
 
 OPTIONEN
-    -q, --quiet    Nur WARN und ERROR ausgeben (kein INFO)
-    -v, --verbose  INFO auch auf der Shell ausgeben (sonst nur im Logfile)
-    -n, --dry-run  Trockenlauf: Statusliste sichtbar, keine Aenderungen
-    -h, --help     Diese Hilfe ausgeben
+    -c, --conf <pfad>  Alternative Konfigdatei (Default: conf/secure-base.conf)
+    -q, --quiet        Nur WARN und ERROR ausgeben (kein INFO)
+    -v, --verbose      INFO auch auf der Shell ausgeben (sonst nur im Logfile)
+    -n, --dry-run      Trockenlauf: Statusliste sichtbar, keine Aenderungen
+    -h, --help         Diese Hilfe ausgeben
 
 EXIT STATUS
     0  Erfolg
@@ -205,6 +205,7 @@ parse_args() {
     local a
     for a in "$@"; do
         case "$a" in
+            --conf) args+=(-c) ;;
             --quiet) args+=(-q) ;;
             --verbose) args+=(-v) ;;
             --dry-run) args+=(-n) ;;
@@ -217,12 +218,14 @@ parse_args() {
     set -- "${args[@]}"
 
     local opt
-    while getopts ':qvnh' opt; do
+    while getopts ':c:qvnh' opt; do
         case "$opt" in
+            c) SB_CONF=$OPTARG ;;
             q) OPT_QUIET=1 ;;
             v) OPT_VERBOSE=1 ;;
             n) OPT_DRYRUN=1 ;;
             h) usage ;;
+            :) printf 'Option -%s erwartet ein Argument\n' "$OPTARG" >&2; exit 2 ;;
             \?) printf 'Unbekannte Option: -%s\n' "$OPTARG" >&2; exit 2 ;;
         esac
     done
@@ -276,10 +279,10 @@ main() {
     if { [ "$sub" = "install" ] || [ "$sub" = "uninstall" ]; } && [ "$OPT_DRYRUN" -eq 0 ]; then
         require_root
     fi
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
 
     if ! declare -p MODULES_ENABLED >/dev/null 2>&1; then
-        die "MODULES_ENABLED nicht definiert in $CONF_COMMON"
+        die "MODULES_ENABLED nicht definiert in $SB_CONF"
     fi
 
     # Modul-Auswahl in separatem Schritt, damit die aus select_modules

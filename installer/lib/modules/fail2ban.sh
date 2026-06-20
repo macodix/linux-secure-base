@@ -17,7 +17,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="fail2ban"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly JAIL_CONF="/etc/fail2ban/jail.conf"
 readonly JAIL_LOCAL="/etc/fail2ban/jail.local"
@@ -75,7 +74,7 @@ ignoreip_missing_token() {
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     validate_ignoreip
 
     log INFO "fail2ban install: Paket installieren"
@@ -149,7 +148,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     validate_ignoreip
 
     local rc=0
@@ -205,7 +204,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     validate_ignoreip
 
     local rc=0
