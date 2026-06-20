@@ -44,10 +44,20 @@ EOF
 
 cron_inhalt() {
     cat <<EOF
-# Haertungspruefung (lynis) — monatlich am 1. um 04:00
+# Haertungspruefung (lynis) — Zeitplan aus LYNIS_SCHEDULE (secure-base.conf)
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 4 1 * *  root  ${PRUEF_SCRIPT}
+${LYNIS_SCHEDULE}  root  ${PRUEF_SCRIPT}
 EOF
+}
+
+# Setzt LYNIS_SCHEDULE auf den Default (falls leer) und validiert ihn:
+# genau 5 Cron-Felder, nur erlaubte Zeichen — Schutz vor kaputter crontab.
+require_lynis_keys() {
+    LYNIS_SCHEDULE="${LYNIS_SCHEDULE:-0 4 1 * *}"
+    [[ "$LYNIS_SCHEDULE" =~ ^[0-9*,/[:space:]-]+$ ]] \
+        || die "LYNIS_SCHEDULE enthaelt unerlaubte Zeichen: $LYNIS_SCHEDULE"
+    [ "$(awk '{print NF}' <<<"$LYNIS_SCHEDULE")" -eq 5 ] \
+        || die "LYNIS_SCHEDULE braucht 5 Cron-Felder (Minute Stunde Tag Monat Wochentag): $LYNIS_SCHEDULE"
 }
 
 # Schreibt eine Datei idempotent (cmp -s) mit festem Mode/Owner.
@@ -72,6 +82,8 @@ schreibe_datei() {
 
 do_install() {
     require_root
+    load_conf "$SB_CONF"
+    require_lynis_keys
     pkg_install "${LYNIS_PACKAGES[@]}"
 
     log INFO "Berichtsverzeichnis anlegen: $BERICHTE_DIR"
@@ -91,17 +103,19 @@ do_uninstall() {
 
 do_check() {
     require_root
+    load_conf "$SB_CONF"
+    require_lynis_keys
     check_packages "${LYNIS_PACKAGES[@]}" || exit 1
 
     local exit_code=0
     check_file_mode "$PRUEF_SCRIPT" 700 root:root || exit_code=1
     check_file_mode "$CRON_FILE" 644 root:root || exit_code=1
 
-    # Cron ruft das Pruefskript auf.
-    if [ -f "$CRON_FILE" ] && grep -qF "$PRUEF_SCRIPT" "$CRON_FILE"; then
-        log INFO "check: $CRON_FILE ruft $PRUEF_SCRIPT auf"
+    # Cron enthaelt den konfigurierten Zeitplan und ruft das Pruefskript auf.
+    if [ -f "$CRON_FILE" ] && grep -qF "${LYNIS_SCHEDULE}  root  ${PRUEF_SCRIPT}" "$CRON_FILE"; then
+        log INFO "check: Cron-Zeitplan '$LYNIS_SCHEDULE' aktiv, ruft $PRUEF_SCRIPT auf"
     else
-        log ERROR "check: $CRON_FILE ruft $PRUEF_SCRIPT nicht auf"
+        log ERROR "check: Zeitplan/Aufruf in $CRON_FILE stimmt nicht (soll: '$LYNIS_SCHEDULE' -> $PRUEF_SCRIPT)"
         exit_code=1
     fi
 
