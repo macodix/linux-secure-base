@@ -23,10 +23,6 @@ readonly INSTALL_ORDER=(
     logging unattended restic monit lynis
 )
 
-# Interaktive Module: fuer diese wird kein Ticker gestartet (Passwort-,
-# Pubkey-Eingaben und interaktive Prompts wuerden ueberschrieben).
-readonly INTERACTIVE_MODULES=(users)
-
 # Anzeige-Beschreibung je Modul fuer die Statusliste (Fallback: Modulname).
 # In lib/ui.sh (ui_init) gelesen.
 # shellcheck disable=SC2034  # cross-file in lib/ui.sh verwendet
@@ -197,10 +193,6 @@ _letzte_fehlerzeile() {
 #######################################
 _sb_master_finish() {
     local rc=$?
-    # Ticker stoppen, bevor die Summary erscheint (idempotent).
-    ui_status_stop
-    _ui_status_cleanup
-
     # Abschluss-Doku: Erfolg -> Voll-Doku, Abbruch -> Teil-Doku mit Vermerk.
     # SB_REPORT_UI_NAME ist die gemeinsame readonly-Konstante des UI-Pseudo-
     # Eintrags (Plan 2.8); kein lokales Literal.
@@ -367,11 +359,6 @@ main() {
     SB_SUB=$sub
     SB_TOTAL=${#ausgewaehlt[@]}
     trap '_sb_master_finish' EXIT
-    # SIGINT/SIGTERM: Ticker stoppen und regulaer beenden, damit EXIT greift.
-    # ui_status_stop ist idempotent; doppelter Aufruf (Signal + EXIT) ist
-    # unschaedlich.
-    trap 'ui_status_stop; exit 130' INT
-    trap 'ui_status_stop; exit 143' TERM
 
     # Erste Darstellung der Statusliste
     ui_list_draw
@@ -384,14 +371,8 @@ main() {
 
         ui_list_update "$modul" run
 
-        # Ticker nur fuer nicht-interaktive Module starten.
-        if ! in_list "$modul" "${INTERACTIVE_MODULES[@]}"; then
-            ui_status_start "$modul"
-        fi
-
         skript="$SCRIPT_DIR/lib/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
-            ui_status_stop
             log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/lib/modules/"
             ui_list_update "$modul" error "nicht installiert"
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
@@ -408,9 +389,6 @@ main() {
         else
             "$skript" "$sub" || modul_rc=$?
         fi
-
-        # Ticker stoppen bevor der naechste Zustandswechsel (ok/error) erfolgt.
-        ui_status_stop
 
         if [ "$modul_rc" -eq 0 ]; then
             log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
