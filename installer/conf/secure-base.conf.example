@@ -16,15 +16,13 @@ MODULES_ENABLED=(base postfix users ssh ufw fail2ban rkhunter \
     logging unattended restic monit lynis)
 
 # Vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
-FQDN="server.example.com"
+FQDN=""
 
 # Administrative E-Mail-Adresse fuer alle Benachrichtigungen
 # (Logwatch, fail2ban, rkhunter, unattended-upgrades, restic, monit, SSH-Login).
-ADMIN_MAIL="admin@example.com"
+ADMIN_MAIL=""
 
-# Hauptbenutzer-Login fuer den nicht-root-Account auf dem System
-# (wird vom users-Modul angelegt).
-MAIN_USER="hauptbenutzer"
+# == base ==
 
 # Zeitzone fuer das System (tzdata-Schreibweise).
 TIMEZONE="Europe/Berlin"
@@ -50,19 +48,23 @@ ENABLE_CHALLENGE_RESPONSE_AUTH="yes"
 # == postfix ==
 
 # SMTP-Smarthost (Relay), an den Postfix als Satellite ausliefert.
-RELAY_HOST="smtp.example.com"
+RELAY_HOST=""
 
 # Port des Smarthosts (Submission/STARTTLS ueblich 587).
 RELAY_PORT="587"
 
 # Benutzername fuer die SMTP-Authentifizierung am Smarthost.
-RELAY_USER="user@example.com"
+RELAY_USER=""
 
 # Passwort fuer die SMTP-Authentifizierung. Leer lassen, dann fragt das
 # install interaktiv danach (kein Echo, nichts im Logfile).
 RELAY_PASSWORD=""
 
 # == users ==
+
+# Hauptbenutzer-Login fuer den nicht-root-Account auf dem System
+# (wird vom users-Modul angelegt; das ssh-Modul prueft ihn beim Haerten).
+MAIN_USER=""
 
 # Login-Passwort des Hauptbenutzers (Klartext).
 # Leer lassen fuer interaktive Eingabe waehrend install (read -s, kein
@@ -162,12 +164,12 @@ APT_DAILY_UPGRADE_TIME="23:30"
 
 # Host-Alias aus /root/.ssh/config (muss dort bereits konfiguriert sein).
 # Geht in die Repo-URL (sftp:<alias>:<pfad>) und die ssh-Aufrufe.
-SFTP_HOST_ALIAS="restic-backup"
+SFTP_HOST_ALIAS=""
 
 # Zielpfad des Repos auf dem SFTP-Server. install legt ihn bei Bedarf an
 # (mkdir -p, idempotent - ein vorhandenes Verzeichnis ist unkritisch).
 # Der Elternpfad muss fuer den SFTP-Benutzer beschreibbar sein.
-SFTP_PATH="/backups/<hostname>"
+SFTP_PATH=""
 
 # Passphrase zur Verschluesselung des Backup-Repos (NICHT der SSH-Key).
 # Leer lassen, um beim Lauf einmalig per Eingabe (ohne Echo) zu setzen
