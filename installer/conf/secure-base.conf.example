@@ -171,3 +171,10 @@ MONIT_MAIL_FROM="monit@example.com"
 # Erlaubte Werte: system rootfs sshd postfix fail2ban ufw cron rkhunter restic
 # Default: alle neun.
 CHECKS_ENABLED=(system rootfs sshd postfix fail2ban ufw cron rkhunter restic)
+
+# == lynis ==
+
+# Cron-Zeitplan der Haertungspruefung (5 Cron-Felder:
+# Minute Stunde Tag Monat Wochentag). Leer = "0 4 1 * *" (monatlich am 1.
+# um 04:00). Beispiel woechentlich Sonntag 03:30: "30 3 * * 0".
+LYNIS_SCHEDULE="0 4 1 * *"
