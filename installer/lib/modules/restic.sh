@@ -347,4 +347,40 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   PASSPHRASE_FILE (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Datensicherung"
+    doc_packages restic
+    doc_files_begin
+    doc_file "$PASSPHRASE_FILE" \
+        "Repo-Passphrase (0600 root:root)"
+    doc_file "/usr/local/sbin/$(doc_val FQDN)-backup.sh" \
+        "Backup-Skript (taeglicher Cron-Lauf)"
+    doc_file "/etc/cron.d/$(doc_val FQDN)-backup" \
+        "Cron-Eintrag: restic backup + forget"
+    # shellcheck disable=SC2016  # Backtick ist Markdown-Syntax, keine Shell-Expansion
+    printf '\n**SFTP-Ziel:** `%s:%s`\n\n' \
+        "$(doc_val SFTP_HOST_ALIAS)" "$(doc_val SFTP_PATH)"
+    doc_timer_cron "taeglicher Lauf via /etc/cron.d/$(doc_val FQDN)-backup"
+    doc_note "Repo-Passphrase wird nicht dokumentiert (Secret)."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

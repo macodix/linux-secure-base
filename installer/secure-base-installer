@@ -23,6 +23,10 @@ readonly INSTALL_ORDER=(
     logging unattended restic monit lynis
 )
 
+# Interaktive Module: fuer diese wird kein Ticker gestartet (Passwort-,
+# Pubkey-Eingaben und interaktive Prompts wuerden ueberschrieben).
+readonly INTERACTIVE_MODULES=(users)
+
 # Anzeige-Beschreibung je Modul fuer die Statusliste (Fallback: Modulname).
 # In lib/ui.sh (ui_init) gelesen.
 # shellcheck disable=SC2034  # cross-file in lib/ui.sh verwendet
@@ -39,12 +43,19 @@ declare -rA SB_MODUL_LABEL=(
     [restic]="Datensicherung"
     [monit]="Monitoring"
     [lynis]="Härtungsprüfung"
+    [report]="Abschluss-Dokumentation"
 )
+
+# Gemeinsamer Name des UI-Pseudo-Eintrags fuer die Abschluss-Doku.
+# An mehreren Stellen verwendet (ui_init, Statuswechsel, ui_summary-Ausschluss).
+readonly SB_REPORT_UI_NAME="report"
 
 # Globale Zustandsvariablen (vom EXIT-Trap _sb_master_finish gelesen).
 SB_DONE_COUNT=0
 SB_CURRENT_MODUL=""
 SB_TOTAL=0
+# Liste der erfolgreich abgeschlossenen Module (fuer Abschluss-Doku).
+declare -a SB_DONE_MODULES=()
 # Fehlertext des abgebrochenen Moduls; in lib/ui.sh (ui_summary) gelesen.
 SB_FAIL_TEXT=""
 
@@ -186,6 +197,27 @@ _letzte_fehlerzeile() {
 #######################################
 _sb_master_finish() {
     local rc=$?
+    # Ticker stoppen, bevor die Summary erscheint (idempotent).
+    ui_status_stop
+    _ui_status_cleanup
+
+    # Abschluss-Doku: Erfolg -> Voll-Doku, Abbruch -> Teil-Doku mit Vermerk.
+    # SB_REPORT_UI_NAME ist die gemeinsame readonly-Konstante des UI-Pseudo-
+    # Eintrags (Plan 2.8); kein lokales Literal.
+    if [ "$SB_SUB" = "install" ] && [ "${ENABLE_INSTALL_REPORT:-yes}" = "yes" ]; then
+        if [ "${#SB_DONE_MODULES[@]}" -gt 0 ]; then
+            ui_list_update "$SB_REPORT_UI_NAME" run
+            if sb_install_report "$SB_SUB" "$rc" "$SB_CURRENT_MODUL" \
+                "${SB_DONE_MODULES[@]}"; then
+                ui_list_update "$SB_REPORT_UI_NAME" ok
+            else
+                ui_list_update "$SB_REPORT_UI_NAME" warn
+            fi
+        else
+            ui_list_update "$SB_REPORT_UI_NAME" warn
+        fi
+    fi
+
     if [ "$rc" -eq 0 ]; then
         log INFO "=== Sammelbilanz ${SB_SUB}: alle ${SB_TOTAL} Module erfolgreich ==="
         ui_summary
@@ -320,8 +352,14 @@ main() {
     printf -v lauf_ts '%(%Y-%m-%d %H:%M:%S)T' -1
     log INFO "=== secure-base-installer · ${sub} · ${lauf_ts} ==="
 
-    # UI initialisieren und Banner zeigen
-    ui_init "$SB_CURRENT_LOG" "${ausgewaehlt[@]}"
+    # UI-Liste = Module + Pseudo-Eintrag fuer die Abschluss-Doku (nur bei
+    # install und aktiviertem Report). Der Eintrag ist KEIN Modul: er steht
+    # nicht in "ausgewaehlt" und wird daher nie als Modul geladen/ausgefuehrt.
+    local ui_eintraege=("${ausgewaehlt[@]}")
+    if [ "$sub" = "install" ] && [ "${ENABLE_INSTALL_REPORT:-yes}" = "yes" ]; then
+        ui_eintraege+=("$SB_REPORT_UI_NAME")
+    fi
+    ui_init "$SB_CURRENT_LOG" "${ui_eintraege[@]}"
     ui_banner "$sub" "$OPT_DRYRUN"
 
     log INFO "Sammel-Lauf gestartet: $sub (${#ausgewaehlt[@]} Modul(e): ${ausgewaehlt[*]})"
@@ -329,6 +367,11 @@ main() {
     SB_SUB=$sub
     SB_TOTAL=${#ausgewaehlt[@]}
     trap '_sb_master_finish' EXIT
+    # SIGINT/SIGTERM: Ticker stoppen und regulaer beenden, damit EXIT greift.
+    # ui_status_stop ist idempotent; doppelter Aufruf (Signal + EXIT) ist
+    # unschaedlich.
+    trap 'ui_status_stop; exit 130' INT
+    trap 'ui_status_stop; exit 143' TERM
 
     # Erste Darstellung der Statusliste
     ui_list_draw
@@ -341,8 +384,14 @@ main() {
 
         ui_list_update "$modul" run
 
+        # Ticker nur fuer nicht-interaktive Module starten.
+        if ! in_list "$modul" "${INTERACTIVE_MODULES[@]}"; then
+            ui_status_start "$modul"
+        fi
+
         skript="$SCRIPT_DIR/lib/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
+            ui_status_stop
             log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/lib/modules/"
             ui_list_update "$modul" error "nicht installiert"
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
@@ -360,6 +409,9 @@ main() {
             "$skript" "$sub" || modul_rc=$?
         fi
 
+        # Ticker stoppen bevor der naechste Zustandswechsel (ok/error) erfolgt.
+        ui_status_stop
+
         if [ "$modul_rc" -eq 0 ]; then
             log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
             ui_list_update "$modul" ok
@@ -374,6 +426,7 @@ main() {
         fi
 
         SB_DONE_COUNT=$((SB_DONE_COUNT + 1))
+        SB_DONE_MODULES+=("$modul")
     done
     # Abschluss-Sammelbilanz uebernimmt _sb_master_finish (EXIT-Trap).
 }

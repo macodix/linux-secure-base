@@ -249,4 +249,36 @@ do_test() {
     fi
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   POSTFIX_PACKAGES, MAIN_CF, ALIASES (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Mail-Versand"
+    doc_packages "${POSTFIX_PACKAGES[@]}"
+    doc_files_begin
+    doc_file "$MAIN_CF" \
+        "relayhost = [$(doc_val RELAY_HOST)]:$(doc_val RELAY_PORT)" \
+        "smtp_tls_security_level = encrypt" \
+        "inet_interfaces = loopback-only"
+    doc_file "$ALIASES" "root: $(doc_val ADMIN_MAIL)"
+    doc_services postfix
+    doc_note "SMTP-Passwort wird nicht dokumentiert (Secret)."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

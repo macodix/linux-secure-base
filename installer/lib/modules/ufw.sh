@@ -220,4 +220,36 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   ALLOW_IN_TCP, ALLOW_OUT_TCP, ALLOW_OUT_UDP (lesend)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Firewall"
+    doc_packages ufw
+    printf '**Default-Policy:** deny incoming, deny outgoing\n\n'
+    printf '**Eingehend TCP erlaubt:**\n'
+    doc_list "${ALLOW_IN_TCP[@]:-}"
+    printf '\n**Ausgehend TCP erlaubt:**\n'
+    doc_list "${ALLOW_OUT_TCP[@]:-}"
+    printf '\n**Ausgehend UDP erlaubt:**\n'
+    doc_list "${ALLOW_OUT_UDP[@]:-}"
+    doc_services ufw
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

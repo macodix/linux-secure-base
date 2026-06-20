@@ -105,4 +105,32 @@ do_test() {
     log WARN "Kein sinnvoller Funktionstest fuer base definiert (Hostname/Zeitzone/apt sind statische Konfigurationswerte; check deckt den Soll-Ist-Abgleich ab)."
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   FQDN, TIMEZONE (lesend, ueber doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Grundkonfiguration"
+    # shellcheck disable=SC2016  # Backtick ist Markdown-Syntax, keine Shell-Expansion
+    printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
+    # shellcheck disable=SC2016
+    printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
+    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

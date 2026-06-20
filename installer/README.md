@@ -107,7 +107,7 @@ TOTP_DELIVERY="terminal"       # *optional*, wenn auf 'mail' gesetzt wird Google
 # == restic ==
 SFTP_HOST_ALIAS=""             # der Hostname des Backup SFTP-Servers in der ~/.ssh/config (SFTP Zugang dort konfigurieren)
 SFTP_PATH=""                   # Backup-Verzeichnis auf dem Backup Server
-RESTIC_PASSPPHRASE=""          # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
+RESTIC_PASSPHRASE=""           # *optional*, Passwort für das verschlüsselte restic-Backup, wird abgefragt wenn nicht gesetzt
 
 # == monit ==
 MONIT_MAIL_FROM=""             # Absender Adress für Monitoring Mail Alerts
@@ -151,8 +151,9 @@ funktioniert nicht:
 | `ADMIN_MAIL` | Allgemein | Zieladresse aller Systembenachrichtigungen |
 | `MAIN_USER` | users | Login des nicht-root-Hauptbenutzers |
 | `MAIN_USER_PUBKEY` *oder* `MAIN_USER_PUBKEY_FILE` | users | SSH-Public-Key des Hauptbenutzers — **ohne ihn kein SSH-Login** |
-| `RELAY_HOST`, `RELAY_PORT`, `RELAY_USER` | postfix | SMTP-Smarthost für den Mail-Versand |
+| `RELAY_HOST`, `RELAY_USER` | postfix | SMTP-Smarthost für den Mail-Versand |
 | `SFTP_HOST_ALIAS`, `SFTP_PATH` | restic | SFTP-Ziel für das Backup |
+| `MONIT_MAIL_FROM` | monit | Absender-Adresse der monit-Alarm-Mails |
 
 `ALLOW_IN_TCP` (ufw) **muss** Port `22` enthalten, sonst sperrt die Firewall
 den SSH-Zugang aus — der Installer bricht in diesem Fall ab.
@@ -220,6 +221,18 @@ Parallel mitlesen:
 ```sh
 tail -f /var/log/secure-base/secure-base.log
 ```
+
+## Abschluss-Dokumentation
+
+Nach einem erfolgreichen `install`-Lauf erzeugt der Installer automatisch eine
+Markdown-Dokumentation aller vorgenommenen Änderungen mit den konkret angewandten
+conf-Werten. Die Doku enthält keine Passwörter oder Secrets.
+
+Sie wird lokal unter `/var/log/secure-base/reports/` abgelegt und — sofern
+postfix aktiv und `ADMIN_MAIL` gesetzt ist — als Anhang an `ADMIN_MAIL` versendet.
+
+Der Schalter `ENABLE_INSTALL_REPORT` in `secure-base.conf` steuert die Funktion
+(`yes` = Standard, `no` = deaktiviert).
 
 ## Module einzeln und standalone
 

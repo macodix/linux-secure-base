@@ -24,5 +24,7 @@ source "${_sb_lib_dir}/file.sh"
 source "${_sb_lib_dir}/dispatch.sh"
 # shellcheck source=check.sh
 source "${_sb_lib_dir}/check.sh"
+# shellcheck source=doc.sh
+source "${_sb_lib_dir}/doc.sh"
 
 unset _sb_lib_dir

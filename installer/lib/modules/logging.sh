@@ -337,4 +337,42 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   JOURNALD_CONF, LOGWATCH_CONF, LOGROTATE_CONF (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Protokollierung und Auditing"
+    doc_packages logwatch
+    doc_files_begin
+    doc_file "$JOURNALD_CONF" \
+        "Storage = persistent" \
+        "SystemMaxUse = $(doc_val JOURNALD_MAX_USE)" \
+        "MaxRetentionSec = $(doc_val JOURNALD_MAX_RETENTION)"
+    doc_file "$LOGWATCH_CONF" \
+        "MailTo = $(doc_val ADMIN_MAIL)" \
+        "Detail = Med" \
+        "Service = All" \
+        "Output = mail"
+    doc_file "$LOGROTATE_CONF" \
+        "logrotate-Konfig fuer /var/log/secure-base/secure-base.log"
+    doc_timer_cron "logwatch: taeglicher Lauf via /etc/cron.daily/00logwatch"
+    doc_note "systemd-journald wird nicht neu installiert (Basis-Infrastruktur); persistentes Journal wird unter $JOURNAL_DIR abgelegt."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

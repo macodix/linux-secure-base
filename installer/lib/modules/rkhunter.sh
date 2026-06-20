@@ -225,4 +225,35 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   RK_DEFAULT, RK_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Schadsoftware-Schutz"
+    doc_packages rkhunter
+    doc_files_begin
+    doc_file "$RK_DEFAULT" \
+        "CRON_DAILY_RUN=true" \
+        "CRON_DB_UPDATE=true" \
+        "REPORT_EMAIL=$(doc_val ADMIN_MAIL)"
+    doc_timer_cron "taeglicher Lauf via /etc/cron.daily/rkhunter; Baseline-DB wird bei apt-Update aktualisiert"
+    doc_note "Baseline-Datenbank wurde bei der Installation initialisiert."
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

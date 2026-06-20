@@ -342,4 +342,41 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   MONITRC, CONFD, CHECKS_ENABLED (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Monitoring"
+    doc_packages monit
+    doc_files_begin
+    doc_file "$MONITRC" \
+        "set daemon 60 with start delay 60" \
+        "set mailserver localhost" \
+        "alert $(doc_val ADMIN_MAIL)" \
+        "mail-format from: $(doc_val MONIT_MAIL_FROM)"
+    if declare -p CHECKS_ENABLED >/dev/null 2>&1 && [ "${#CHECKS_ENABLED[@]}" -gt 0 ]; then
+        local c
+        for c in "${CHECKS_ENABLED[@]}"; do
+            doc_file "$CONFD/$c" "Check: $c"
+        done
+    fi
+    doc_services monit
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

@@ -338,4 +338,41 @@ do_test() {
     exit "$rc"
 }
 
+#######################################
+# Liefert den Markdown-Abschnitt dieses Moduls fuer die Abschluss-Doku.
+# Nur lesend; nimmt keine Systemaenderung vor. Gibt ausschliesslich
+# Markdown nach stdout aus. Nimmt conf-Werte ueber die von do_doc per
+# load_conf geladene Umgebung ab.
+# Globals:   UU_CONF, PERIODIC_CONF, DAILY_DROPIN, UPGRADE_DROPIN (lesend, via doc_val)
+# Outputs:   stdout — Markdown-Abschnitt (beginnt mit "## <Label>")
+#######################################
+module_doc() {
+    doc_section "Automatische Sicherheitsupdates"
+    doc_packages unattended-upgrades
+    doc_files_begin
+    doc_file "$UU_CONF" \
+        "Automatic-Reboot = $(doc_val AUTO_REBOOT)" \
+        "Automatic-Reboot-Time = $(doc_val AUTO_REBOOT_TIME)" \
+        "Mail = $(doc_val ADMIN_MAIL) (only-on-error)"
+    doc_file "$PERIODIC_CONF" \
+        "APT::Periodic::Update-Package-Lists = 1" \
+        "APT::Periodic::Unattended-Upgrade = 1"
+    doc_file "$DAILY_DROPIN" \
+        "OnCalendar = $(doc_val APT_DAILY_TIME)"
+    doc_file "$UPGRADE_DROPIN" \
+        "OnCalendar = $(doc_val APT_DAILY_UPGRADE_TIME)"
+    doc_timer_cron "apt-daily.timer und apt-daily-upgrade.timer (systemd) mit konfigurierten Uhrzeiten"
+}
+
+#######################################
+# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
+# Nur lesend, kein require_root.
+# Globals:   SB_CONF (lesend)
+# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
 dispatch "$MODULE" "$@"

@@ -5,6 +5,10 @@
 # Repository eingecheckt. Alle Modul-Einstellungen stehen in dieser einen
 # Datei, gegliedert nach Abschnitten.
 #
+# Mit "Pflicht" markierte Werte muessen gesetzt sein, sonst bricht install ab
+# (bzw. der SSH-Zugang funktioniert nicht). Alle uebrigen Werte haben einen
+# brauchbaren Default oder werden bei Bedarf interaktiv abgefragt.
+#
 # Herkunft des Zwei-Datei-Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
 
 # == Allgemein ==
@@ -15,10 +19,19 @@
 MODULES_ENABLED=(base postfix users ssh ufw fail2ban rkhunter \
     logging unattended restic monit lynis)
 
-# Vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
+# Abschluss-Dokumentation nach erfolgreicher Installation.
+#   yes (Default bei leerem Wert) — nach einem install-Lauf wird eine
+#       Markdown-Doku aller vorgenommenen Aenderungen erzeugt, lokal unter
+#       /var/log/secure-base/reports/ abgelegt und — sofern ein Mailweg
+#       besteht (postfix aktiv, ADMIN_MAIL gesetzt) — als Anhang an ADMIN_MAIL
+#       versendet. Die Doku enthaelt keine Passwoerter/Secrets.
+#   no  — keine Doku-Erzeugung, kein Versand.
+ENABLE_INSTALL_REPORT="yes"
+
+# Pflicht — vollstaendiger FQDN des Servers (z. B. "srv001.example.com").
 FQDN=""
 
-# Administrative E-Mail-Adresse fuer alle Benachrichtigungen
+# Pflicht — administrative E-Mail-Adresse fuer alle Benachrichtigungen
 # (Logwatch, fail2ban, rkhunter, unattended-upgrades, restic, monit, SSH-Login).
 ADMIN_MAIL=""
 
@@ -47,13 +60,13 @@ ENABLE_CHALLENGE_RESPONSE_AUTH="yes"
 
 # == postfix ==
 
-# SMTP-Smarthost (Relay), an den Postfix als Satellite ausliefert.
+# Pflicht — SMTP-Smarthost (Relay), an den Postfix als Satellite ausliefert.
 RELAY_HOST=""
 
 # Port des Smarthosts (Submission/STARTTLS ueblich 587).
 RELAY_PORT="587"
 
-# Benutzername fuer die SMTP-Authentifizierung am Smarthost.
+# Pflicht — Benutzername fuer die SMTP-Authentifizierung am Smarthost.
 RELAY_USER=""
 
 # Passwort fuer die SMTP-Authentifizierung. Leer lassen, dann fragt das
@@ -62,7 +75,7 @@ RELAY_PASSWORD=""
 
 # == users ==
 
-# Hauptbenutzer-Login fuer den nicht-root-Account auf dem System
+# Pflicht — Hauptbenutzer-Login fuer den nicht-root-Account auf dem System
 # (wird vom users-Modul angelegt; das ssh-Modul prueft ihn beim Haerten).
 MAIN_USER=""
 
@@ -71,14 +84,15 @@ MAIN_USER=""
 # Echo; landet nur in chpasswd-stdin, nicht in diese Datei zurueck).
 MAIN_USER_PASSWORD=""
 
-# SSH-Public-Key des Hauptbenutzers (Inhalt einer .pub-Datei).
-# Bevorzugt vor MAIN_USER_PUBKEY_FILE, wenn nicht leer.
+# Pflicht (entweder dieser Wert oder MAIN_USER_PUBKEY_FILE) — SSH-Public-Key
+# des Hauptbenutzers (Inhalt einer .pub-Datei). Bevorzugt vor
+# MAIN_USER_PUBKEY_FILE, wenn nicht leer.
 # Beispiel: ssh-ed25519 AAAA... user@laptop
 MAIN_USER_PUBKEY=""
 
-# Alternativ: Pfad zu einer .pub-Datei, falls MAIN_USER_PUBKEY leer ist.
-# Wird gelesen, dann verworfen — der Pfad wandert nicht in die
-# authorized_keys.
+# Pflicht (entweder dieser Wert oder MAIN_USER_PUBKEY) — Pfad zu einer
+# .pub-Datei, falls MAIN_USER_PUBKEY leer ist. Wird gelesen, dann verworfen —
+# der Pfad wandert nicht in die authorized_keys.
 MAIN_USER_PUBKEY_FILE=""
 
 # Force-Schalter fuer uninstall:
@@ -162,13 +176,13 @@ APT_DAILY_UPGRADE_TIME="23:30"
 
 # == restic ==
 
-# Host-Alias aus /root/.ssh/config (muss dort bereits konfiguriert sein).
-# Geht in die Repo-URL (sftp:<alias>:<pfad>) und die ssh-Aufrufe.
+# Pflicht — Host-Alias aus /root/.ssh/config (muss dort bereits konfiguriert
+# sein). Geht in die Repo-URL (sftp:<alias>:<pfad>) und die ssh-Aufrufe.
 SFTP_HOST_ALIAS=""
 
-# Zielpfad des Repos auf dem SFTP-Server. install legt ihn bei Bedarf an
-# (mkdir -p, idempotent - ein vorhandenes Verzeichnis ist unkritisch).
-# Der Elternpfad muss fuer den SFTP-Benutzer beschreibbar sein.
+# Pflicht — Zielpfad des Repos auf dem SFTP-Server. install legt ihn bei
+# Bedarf an (mkdir -p, idempotent - ein vorhandenes Verzeichnis ist
+# unkritisch). Der Elternpfad muss fuer den SFTP-Benutzer beschreibbar sein.
 SFTP_PATH=""
 
 # Passphrase zur Verschluesselung des Backup-Repos (NICHT der SSH-Key).
@@ -178,8 +192,9 @@ RESTIC_PASSPHRASE=""
 
 # == monit ==
 
-# Absender-Adresse der monit-Alarm-Mails (Feld "from:" im mail-format).
-MONIT_MAIL_FROM="monit@example.com"
+# Pflicht — Absender-Adresse der monit-Alarm-Mails (Feld "from:" im
+# mail-format).
+MONIT_MAIL_FROM=""
 
 # Welche Checks unter /etc/monit/conf.d/ angelegt werden.
 # Erlaubte Werte: system rootfs sshd postfix fail2ban ufw cron rkhunter restic
