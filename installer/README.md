@@ -28,7 +28,7 @@ Details stehen weiter unten.
 
 ### Voraussetzungen
 
-- **Ubuntu Server 26.04 LTS**, frisch installiert mit SSH Zugang
+- **Ubuntu Server 26.04 LTS**, minimal mit SSH
 - **root-Zugang** auf dem Zielserver
 - ein **SSH-Public-Key** für den künftigen Hauptbenutzer (die Key-Erstellung
   ist nicht Teil dieser Scripts)
@@ -37,17 +37,23 @@ Details stehen weiter unten.
 
 ### Schritte
 
-Auf dem Zielserver als root:
+####1. Den Installer herunterladen####
+
+**a) Entweder mit ˋwgetˋ**
 
 ```sh
-# 1. Repository holen — Variante mit git:
+wget -qO- https://github.com/macodix/linux-secure-base/archive/refs/heads/main.tar.gz | tar xz
+mv linux-secure-base-main linux-secure-base
+```
+
+**b) oder mit ˋgitˋ**
+
+```sh
 apt update && apt install -y git
 git clone https://github.com/macodix/linux-secure-base.git
+```
 
-#    ...oder ohne git, nur mit wget und tar:
-#    wget -qO- https://github.com/macodix/linux-secure-base/archive/refs/heads/main.tar.gz | tar xz
-#    mv linux-secure-base-main linux-secure-base
-
+####2. In 
 cd linux-secure-base/installer
 
 # 2. Konfiguration aus der Vorlage anlegen
