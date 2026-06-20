@@ -262,7 +262,7 @@ und `docs/systembeschreibung/` (Hintergründe und Festlegungen).
 ---
 
 
-## Lizenz
+# Lizenz
 
 GNU General Public License v3.0 (GPL-3.0) — siehe [`LICENSE`](../LICENSE) im
 Repository-Wurzelverzeichnis. Bereitstellung ohne Gewährleistung, Einsatz auf
