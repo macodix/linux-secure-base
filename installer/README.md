@@ -1,11 +1,22 @@
 # secure-base-installer
 
-Installiert und härtet ein Ubuntu-Grundsystem („Linux Secure Base") in zwölf
-idempotenten Modulen — Grundkonfiguration, Mail-Versand, Hauptbenutzer,
-SSH-Härtung mit TOTP, Firewall, Brute-Force- und Schadsoftware-Schutz,
-Protokollierung, automatische Updates, Datensicherung, Monitoring und
-monatliche Härtungsprüfung. Der Installer orchestriert die Module in fester
-Reihenfolge; jedes Modul ist auch einzeln prüf- und ausführbar.
+Installiert und härtet ein Ubuntu-Grundsystem („Linux Secure Base") in 12 Modulen:
+- Grundkonfiguration,
+- Mail-Versand,
+- Hauptbenutzer,
+- SSH-Härtung mit TOTP,
+- Firewall,
+- Brute-Force- und Schadsoftware-Schutz,
+- Protokollierung,
+- automatische Updates,
+- Datensicherung,
+- Monitoring und
+- monatliche Härtungsprüfung.
+
+Die Reihenfolge der Module ist dabei fest voreingestellt und kann nicht verändert werden.
+Jedes Modul ist aber auch einzeln auführbar.
+
+Der ˋsecure-base-installerˋ bietet auch Befehle zur Überorüfung ˋsecure-base-installer checkˋ bzw. zum Test der Installation an (ˋsecure-base-installer testˋ)
 
 ---
 
@@ -17,8 +28,7 @@ Details stehen weiter unten.
 
 ### Voraussetzungen
 
-- **Ubuntu Server 26.04 LTS**, frisch installiert mit SSH (wie von VPS-Hostern
-  üblich)
+- **Ubuntu Server 26.04 LTS**, frisch installiert mit SSH Zugang
 - **root-Zugang** auf dem Zielserver
 - ein **SSH-Public-Key** für den künftigen Hauptbenutzer (die Key-Erstellung
   ist nicht Teil dieser Scripts)
