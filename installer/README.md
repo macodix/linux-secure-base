@@ -1,4 +1,4 @@
-# Beschreubung secure-base-installer
+# Beschreibung secure-base-installer
 
 Installiert und härtet ein Ubuntu-Grundsystem („Linux Secure Base") in 12 Modulen:
 - Grundkonfiguration,
