@@ -41,13 +41,16 @@ _dispatch_usage() {
     local modul=$1
     cat >&2 <<EOF
 SYNOPSIS
-    $modul <KOMMANDO>
+    $modul [-c <pfad>] <KOMMANDO>
 
 KOMMANDOS
     install    Modul installieren und konfigurieren
     uninstall  Modul-Konfiguration zuruecknehmen
     check      Soll-Ist-Vergleich ohne Aenderungen
     test       Scharfer Funktionstest ohne Aenderungen
+
+OPTIONEN
+    -c <pfad>  Alternative Konfigdatei (Default: conf/secure-base.conf)
 
 EXIT STATUS
     0  Erfolg
@@ -68,9 +71,23 @@ EOF
 dispatch() {
     local modul=$1
     shift
+    # Optionales -c <pfad> vor dem Subkommando (setzt die zentrale SB_CONF).
+    local OPTIND=1 opt
+    while getopts ':c:h' opt; do
+        case "$opt" in
+            c) export SB_CONF="$OPTARG" ;;
+            h) _dispatch_usage "$modul"; exit 0 ;;
+            :) printf 'Option -%s erwartet ein Argument\n' "$OPTARG" >&2
+               _dispatch_usage "$modul"; exit 2 ;;
+            \?) printf 'Unbekannte Option: -%s\n' "$OPTARG" >&2
+                _dispatch_usage "$modul"; exit 2 ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+
     local sub=${1:-}
     case "$sub" in
-        -h | --help) _dispatch_usage "$modul"; exit 0 ;;
+        --help) _dispatch_usage "$modul"; exit 0 ;;
         "")
             _dispatch_usage "$modul"
             exit 2

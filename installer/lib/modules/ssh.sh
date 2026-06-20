@@ -17,7 +17,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="ssh"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly SSHD_CONFIG="/etc/ssh/sshd_config"
 readonly PAM_SSHD="/etc/pam.d/sshd"
@@ -199,7 +198,7 @@ warn_sitzungs_verifikation() {
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_common_keys_or_die
     require_packages_or_die
     require_user_login_artifacts_or_die
@@ -259,7 +258,7 @@ session optional pam_exec.so seteuid $LOGIN_MAIL_SCRIPT"
 
 do_uninstall() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     # ssh.conf wird nicht geladen — uninstall raeumt bedingungslos auf,
     # damit kein halb angeschaltetes Stadium zurueckbleibt.
     require_common_keys_or_die
@@ -295,7 +294,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_common_keys_or_die
 
     local rc=0
@@ -381,7 +380,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_common_keys_or_die
 
     # Sitzungs-neutral: einziger Funktionstest ist sshd -t.

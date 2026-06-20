@@ -13,7 +13,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="base"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 # base hat keine modulspezifische .conf — alle Werte aus secure-base.conf.
 
 #######################################
@@ -21,8 +20,8 @@ readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 # Globals:   FQDN, TIMEZONE
 #######################################
 require_base_keys() {
-    [ -n "${FQDN:-}" ] || die "FQDN nicht gesetzt in $CONF_COMMON"
-    [ -n "${TIMEZONE:-}" ] || die "TIMEZONE nicht gesetzt in $CONF_COMMON"
+    [ -n "${FQDN:-}" ] || die "FQDN nicht gesetzt in $SB_CONF"
+    [ -n "${TIMEZONE:-}" ] || die "TIMEZONE nicht gesetzt in $SB_CONF"
 }
 
 do_install() {
@@ -30,7 +29,7 @@ do_install() {
     require_cmd hostnamectl
     require_cmd timedatectl
     require_cmd apt-get
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_base_keys
 
     local current_host current_tz
@@ -78,7 +77,7 @@ do_uninstall() {
 do_check() {
     require_root
     require_cmd timedatectl
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_base_keys
 
     local current_host current_tz exit_code=0

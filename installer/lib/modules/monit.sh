@@ -18,7 +18,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="monit"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly MONITRC="/etc/monit/monitrc"
 readonly CONFD="/etc/monit/conf.d"
@@ -187,7 +186,7 @@ EOF
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_monit_conf
 
     log INFO "monit install: Paket installieren"
@@ -266,7 +265,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_monit_conf
 
     local rc=0
@@ -302,7 +301,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_monit_conf
 
     local rc=0

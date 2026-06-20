@@ -18,7 +18,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="logging"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly JOURNALD_CONF="/etc/systemd/journald.conf"
 readonly LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
@@ -94,7 +93,7 @@ EOF
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_logging_mail
     validate_journald_sizes
 
@@ -194,7 +193,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_logging_mail
     validate_journald_sizes
 
@@ -298,7 +297,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_logging_mail
     validate_journald_sizes
 

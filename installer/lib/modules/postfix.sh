@@ -13,7 +13,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="postfix"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly MAIN_CF="/etc/postfix/main.cf"
 readonly SASL_PASSWD="/etc/postfix/sasl_passwd"
@@ -45,7 +44,7 @@ do_install() {
     require_root
     require_cmd debconf-set-selections
     require_cmd apt-get
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_postfix_keys
 
     # 2. debconf-Antworten vor apt install setzen.
@@ -127,7 +126,7 @@ EOF
 
 do_uninstall() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     # ADMIN_MAIL wird hier nicht zwingend gebraucht — Pflicht-Key-Pruefung
     # entfaellt deshalb. main.cf-Eingriffe haben das Marker-Schema;
     # remove_setting findet sie ohne Konfig-Werte.
@@ -162,7 +161,7 @@ do_uninstall() {
 do_check() {
     require_root
     require_cmd postconf
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_postfix_keys
 
     local exit_code=0
@@ -230,7 +229,7 @@ do_test() {
     require_root
     require_cmd mail
     require_cmd mailq
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     # do_test braucht nur ADMIN_MAIL — die RELAY_*-Keys sind nur fuer install
     # relevant; zur Testzeit nimmt postfix die in main.cf geschriebenen Werte.
     [ -n "${ADMIN_MAIL:-}" ] || die "ADMIN_MAIL nicht gesetzt in secure-base.conf"

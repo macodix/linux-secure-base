@@ -15,7 +15,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="ufw"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # --- Konfig-Pruefung -------------------------------------------------
 
@@ -84,7 +83,7 @@ warn_sitzungs_verifikation() {
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_ufw_conf_or_die
     require_ssh_port_or_die
 
@@ -147,7 +146,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_ufw_conf_or_die
 
     local rc=0
@@ -192,7 +191,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_ufw_conf_or_die
 
     local rc=0

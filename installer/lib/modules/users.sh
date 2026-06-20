@@ -14,7 +14,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="users"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 # ---------------------------------------------------------------------
 # Eingangs-Validierung
@@ -126,7 +125,7 @@ check_owner_only_mode() {
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_main_user_or_die
 
     # 1. Paket installieren (idempotent ueber pkg_installed).
@@ -212,7 +211,7 @@ do_install() {
 
 do_uninstall() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     # Speicher-Hygiene: do_uninstall braucht MAIN_USER_PASSWORD nicht.
     unset MAIN_USER_PASSWORD
     require_main_user_or_die
@@ -257,7 +256,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_main_user_or_die
 
     local rc=0
@@ -328,7 +327,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_main_user_or_die
 
     local rc=0

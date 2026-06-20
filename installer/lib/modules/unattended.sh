@@ -18,7 +18,6 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/lib/common.sh"
 
 readonly MODULE="unattended"
-readonly CONF_COMMON="$SCRIPT_DIR/conf/secure-base.conf"
 
 readonly UU_CONF="/etc/apt/apt.conf.d/50unattended-upgrades"
 readonly PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"
@@ -103,7 +102,7 @@ EOF
 
 do_install() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_unattended_conf
 
     local reboot reboot_time daily upgrade
@@ -200,7 +199,7 @@ do_uninstall() {
 
 do_check() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_unattended_conf
 
     local rc=0
@@ -306,7 +305,7 @@ do_check() {
 
 do_test() {
     require_root
-    load_conf "$CONF_COMMON"
+    load_conf "$SB_CONF"
     require_unattended_conf
 
     local rc=0
