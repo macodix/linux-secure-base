@@ -229,7 +229,7 @@ Markdown-Dokumentation aller vorgenommenen Änderungen mit den konkret angewandt
 conf-Werten. Die Doku enthält keine Passwörter oder Secrets.
 
 Sie wird lokal unter `/var/log/secure-base/reports/` abgelegt und — sofern
-postfix aktiv und `ADMIN_MAIL` gesetzt ist — als Anhang an `ADMIN_MAIL` versendet.
+postfix aktiv und `ADMIN_MAIL` gesetzt ist — als Mail-Text an `ADMIN_MAIL` versendet.
 
 Der Schalter `ENABLE_INSTALL_REPORT` in `secure-base.conf` steuert die Funktion
 (`yes` = Standard, `no` = deaktiviert).
