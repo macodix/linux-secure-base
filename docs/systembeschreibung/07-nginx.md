@@ -35,7 +35,7 @@ Im Normalbetrieb ist Port 80 in der Firewall geschlossen, der Redirect-Block wir
 
 Global werden die Versions-Anzeige abgeschaltet (`server_tokens off`) und die TLS-Parameter über die von certbot mitgelieferte Datei gesetzt. Der nginx-Dienst erhält systemd-Hardening-Direktiven.
 
-Für ' nginx` wird ein eigenes AppArmor-Profil erstellt, da weder das `nginx`-Paket noch `apparmor-profiles-extra` vonf Ubuntu ein Profil mitliefert.
+Für `nginx` wird ein eigenes AppArmor-Profil erstellt, da weder das `nginx`-Paket noch `apparmor-profiles-extra` vonf Ubuntu ein Profil mitliefert.
 
 ## Versionshistorie
 

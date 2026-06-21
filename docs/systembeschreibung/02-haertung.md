@@ -18,7 +18,7 @@ Dieses Dokument legt die Anforderungen an die Härtung des Linux Grundsystems fe
 
 Die Härtung folgt dem BSI-IT-Grundschutz als Referenz für die Auswahl der Maßnahmen. Die technische Konfiguration wird mit dem CIS-Benchmark für Ubuntu Server (Level 1) geprüft. CIS Level 1 liefert die konkrete, testbare Konfigurations-Checkliste.
 
-Der Maßstab ist verbindlicher Soll-Maßstab, d. h. *bergündete* Abweichungen können möglich sein.
+Der Maßstab ist verbindlicher Soll-Maßstab, d. h. *begründete* Abweichungen können möglich sein.
 
 ## 2. Schutzziele und Defense-in-depth
 
@@ -38,7 +38,7 @@ flowchart TB
 
 Interaktiver Login erfolgt nicht ohne zweiten Faktor. Für SSH ist das Public-Key plus TOTP über PAM (`pam_google_authenticator.so` aus `libpam-google-authenticator`). Passwort-Authentifizierung und Root-Login per SSH sind abgeschaltet. Der SSH Authentifizierungs Stack: `AuthenticationMethods publickey,keyboard-interactive`, `KbdInteractiveAuthentication yes` und `UsePAM yes`.
 
-Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. `sudo` gehört zur Ubuntu-Standardinstallation und bleibt installiert, weil der CIS-Benchmark es erwartet, wird aber nicht genutzt. Der Hauptbenutzer ist kein Mitglied administrativer Gruppen (insbesondere nicht der Gruppe `sudo`). Änderungen an der sudo-Konfiguration werden durch `auditd` ünerwacht.
+Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. `sudo` gehört zur Ubuntu-Standardinstallation und bleibt installiert, weil der CIS-Benchmark es erwartet, wird aber nicht genutzt. Der Hauptbenutzer ist kein Mitglied administrativer Gruppen (insbesondere nicht der Gruppe `sudo`). Änderungen an der sudo-Konfiguration werden durch `auditd` überwacht.
 
 Der SSH-Zugang ist auf eine eigene Gruppe beschränkt (`AllowGroups ssh-users`). Die Konfiguration für den Login ist restriktiv (u. a. `PermitRootLogin no`, `PasswordAuthentication no`, `MaxAuthTries`, `LoginGraceTime`) und ggf. mit `sshd -T` überprüfbar.
 

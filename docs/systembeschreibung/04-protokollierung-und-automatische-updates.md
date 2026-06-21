@@ -13,7 +13,7 @@ Die Protokollierung besteht aus drei Komponenten aus den Distro-Paketquellen: `j
 
 `journald` läuft persistent (`Storage=persistent`), begrenzt auf 1 GB Plattenverbrauch (`SystemMaxUse=1G`) und drei Monate Aufbewahrung (`MaxRetentionSec=3month`). Damit überleben Logs den Reboot und die Mindest-Aufbewahrung sicherheitsrelevanter Ereignisse von drei Monaten ist erfüllt.
 
-`logwatch` erzeugt täglich aus `cron.daily` eine Mail-Zusammenfassung des Vortags versendet diese an die Administrator EMail Adresseail-Versand). Der Detailgrad ist mittel (`Detail = Med`).
+`logwatch` erzeugt täglich aus `cron.daily` eine Mail-Zusammenfassung des Vortags und versendet diese an die Administrator EMail Adresse. Der Detailgrad ist mittel (`Detail = Med`).
 
 `auditd` protokolliert sicherheitskritische Aktivitäten. Das Regelset ist administrative Befehle eingeschränkt.
 

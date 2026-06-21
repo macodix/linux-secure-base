@@ -20,7 +20,7 @@ Alle ausgehenden Systemmails werden auf eine Administrator EMail-Adresse umgelei
 - `root`-Alias in `/etc/aliases` lenkt System-Mail (cron, systemd) auf die Admin-Adresse
 - `recipient_canonical_maps` erzwingt über eine Regexp-Map, dass jede ausgehende Mail unabhängig vom Empfänger an die Administrator EMail Adresse versandt wird.
 
-Zu den Mail versenden Dinesten/Komponenten ggehören:
+Zu den Mail versendenden Diensten/Komponenten gehören:
 
 - SSH-Login-Benachrichtigung
 - rkhunter
