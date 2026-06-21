@@ -66,9 +66,9 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 
 # Administrative Konfiguration
 -w /etc/ssh/sshd_config -p wa -k sshd
--w /etc/pam.d/          -p wa -k pam
--w /etc/ufw/            -p wa -k firewall
--w /etc/audit/          -p wa -k auditconfig
+-w /etc/pam.d           -p wa -k pam
+-w /etc/ufw             -p wa -k firewall
+-w /etc/audit           -p wa -k auditconfig
 
 # Regelwerk bis zum Reboot unveränderlich
 -e 2

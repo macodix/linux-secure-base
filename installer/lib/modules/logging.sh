@@ -29,12 +29,17 @@ readonly SUDOLOG_CONF="/etc/sudoers.d/secure-base-sudolog"
 
 # Soll-Regeln gemaess konv-system.md 3.4 b (exakt).
 # -e 2 (Immutable) steht als letzte Regel.
-readonly AUDIT_RULES_CONTENT='-w /etc/sudoers     -p wa -k scope
--w /etc/sudoers.d   -p wa -k scope
--w /etc/passwd      -p wa -k identity
--w /etc/shadow      -p wa -k identity
--w /etc/group       -p wa -k identity
+readonly AUDIT_RULES_CONTENT='-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
 -w /var/log/lastlog -p wa -k logins
+-w /usr/bin/su -p x -k priv_esc
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d -p wa -k scope
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/pam.d -p wa -k pam
+-w /etc/ufw -p wa -k firewall
+-w /etc/audit -p wa -k auditconfig
 -e 2'
 
 # --- Hilfsfunktionen -------------------------------------------------
@@ -365,7 +370,7 @@ do_check() {
                 log WARN "check: auditd Immutable-Status noch nicht aktiv (enabled=$enabled_val) — Reboot erforderlich, damit -e 2 greift"
             fi
         else
-            if auditctl -l 2>/dev/null | grep -qF -- "$rule"; then
+            if auditctl -l 2>/dev/null | tr -s ' ' | grep -qF -- "$rule"; then
                 log INFO "check: Audit-Regel vorhanden: $rule"
             else
                 log ERROR "check: Audit-Regel fehlt laut 'auditctl -l': $rule"
