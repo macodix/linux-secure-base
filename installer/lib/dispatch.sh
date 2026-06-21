@@ -69,6 +69,16 @@ EOF
 }
 
 #######################################
+# Standard-Implementierung fuer do_doc: laedt die conf und gibt module_doc
+# nach stdout. Kann vom Modul ueberschrieben werden, wenn noetig.
+# Globals:   SB_CONF (lesend)
+#######################################
+do_doc() {
+    load_conf "$SB_CONF"
+    module_doc
+}
+
+#######################################
 # Validiert das Subkommando, oeffnet das Log und delegiert an do_*.
 # Arguments: $1 — Modulname, $2 — Subkommando (install|uninstall|check|test)
 # Globals:   SB_MODUL, SB_SUB

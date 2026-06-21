@@ -368,15 +368,4 @@ module_doc() {
     doc_services monit
 }
 
-#######################################
-# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
-# Nur lesend, kein require_root.
-# Globals:   SB_CONF (lesend)
-# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
-#######################################
-do_doc() {
-    load_conf "$SB_CONF"
-    module_doc
-}
-
 dispatch "$MODULE" "$@"

@@ -190,15 +190,4 @@ module_doc() {
     doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin. NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9."
 }
 
-#######################################
-# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
-# Nur lesend, kein require_root.
-# Globals:   SB_CONF (lesend)
-# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
-#######################################
-do_doc() {
-    load_conf "$SB_CONF"
-    module_doc
-}
-
 dispatch "$MODULE" "$@"

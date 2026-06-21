@@ -440,15 +440,4 @@ module_doc() {
     doc_note "Repo-Passphrase wird nicht dokumentiert (Secret). Forget-Politik: --keep-daily 7 --keep-weekly 4 --keep-monthly 6. append-only (konv-system.md 3.8 b): am SFTP-Backend vom Anbieter serverseitig einzurichten — clientseitig nicht erzwingbar. Integritaets- und Restore-Test: 'restic.sh test' (konv-system.md 3.8 c)."
 }
 
-#######################################
-# Subkommando "doc": laedt die conf und gibt module_doc nach stdout.
-# Nur lesend, kein require_root.
-# Globals:   SB_CONF (lesend)
-# Outputs:   stdout — Markdown-Abschnitt dieses Moduls
-#######################################
-do_doc() {
-    load_conf "$SB_CONF"
-    module_doc
-}
-
 dispatch "$MODULE" "$@"
