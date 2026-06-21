@@ -375,6 +375,14 @@ sb_install_report() {
     chmod 600 "$md_file"
     log INFO "Abschluss-Doku erzeugt: $md_file"
 
+    # Sicherheits-Selbsttest vor dem Versand: kein Secret-Name/-Wert in der
+    # Doku. Schlaegt er an, wird NICHT versendet (fail-closed); die Datei
+    # bleibt lokal (0600, root) zur Diagnose.
+    if ! doc_selftest_no_secrets "$md_file"; then
+        log ERROR "Abschluss-Doku enthaelt moeglicherweise Secrets — kein Versand: $md_file"
+        return 1
+    fi
+
     # Mailweg pruefen: ADMIN_MAIL gesetzt UND mail da UND postfix aktiv.
     if [ -z "${ADMIN_MAIL:-}" ] \
         || ! command -v mail >/dev/null 2>&1 \
