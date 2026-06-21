@@ -6,6 +6,7 @@
 # Schreibt die logrotate-Konfig fuer /var/log/secure-base/secure-base.log
 # nach /etc/logrotate.d/secure-base.
 # journald wird nur neu gestartet, nie entfernt (Basis-Infrastruktur).
+# auditd: Paket + Regeldatei + sudo-Protokollierung gemaess konv-system.md 3.4.
 # Nicht sitzungs-kritisch.
 # Aufruf: logging.sh {install|uninstall|check|test}
 
@@ -23,6 +24,18 @@ readonly JOURNALD_CONF="/etc/systemd/journald.conf"
 readonly LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
 readonly JOURNAL_DIR="/var/log/journal"
 readonly LOGROTATE_CONF="/etc/logrotate.d/secure-base"
+readonly AUDIT_RULES_FILE="/etc/audit/rules.d/secure-base.rules"
+readonly SUDOLOG_CONF="/etc/sudoers.d/secure-base-sudolog"
+
+# Soll-Regeln gemaess konv-system.md 3.4 b (exakt).
+# -e 2 (Immutable) steht als letzte Regel.
+readonly AUDIT_RULES_CONTENT='-w /etc/sudoers     -p wa -k scope
+-w /etc/sudoers.d   -p wa -k scope
+-w /etc/passwd      -p wa -k identity
+-w /etc/shadow      -p wa -k identity
+-w /etc/group       -p wa -k identity
+-w /var/log/lastlog -p wa -k logins
+-e 2'
 
 # --- Hilfsfunktionen -------------------------------------------------
 
@@ -141,6 +154,35 @@ do_install() {
 
     # logrotate-Konfig fuer das secure-base-Logfile schreiben.
     write_logrotate_conf
+
+    # --- auditd (konv-system.md 3.4) ---
+
+    # sudo-Protokollierung gemaess 3.4 a.
+    log INFO "logging install: sudo-Protokollierung nach $SUDOLOG_CONF einrichten"
+    printf 'Defaults logfile="/var/log/sudo.log"\n' > "$SUDOLOG_CONF"
+    chmod 440 "$SUDOLOG_CONF"
+
+    # auditd-Paket installieren.
+    log INFO "logging install: Paket auditd installieren"
+    pkg_install auditd
+
+    # Regeldatei schreiben (nur bei Aenderung — -e 2 macht Laufzeit-Reload
+    # ohne Reboot unmoeoglich; Datei-Aenderungen greifen erst nach dem
+    # naechsten Boot).
+    if [ -f "$AUDIT_RULES_FILE" ] \
+        && [ "$(cat "$AUDIT_RULES_FILE")" = "$AUDIT_RULES_CONTENT" ]; then
+        log INFO "logging install: $AUDIT_RULES_FILE unveraendert — uebersprungen"
+    else
+        log INFO "logging install: Audit-Regeln nach $AUDIT_RULES_FILE schreiben"
+        mkdir -p "$(dirname "$AUDIT_RULES_FILE")"
+        printf '%s\n' "$AUDIT_RULES_CONTENT" > "$AUDIT_RULES_FILE"
+        chmod 640 "$AUDIT_RULES_FILE"
+        log WARN "logging install: -e 2 (Immutable) ist gesetzt — neue Regeln greifen erst nach einem Neustart."
+    fi
+
+    # auditd aktivieren und starten.
+    log INFO "logging install: auditd aktivieren und starten"
+    svc_enable_now auditd
 }
 
 do_uninstall() {
@@ -189,6 +231,29 @@ do_uninstall() {
     else
         log INFO "logging uninstall: $LOGROTATE_CONF nicht vorhanden — uebersprungen"
     fi
+
+    # (4) auditd: Regeldatei + sudo-Log-Konfig entfernen, Dienst stoppen.
+    if [ -f "$AUDIT_RULES_FILE" ]; then
+        log INFO "logging uninstall: $AUDIT_RULES_FILE entfernen"
+        rm -f "$AUDIT_RULES_FILE"
+    else
+        log INFO "logging uninstall: $AUDIT_RULES_FILE nicht vorhanden — uebersprungen"
+    fi
+    if [ -f "$SUDOLOG_CONF" ]; then
+        log INFO "logging uninstall: $SUDOLOG_CONF entfernen"
+        rm -f "$SUDOLOG_CONF"
+    else
+        log INFO "logging uninstall: $SUDOLOG_CONF nicht vorhanden — uebersprungen"
+    fi
+    if pkg_installed auditd; then
+        log INFO "logging uninstall: auditd stoppen und deaktivieren"
+        systemctl disable --now auditd 2>/dev/null || true
+        log INFO "logging uninstall: Paket auditd entfernen (ohne --purge)"
+        pkg_remove auditd
+    else
+        log INFO "logging uninstall: Paket auditd nicht installiert — nichts zu entfernen"
+    fi
+    log WARN "logging uninstall: /var/log/sudo.log bleibt (Audit-Datensicherung). Manuell entfernen, falls gewuenscht."
 }
 
 do_check() {
@@ -287,6 +352,51 @@ do_check() {
         rc=1
     fi
 
+    # (6) auditd aktiv (konv-system.md 3.4 b).
+    check_packages auditd || rc=1
+    if [ "$(systemctl is-active auditd 2>/dev/null)" = "active" ]; then
+        log INFO "check: auditd aktiv"
+    else
+        log ERROR "check: auditd nicht aktiv"
+        rc=1
+    fi
+
+    # (7) Soll-Regeln vollstaendiger Abgleich (konv-system.md 3.4 b).
+    # Bei -e 2 koennen Regeln zur Laufzeit nicht mehr geaendert werden;
+    # der Abgleich erfolgt deshalb gegen die persistente Regeldatei.
+    local rule
+    while IFS= read -r rule; do
+        # Leerzeilen und Kommentare ueberspringen.
+        [[ "$rule" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$rule" =~ ^# ]] && continue
+        if [ "$rule" = "-e 2" ]; then
+            # Immutable-Status ueber auditctl -s pruefen statt ueber die Datei.
+            local enabled_val
+            enabled_val=$(auditctl -s 2>/dev/null | awk '/^enabled /{print $2}')
+            if [ "$enabled_val" = "2" ]; then
+                log INFO "check: auditd Immutable (-e 2) aktiv"
+            else
+                log WARN "check: auditd Immutable-Status noch nicht aktiv (enabled=$enabled_val) — Reboot erforderlich, damit -e 2 greift"
+            fi
+        else
+            if auditctl -l 2>/dev/null | grep -qF -- "$rule"; then
+                log INFO "check: Audit-Regel vorhanden: $rule"
+            else
+                log ERROR "check: Audit-Regel fehlt laut 'auditctl -l': $rule"
+                rc=1
+            fi
+        fi
+    done <<< "$AUDIT_RULES_CONTENT"
+
+    # (8) sudo-Protokollierung (konv-system.md 3.4 a).
+    if [ -f "$SUDOLOG_CONF" ] \
+        && grep -q 'logfile="/var/log/sudo\.log"' "$SUDOLOG_CONF"; then
+        log INFO "check: sudo-Protokollierung in $SUDOLOG_CONF gesetzt"
+    else
+        log ERROR "check: sudo-Protokollierung fehlt oder unvollstaendig ($SUDOLOG_CONF)"
+        rc=1
+    fi
+
     exit "$rc"
 }
 
@@ -347,7 +457,8 @@ do_test() {
 #######################################
 module_doc() {
     doc_section "Protokollierung und Auditing"
-    doc_packages logwatch
+    doc_packages logwatch auditd
+    doc_services auditd
     doc_files_begin
     doc_file "$JOURNALD_CONF" \
         "Storage = persistent" \
@@ -360,8 +471,18 @@ module_doc() {
         "Output = mail"
     doc_file "$LOGROTATE_CONF" \
         "logrotate-Konfig fuer /var/log/secure-base/secure-base.log"
+    doc_file "$AUDIT_RULES_FILE" \
+        "-w /etc/sudoers -p wa -k scope" \
+        "-w /etc/sudoers.d -p wa -k scope" \
+        "-w /etc/passwd -p wa -k identity" \
+        "-w /etc/shadow -p wa -k identity" \
+        "-w /etc/group -p wa -k identity" \
+        "-w /var/log/lastlog -p wa -k logins" \
+        "-e 2 (Immutable — Regelaenderungen ohne Reboot gesperrt)"
+    doc_file "$SUDOLOG_CONF" \
+        "Defaults logfile=\"/var/log/sudo.log\""
     doc_timer_cron "logwatch: taeglicher Lauf via /etc/cron.daily/00logwatch"
-    doc_note "systemd-journald wird nicht neu installiert (Basis-Infrastruktur); persistentes Journal wird unter $JOURNAL_DIR abgelegt."
+    doc_note "systemd-journald wird nicht neu installiert (Basis-Infrastruktur); persistentes Journal wird unter $JOURNAL_DIR abgelegt. auditd-Regeln mit -e 2 (Immutable) greifen erst nach dem naechsten Reboot."
 }
 
 #######################################
