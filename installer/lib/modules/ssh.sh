@@ -356,7 +356,7 @@ do_check() {
         rc=1
     fi
 
-    return "$rc"
+    exit "$rc"
 }
 
 do_test() {
@@ -369,10 +369,10 @@ do_test() {
     if sshd -t; then
         log INFO "ssh test: sshd -t ok (syntaktischer Konfig-Test)"
         log INFO "Fuer scharfen Login-Test in zweiter SSH-Sitzung manuell verifizieren (Pubkey + TOTP)."
-        return 0
+        exit 0
     fi
     log ERROR "ssh test: sshd -t fehlgeschlagen"
-    return 1
+    exit 1
 }
 
 #######################################
