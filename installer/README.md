@@ -56,18 +56,27 @@ Details stehen weiter unten.
 
 ### 1. Den Installer herunterladen
 
-**a) Entweder mit `wget`**
+`main` ist der jeweils aktuelle Entwicklungsstand. Für einen reproduzierbaren,
+geprüften Stand einen veröffentlichten Release-Tag verwenden und dessen
+SHA256-Prüfsumme (aus den Release-Notes) abgleichen.
 
-```sh
-wget -qO- https://github.com/macodix/linux-secure-base/archive/refs/heads/main.tar.gz | tar xz
-mv linux-secure-base-main linux-secure-base
-```
-
-**b) oder mit `git`**
+**a) Mit `git` (empfohlen — Transport und Objekte sind verifiziert)**
 
 ```sh
 apt update && apt install -y git
 git clone https://github.com/macodix/linux-secure-base.git
+# Optional auf einen veröffentlichten Release-Tag festlegen:
+# git -C linux-secure-base checkout <release-tag>
+```
+
+**b) oder mit `wget` (Download und Auspacken getrennt, nicht per Pipe)**
+
+```sh
+wget -O linux-secure-base.tar.gz https://github.com/macodix/linux-secure-base/archive/refs/heads/main.tar.gz
+# Integrität gegen den in den Release-Notes veröffentlichten Wert prüfen:
+# echo "<sha256>  linux-secure-base.tar.gz" | sha256sum -c -
+tar xzf linux-secure-base.tar.gz
+mv linux-secure-base-main linux-secure-base
 ```
 
 ### 2. Installer Verzeichnis
