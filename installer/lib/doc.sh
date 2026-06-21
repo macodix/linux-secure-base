@@ -384,8 +384,9 @@ sb_install_report() {
     fi
 
     # Versand als Mail-TEXT (kein Anhang): Markdown ist Klartext und im Body
-    # lesbar. Datei-Anhaenge (mail -A) wurden vom Relay/Empfaenger verworfen,
-    # waehrend reine Body-Mails ankommen. Der lokale .md-Report bleibt erhalten.
+    # lesbar. Der .md-Datei-Anhang kam beim Empfaenger nicht an (Grund nicht
+    # belegt, vermutlich Content-Type-/Endungs-Filter; PNG-Anhaenge kommen
+    # dagegen an). Als Body kommt der Report zuverlaessig an; lokaler .md bleibt.
     if mail -s "$betreff" "$ADMIN_MAIL" < "$md_file"; then
         log INFO "Abschluss-Doku an $ADMIN_MAIL versendet"
         return 0
