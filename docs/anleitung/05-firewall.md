@@ -14,7 +14,7 @@ Eingehend wird im Grundzustand nur SSH erlaubt. Die Web-Ports 80 und 443 öffnen
 ufw allow 22/tcp
 ```
 
-Ausgehend nur die nötigen Ziel-Ports (Konzept-Dokument Systemtopologie, Kapitel 6):
+Ausgehend nur die nötigen Ziel-Ports (siehe [Systembeschreibung, Kapitel 5 — Ausgehende Firewall-Zielliste](../systembeschreibung/01-systembeschreibung.md)):
 
 ```
 ufw allow out 587/tcp     # Submission/STARTTLS (Postfix-Relay)

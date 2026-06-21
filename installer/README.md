@@ -73,7 +73,7 @@ git clone https://github.com/macodix/linux-secure-base.git
 ### 2. Installer Verzeichnis
 
 ```
-cd linux-secure-base-main/installer
+cd linux-secure-base/installer
 ```
 
 ### 3. Beispiel-Konfigurationsdatei kopieren
