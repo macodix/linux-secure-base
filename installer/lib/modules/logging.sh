@@ -79,12 +79,6 @@ validate_journald_sizes() {
     fi
 }
 
-# Maskiert ERE-Metazeichen, damit ein Wert woertlich ins grep -E-Muster
-# (file_has_line) eingesetzt werden kann.
-ere_escape() {
-    printf '%s' "$1" | sed 's/[^a-zA-Z0-9_@-]/\\&/g'
-}
-
 # Schreibt die logrotate-Konfiguration fuer das secure-base-Logfile.
 write_logrotate_conf() {
     cat > "$LOGROTATE_CONF" <<'EOF'

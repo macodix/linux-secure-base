@@ -54,12 +54,6 @@ require_rkhunter_mail() {
     fi
 }
 
-# Maskiert ERE-Metazeichen, damit ein Wert woertlich in ein grep -E-Muster
-# (file_has_line) eingesetzt werden kann.
-ere_escape() {
-    printf '%s' "$1" | sed 's/[^a-zA-Z0-9_@-]/\\&/g'
-}
-
 # --- Subkommandos ----------------------------------------------------
 
 do_install() {
