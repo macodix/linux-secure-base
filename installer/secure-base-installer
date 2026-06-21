@@ -111,7 +111,7 @@ in_list() {
     shift
     local item
     for item in "$@"; do
-        [ "$item" = "$needle" ] && return 0
+        [[ "$item" = "$needle" ]] && return 0
     done
     return 1
 }
@@ -312,7 +312,7 @@ main() {
     fi
     load_conf "$SB_CONF"
 
-    if ! declare -p MODULES_ENABLED >/dev/null 2>&1; then
+    if ! [[ -v MODULES_ENABLED ]]; then
         die "MODULES_ENABLED nicht definiert in $SB_CONF"
     fi
 

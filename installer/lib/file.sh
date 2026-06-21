@@ -45,10 +45,11 @@ file_has_line() {
 # Permissions und Owner des Originals werden uebernommen.
 _sb_replace_atomic() {
     local tmp=$1 pfad=$2
-    local mode owner group
-    mode=$(stat -c '%a' "$pfad")
-    owner=$(stat -c '%U' "$pfad")
-    group=$(stat -c '%G' "$pfad")
+    local mode owner group stat_out
+    stat_out=$(stat -c '%a %U %G' "$pfad")
+    mode=${stat_out%% *}
+    owner=${stat_out#* }; owner=${owner% *}
+    group=${stat_out##* }
     chmod "$mode" "$tmp"
     chown "$owner:$group" "$tmp"
     mv "$tmp" "$pfad"
