@@ -28,26 +28,13 @@ readonly LOGIN_MAIL_SCRIPT="/etc/ssh/login-mail-notification.sh"
 
 #######################################
 # Prueft die aus secure-base.conf gelesenen Pflicht-Keys:
-#   MAIN_USER  — nicht leer, POSIX-Login-Format, nicht Systembenutzer
+#   MAIN_USER  — ueber require_main_user_or_die (lib/system.sh)
 #   ADMIN_MAIL — nicht leer, anchored Mail-Format (name@domain)
 #   FQDN       — nicht leer, enthaelt Punkt
 # Globals:   MAIN_USER, ADMIN_MAIL, FQDN
 #######################################
 require_common_keys_or_die() {
-    [ -n "${MAIN_USER:-}" ] \
-        || die "MAIN_USER ist leer — bitte in secure-base.conf setzen."
-    [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
-        || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
-    case "$MAIN_USER" in
-        root | daemon | bin | sys | sync | games | man | lp | mail | news \
-            | uucp | proxy | www-data | backup | list | irc | nobody \
-            | messagebus | sshd)
-            die "MAIN_USER darf kein Systembenutzer sein: $MAIN_USER"
-            ;;
-        systemd-*)
-            die "MAIN_USER darf kein systemd-Systembenutzer sein: $MAIN_USER"
-            ;;
-    esac
+    require_main_user_or_die
     [ -n "${ADMIN_MAIL:-}" ] \
         || die "ADMIN_MAIL ist leer — bitte in secure-base.conf setzen."
     [[ "$ADMIN_MAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] \

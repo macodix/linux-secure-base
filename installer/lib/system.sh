@@ -4,6 +4,28 @@
 # Bietet require_root, require_cmd.
 
 #######################################
+# Prueft MAIN_USER: nicht leer, POSIX-Login-Format, nicht Systembenutzer.
+# Wird von users.sh und ssh.sh (require_common_keys_or_die) verwendet.
+# Globals:   MAIN_USER
+#######################################
+require_main_user_or_die() {
+    [ -n "${MAIN_USER:-}" ] \
+        || die "MAIN_USER ist leer — bitte in secure-base.conf setzen."
+    [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
+        || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
+    case "$MAIN_USER" in
+        root | daemon | bin | sys | sync | games | man | lp | mail | news \
+            | uucp | proxy | www-data | backup | list | irc | nobody \
+            | messagebus | sshd)
+            die "MAIN_USER darf kein Systembenutzer sein: $MAIN_USER"
+            ;;
+        systemd-*)
+            die "MAIN_USER darf kein systemd-Systembenutzer sein: $MAIN_USER"
+            ;;
+    esac
+}
+
+#######################################
 # Leitet den Absender-Wert root@<domain> aus FQDN ab.
 # Gibt leer aus, wenn FQDN keinen Punkt enthaelt.
 # Arguments: keine
