@@ -276,14 +276,38 @@ do_check() {
     require_restic_conf
 
     local rc=0
-    local backup_script cron_file
+    local backup_script cron_file repo
     backup_script="/usr/local/sbin/${FQDN}-backup.sh"
     cron_file="/etc/cron.d/${FQDN}-backup"
+    repo="sftp:${SFTP_HOST_ALIAS}:${SFTP_PATH}"
 
     check_packages restic || rc=1
     check_file_mode "$PASSPHRASE_FILE" 600 root:root || rc=1
     check_file_mode "$backup_script"   700 root:root || rc=1
     check_file_mode "$cron_file"       644 root:root || rc=1
+
+    # (konv-system.md 3.8 a) Repo integer — restic check (schnell, ohne
+    # vollstaendiges Lesen aller Daten).
+    if pkg_installed restic; then
+        local chkout chkrc=0
+        chkout=$(restic -r "$repo" -p "$PASSPHRASE_FILE" check 2>&1) || chkrc=$?
+        if [ -n "$chkout" ]; then
+            local chkline
+            while IFS= read -r chkline; do log INFO "restic check: $chkline"; done <<<"$chkout"
+        fi
+        if [ "$chkrc" -eq 0 ]; then
+            log INFO "check: restic check OK — Repo integer"
+        else
+            log ERROR "check: restic check fehlgeschlagen (Exit $chkrc) — Repo moeglicherweise defekt"
+            rc=1
+        fi
+    fi
+
+    # (konv-system.md 3.8 b) append-only: am SFTP-Backend vom Anbieter
+    # einzurichten (serverseitiges Flag). Clientseitig nicht erzwingbar.
+    # Die Forget-Politik (--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+    # ist im Backup-Skript definiert.
+    log INFO "check: append-only (3.8 b): am SFTP-Backend vom Anbieter einzurichten — hier nicht automatisch pruefbar (manuell verifizieren)"
 
     exit "$rc"
 }
@@ -344,6 +368,50 @@ do_test() {
         rc=1
     fi
 
+    # (5) Integritaetstest (konv-system.md 3.8 a/c): restic check.
+    log INFO "test: restic check (Integritaetsnachweis, konv-system.md 3.8 c)"
+    local chkout chkrc=0
+    chkout=$(restic -r "$repo" -p "$PASSPHRASE_FILE" check 2>&1) || chkrc=$?
+    if [ -n "$chkout" ]; then
+        local chkline
+        while IFS= read -r chkline; do log INFO "restic check: $chkline"; done <<<"$chkout"
+    fi
+    if [ "$chkrc" -eq 0 ]; then
+        log INFO "test: restic check OK — Repo integer"
+    else
+        log ERROR "test: restic check fehlgeschlagen (Exit $chkrc)"
+        rc=1
+    fi
+
+    # (6) Probe-Restore einer einzelnen Datei in tmp (konv-system.md 3.8 c).
+    # Nur durchfuehren, wenn mindestens ein Snapshot vorhanden ist.
+    local latest_snap
+    latest_snap=$(restic -r "$repo" -p "$PASSPHRASE_FILE" snapshots \
+        --json --last 2>/dev/null \
+        | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    if [ -n "$latest_snap" ]; then
+        local restore_tmp
+        restore_tmp=$(mktemp -d /tmp/restic-restore-test.XXXXXX)
+        log INFO "test: Probe-Restore aus Snapshot $latest_snap nach $restore_tmp (konv-system.md 3.8 c)"
+        local rout rrc=0
+        rout=$(restic -r "$repo" -p "$PASSPHRASE_FILE" restore "$latest_snap" \
+            --include "/etc/hostname" \
+            --target "$restore_tmp" 2>&1) || rrc=$?
+        if [ -n "$rout" ]; then
+            local rline
+            while IFS= read -r rline; do log INFO "restic restore: $rline"; done <<<"$rout"
+        fi
+        rm -rf "$restore_tmp"
+        if [ "$rrc" -eq 0 ]; then
+            log INFO "test: Probe-Restore erfolgreich (Wiederherstellbarkeit nachgewiesen)"
+        else
+            log ERROR "test: Probe-Restore fehlgeschlagen (Exit $rrc)"
+            rc=1
+        fi
+    else
+        log INFO "test: kein Snapshot vorhanden — Probe-Restore uebersprungen"
+    fi
+
     exit "$rc"
 }
 
@@ -369,7 +437,7 @@ module_doc() {
     printf '\n**SFTP-Ziel:** `%s:%s`\n\n' \
         "$(doc_val SFTP_HOST_ALIAS)" "$(doc_val SFTP_PATH)"
     doc_timer_cron "taeglicher Lauf via /etc/cron.d/$(doc_val FQDN)-backup"
-    doc_note "Repo-Passphrase wird nicht dokumentiert (Secret)."
+    doc_note "Repo-Passphrase wird nicht dokumentiert (Secret). Forget-Politik: --keep-daily 7 --keep-weekly 4 --keep-monthly 6. append-only (konv-system.md 3.8 b): am SFTP-Backend vom Anbieter serverseitig einzurichten — clientseitig nicht erzwingbar. Integritaets- und Restore-Test: 'restic.sh test' (konv-system.md 3.8 c)."
 }
 
 #######################################
