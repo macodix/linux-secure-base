@@ -4,6 +4,21 @@
 # Bietet require_root, require_cmd.
 
 #######################################
+# Leitet den Absender-Wert root@<domain> aus FQDN ab.
+# Gibt leer aus, wenn FQDN keinen Punkt enthaelt.
+# Arguments: keine
+# Globals:   FQDN (lesend)
+# Outputs:   stdout — "root@<domain>" oder leer
+#######################################
+mailfrom_from_fqdn() {
+    local fqdn=${FQDN:-}
+    local domain=${fqdn#*.}
+    if [ -n "$domain" ] && [ "$domain" != "$fqdn" ]; then
+        printf '%s' "root@${domain}"
+    fi
+}
+
+#######################################
 # Bricht ab, wenn das Skript nicht als root laeuft.
 # Globals:   EUID
 #######################################
