@@ -380,6 +380,95 @@ do_check() {
             rc=1
         fi
     fi
+
+    # --- Konto-Hygiene (konv-system.md 3.2 a–e) ---
+
+    # 3.2 a: Login-Namen und UIDs/GIDs eindeutig (pwck -r / grpck -r).
+    local pwck_out grpck_out pwck_rc=0 grpck_rc=0
+    pwck_out=$(pwck -r 2>&1) || pwck_rc=$?
+    if [ "$pwck_rc" -eq 0 ]; then
+        log INFO "check: pwck -r: keine Beanstandungen"
+    else
+        log ERROR "check: pwck -r meldet Beanstandungen (rc=$pwck_rc)"
+        if [ -n "$pwck_out" ]; then
+            local pwline
+            while IFS= read -r pwline; do log ERROR "  pwck: $pwline"; done <<<"$pwck_out"
+        fi
+        rc=1
+    fi
+    grpck_out=$(grpck -r 2>&1) || grpck_rc=$?
+    if [ "$grpck_rc" -eq 0 ]; then
+        log INFO "check: grpck -r: keine Beanstandungen"
+    else
+        log ERROR "check: grpck -r meldet Beanstandungen (rc=$grpck_rc)"
+        if [ -n "$grpck_out" ]; then
+            local grline
+            while IFS= read -r grline; do log ERROR "  grpck: $grline"; done <<<"$grpck_out"
+        fi
+        rc=1
+    fi
+
+    # 3.2 b: UID 0 ausschliesslich root.
+    local uid0_list
+    uid0_list=$(awk -F: '($3==0){print $1}' /etc/passwd)
+    if [ "$uid0_list" = "root" ]; then
+        log INFO "check: UID-0 ausschliesslich root"
+    else
+        log ERROR "check: UID-0 nicht nur root: $uid0_list"
+        rc=1
+    fi
+
+    # 3.2 c: Mode/Owner der Kontendateien.
+    check_mode_owner /etc/passwd  644 "root:root" || rc=1
+    check_mode_owner /etc/group   644 "root:root" || rc=1
+    # /etc/shadow und /etc/gshadow: 640 root:shadow ist auf Debian/Ubuntu
+    # der tatsaechliche Default; konv-system.md fordert Owner root, Mode 640.
+    local shadow_owner gshadow_owner
+    shadow_owner=$(stat -c '%U:%G' /etc/shadow 2>/dev/null || true)
+    gshadow_owner=$(stat -c '%U:%G' /etc/gshadow 2>/dev/null || true)
+    local shadow_mode gshadow_mode
+    shadow_mode=$(stat -c '%a' /etc/shadow 2>/dev/null || true)
+    gshadow_mode=$(stat -c '%a' /etc/gshadow 2>/dev/null || true)
+    if [ "$shadow_mode" = "640" ] && [[ "$shadow_owner" == root:* ]]; then
+        log INFO "check: /etc/shadow OK ($shadow_mode $shadow_owner)"
+    else
+        log ERROR "check: /etc/shadow Mode=$shadow_mode Owner=$shadow_owner, soll 640 root:<shadow-Gruppe>"
+        rc=1
+    fi
+    if [ -e /etc/gshadow ]; then
+        if [ "$gshadow_mode" = "640" ] && [[ "$gshadow_owner" == root:* ]]; then
+            log INFO "check: /etc/gshadow OK ($gshadow_mode $gshadow_owner)"
+        else
+            log ERROR "check: /etc/gshadow Mode=$gshadow_mode Owner=$gshadow_owner, soll 640 root:<shadow-Gruppe>"
+            rc=1
+        fi
+    fi
+
+    # 3.2 d: sudo-Privilegien: sudoers.d-Datei fuer MAIN_USER pruefen,
+    # falls der Benutzer sudo-Rechte hat.
+    local sudoers_file="/etc/sudoers.d/user-${MAIN_USER}"
+    if sudo -lU "$MAIN_USER" 2>/dev/null | grep -q '(ALL)'; then
+        if [ -f "$sudoers_file" ]; then
+            log INFO "check: sudo-Datei fuer $MAIN_USER vorhanden: $sudoers_file"
+        else
+            log ERROR "check: $MAIN_USER hat sudo-Rechte, aber keine eigene Datei $sudoers_file (konv-system.md 3.2 d)"
+            rc=1
+        fi
+    else
+        log INFO "check: $MAIN_USER hat keine (ALL)-sudo-Rechte — $sudoers_file nicht erwartet"
+    fi
+
+    # 3.2 e: Regulaere Benutzer im erwarteten UID-Bereich (>=1000, <65534).
+    local reg_users
+    reg_users=$(awk -F: '($3>=1000 && $3<65534){print $1}' /etc/passwd)
+    if [ -n "$reg_users" ]; then
+        log INFO "check: regulaere Benutzer (UID 1000-65533) — bitte gegen Betriebsdokumentation pruefen:"
+        local u
+        while IFS= read -r u; do log INFO "  $u"; done <<<"$reg_users"
+    else
+        log INFO "check: keine regulaeren Benutzer im UID-Bereich 1000-65533 vorhanden"
+    fi
+
     return "$rc"
 }
 
