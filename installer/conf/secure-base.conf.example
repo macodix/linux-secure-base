@@ -23,8 +23,8 @@ MODULES_ENABLED=(base postfix users ssh ufw fail2ban rkhunter \
 #   yes (Default bei leerem Wert) — nach einem install-Lauf wird eine
 #       Markdown-Doku aller vorgenommenen Aenderungen erzeugt, lokal unter
 #       /var/log/secure-base/reports/ abgelegt und — sofern ein Mailweg
-#       besteht (postfix aktiv, ADMIN_MAIL gesetzt) — als Anhang an ADMIN_MAIL
-#       versendet. Die Doku enthaelt keine Passwoerter/Secrets.
+#       besteht (postfix aktiv, ADMIN_MAIL gesetzt) — als Mail-Text an
+#       ADMIN_MAIL versendet. Die Doku enthaelt keine Passwoerter/Secrets.
 #   no  — keine Doku-Erzeugung, kein Versand.
 ENABLE_INSTALL_REPORT="yes"
 

@@ -383,8 +383,10 @@ sb_install_report() {
         return 1
     fi
 
-    if mail -A "$md_file" -s "$betreff" "$ADMIN_MAIL" \
-        < <(printf 'Abschluss-Dokumentation der secure-base-Installation im Anhang.\n'); then
+    # Versand als Mail-TEXT (kein Anhang): Markdown ist Klartext und im Body
+    # lesbar. Datei-Anhaenge (mail -A) wurden vom Relay/Empfaenger verworfen,
+    # waehrend reine Body-Mails ankommen. Der lokale .md-Report bleibt erhalten.
+    if mail -s "$betreff" "$ADMIN_MAIL" < "$md_file"; then
         log INFO "Abschluss-Doku an $ADMIN_MAIL versendet"
         return 0
     else
