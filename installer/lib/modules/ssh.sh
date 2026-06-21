@@ -96,27 +96,6 @@ require_packages_or_die() {
 # -------------------------------------------------------------------------
 
 #######################################
-# Prueft Datei/Verzeichnis auf exakten Mode und Owner.
-# Bei Abweichung ERROR-Log und Rueckgabewert 1.
-# Arguments: $1 — Pfad, $2 — Soll-Mode (oktal), $3 — Soll-Owner (user:group)
-# Returns:   0 OK, 1 Abweichung
-#######################################
-check_mode_owner() {
-    local path="$1" mode_soll="$2" owner_soll="$3"
-    local mode owner
-    mode="$(stat -c '%a' "$path")"
-    owner="$(stat -c '%U:%G' "$path")"
-    if [ "$mode" != "$mode_soll" ]; then
-        log ERROR "$path: Mode $mode, erwartet $mode_soll"
-        return 1
-    fi
-    if [ "$owner" != "$owner_soll" ]; then
-        log ERROR "$path: Owner $owner, erwartet $owner_soll"
-        return 1
-    fi
-}
-
-#######################################
 # Prueft, ob SSH aktiv und beim Boot aktiviert ist — unabhaengig vom
 # Aktivierungsmodell (Service- oder Socket-Activation).
 # Returns:   0 OK, 1 Fehler
@@ -359,7 +338,7 @@ do_check() {
             log ERROR "$LOGIN_MAIL_SCRIPT existiert nicht (ENABLE_LOGIN_MAIL=yes)"
             rc=1
         else
-            check_mode_owner "$LOGIN_MAIL_SCRIPT" 700 "root:root" || rc=1
+            check_file_mode "$LOGIN_MAIL_SCRIPT" 700 "root:root" || rc=1
             [ -x "$LOGIN_MAIL_SCRIPT" ] \
                 || { log ERROR "$LOGIN_MAIL_SCRIPT ist nicht ausfuehrbar"; rc=1; }
         fi

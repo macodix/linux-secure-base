@@ -117,23 +117,6 @@ totp_per_mail() {
     rm -f "$qr_png"
 }
 
-# Prueft Datei/Verzeichnis auf exakten Mode und Owner. Bei Abweichung
-# ERROR-Log und Rueckgabewert 1.
-check_mode_owner() {
-    local path="$1" mode_soll="$2" owner_soll="$3"
-    local mode owner
-    mode="$(stat -c '%a' "$path")"
-    owner="$(stat -c '%U:%G' "$path")"
-    if [ "$mode" != "$mode_soll" ]; then
-        log ERROR "$path: Mode $mode, erwartet $mode_soll"
-        return 1
-    fi
-    if [ "$owner" != "$owner_soll" ]; then
-        log ERROR "$path: Owner $owner, erwartet $owner_soll"
-        return 1
-    fi
-}
-
 # Prueft, dass Gruppe und "andere" keinen Zugriff haben
 # (Mode-Maske & 077 == 0). Verwendet fuer das TOTP-Secret
 # ~/.google_authenticator.
@@ -356,14 +339,14 @@ do_check() {
         log ERROR "$home/.ssh existiert nicht"
         rc=1
     else
-        check_mode_owner "$home/.ssh" 700 "$MAIN_USER:$MAIN_USER" || rc=1
+        check_file_mode "$home/.ssh" 700 "$MAIN_USER:$MAIN_USER" || rc=1
     fi
     authkeys="$home/.ssh/authorized_keys"
     if [ ! -f "$authkeys" ]; then
         log ERROR "$authkeys existiert nicht"
         rc=1
     else
-        check_mode_owner "$authkeys" 600 "$MAIN_USER:$MAIN_USER" || rc=1
+        check_file_mode "$authkeys" 600 "$MAIN_USER:$MAIN_USER" || rc=1
         if [ ! -s "$authkeys" ]; then
             log ERROR "$authkeys ist leer"
             rc=1
@@ -419,8 +402,8 @@ do_check() {
     fi
 
     # 3.2 c: Mode/Owner der Kontendateien.
-    check_mode_owner /etc/passwd  644 "root:root" || rc=1
-    check_mode_owner /etc/group   644 "root:root" || rc=1
+    check_file_mode /etc/passwd  644 "root:root" || rc=1
+    check_file_mode /etc/group   644 "root:root" || rc=1
     # /etc/shadow und /etc/gshadow: 640 root:shadow ist auf Debian/Ubuntu
     # der tatsaechliche Default; konv-system.md fordert Owner root, Mode 640.
     local shadow_owner gshadow_owner
