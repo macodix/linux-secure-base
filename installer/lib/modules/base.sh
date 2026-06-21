@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Linux Secure Base — Modul base
-# Hostname, Zeitzone und Paketquellen aktualisieren.
+# Hostname, Zeitzone, NTP-Zeitsynchronisation und Paketquellen aktualisieren.
 # Aufruf: base.sh {install|uninstall|check|test}
 
 set -euo pipefail
@@ -48,6 +48,10 @@ do_install() {
     else
         log INFO "Zeitzone bereits $TIMEZONE — uebersprungen"
     fi
+
+    # NTP-Zeitsynchronisation sicherstellen (konv-system.md 3.5 b).
+    log INFO "base install: NTP-Zeitsynchronisation aktivieren (timedatectl set-ntp true)"
+    timedatectl set-ntp true
 
     pkg_upgrade
 
@@ -98,6 +102,16 @@ do_check() {
         exit_code=1
     fi
 
+    # NTP-Zeitsynchronisation (konv-system.md 3.5 b).
+    local ntp_sync
+    ntp_sync=$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)
+    if [ "$ntp_sync" = "yes" ]; then
+        log INFO "NTPSynchronized: yes"
+    else
+        log ERROR "NTPSynchronized: $ntp_sync (soll: yes)"
+        exit_code=1
+    fi
+
     exit "$exit_code"
 }
 
@@ -119,7 +133,7 @@ module_doc() {
     printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
     # shellcheck disable=SC2016
     printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
-    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin."
+    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin. NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b)."
 }
 
 #######################################
