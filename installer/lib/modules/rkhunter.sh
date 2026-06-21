@@ -30,15 +30,9 @@ rkhunter_mail_cmd() {
 
 # --- Konfig-Pruefung -------------------------------------------------
 
-# Effektiver Absender: root@<domain>, Domain aus FQDN abgeleitet.
+# Effektiver Absender: root@<domain>, Domain aus FQDN abgeleitet (via mailfrom_from_fqdn).
 # Leer, wenn aus FQDN keine Domain ableitbar ist (FQDN ohne Punkt).
-rkhunter_mailfrom() {
-    local fqdn=${FQDN:-}
-    local domain=${fqdn#*.}
-    if [ -n "$domain" ] && [ "$domain" != "$fqdn" ]; then
-        printf '%s' "root@${domain}"
-    fi
-}
+rkhunter_mailfrom() { mailfrom_from_fqdn; }
 
 # Prueft Empfaenger (ADMIN_MAIL), FQDN-Zeichensatz und Absender-
 # Ableitbarkeit. Bricht sonst ab.

@@ -39,17 +39,9 @@ readonly AUDIT_RULES_CONTENT='-w /etc/sudoers     -p wa -k scope
 
 # --- Hilfsfunktionen -------------------------------------------------
 
-# Effektiver Absender: root@<domain>, Domain aus FQDN abgeleitet.
+# Effektiver Absender: root@<domain>, Domain aus FQDN abgeleitet (via mailfrom_from_fqdn).
 # Leer, wenn aus FQDN keine Domain ableitbar ist (FQDN ohne Punkt).
-logwatch_mailfrom() {
-    local fqdn=${FQDN:-}
-    # Hostteil abschneiden: srv001.example.com -> example.com.
-    local domain=${fqdn#*.}
-    if [ -n "$domain" ] && [ "$domain" != "$fqdn" ]; then
-        printf '%s' "root@${domain}"
-    fi
-    # sonst leer -> require_logging_mail schlaegt an
-}
+logwatch_mailfrom() { mailfrom_from_fqdn; }
 
 # Prueft Empfaenger (ADMIN_MAIL), FQDN-Zeichensatz und Absender-
 # Ableitbarkeit. Bricht sonst mit die ab.
