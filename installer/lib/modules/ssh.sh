@@ -29,7 +29,7 @@ readonly LOGIN_MAIL_SCRIPT="/etc/ssh/login-mail-notification.sh"
 #######################################
 # Prueft die aus secure-base.conf gelesenen Pflicht-Keys:
 #   MAIN_USER  — nicht leer, POSIX-Login-Format, nicht Systembenutzer
-#   ADMIN_MAIL — nicht leer, enthaelt '@'
+#   ADMIN_MAIL — nicht leer, anchored Mail-Format (name@domain)
 #   FQDN       — nicht leer, enthaelt Punkt
 # Globals:   MAIN_USER, ADMIN_MAIL, FQDN
 #######################################
@@ -50,8 +50,8 @@ require_common_keys_or_die() {
     esac
     [ -n "${ADMIN_MAIL:-}" ] \
         || die "ADMIN_MAIL ist leer — bitte in secure-base.conf setzen."
-    [[ "$ADMIN_MAIL" == *"@"* ]] \
-        || die "ADMIN_MAIL ist kein Mail-Format: $ADMIN_MAIL"
+    [[ "$ADMIN_MAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] \
+        || die "ADMIN_MAIL ungueltig (erwartet name@domain): $ADMIN_MAIL"
     [ -n "${FQDN:-}" ] \
         || die "FQDN ist leer — bitte in secure-base.conf setzen."
     [[ "$FQDN" == *.* ]] \
