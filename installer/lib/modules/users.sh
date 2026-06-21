@@ -414,7 +414,7 @@ do_test() {
 module_doc() {
     doc_section "Hauptbenutzer"
     doc_packages libpam-google-authenticator
-    doc_users "$(doc_val MAIN_USER)" sudo ssh-users
+    doc_users "$(doc_val MAIN_USER)" ssh-users
     doc_files_begin
     doc_file "/home/$(doc_val MAIN_USER)/.ssh/authorized_keys" \
         "SSH-Public-Key hinterlegt"
