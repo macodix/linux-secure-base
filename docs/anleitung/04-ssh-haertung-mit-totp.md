@@ -81,10 +81,10 @@ session optional pam_exec.so seteuid /etc/ssh/login-mail-notification.sh
 
 ## 4. Konfiguration aktivieren
 
-Nach allen Änderungen an `/etc/ssh/sshd_config` und `/etc/pam.d/sshd` den SSH-Dienst neu starten:
+Nach allen Änderungen an `/etc/ssh/sshd_config` und `/etc/pam.d/sshd` den SSH-Dienst neu laden (`reload` statt `restart` — laufende Sitzungen bleiben erhalten):
 
 ```
-systemctl restart ssh
+systemctl reload ssh
 ```
 
 Vor dem Trennen der bestehenden SSH-Sitzung in einer zweiten Sitzung den Login einmal verifizieren (Public-Key + TOTP) — sonst Gefahr, sich auszusperren.

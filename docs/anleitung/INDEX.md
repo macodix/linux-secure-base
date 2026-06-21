@@ -1,6 +1,6 @@
 # Installationsanleitung
 
-Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von Ubuntu Server 24.06 LTS mit optionaler Installation des Webserver `nginx`.
+Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von Ubuntu Server 26.04 LTS mit optionaler Installation des Webserver `nginx`.
 
 
 ## Inhaltsverzeichnis

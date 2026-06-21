@@ -18,6 +18,6 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 07 [systembeschreibung/07-nginx.md](systembeschreibung/07-nginx.md) — Webserver-Grundsatz: Multidomain, TLS je Name über certbot/HTTP-01, Port-Strategie, Redirect, Härtung (in Bearbeitung)
 
-## C. Anleitung
+## B. Anleitung
 
 01 [anleitung/INDEX.md](anleitung/INDEX.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems und des optionalen nginx-Webservers (in Bearbeitung)

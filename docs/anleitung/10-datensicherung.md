@@ -53,7 +53,7 @@ Passphrase und SFTP-Schlüssel sind für den Notfall sicher und getrennt vom Ser
 
 ## 4. Backup-Skript
 
-Unter `/usr/local/sbin/secure-base-backup.sh` anlegen:
+Unter `/usr/local/sbin/<FQDN>-backup.sh` anlegen (der Installer setzt `<FQDN>` auf den Wert aus `secure-base.conf`):
 
 ```
 #!/usr/bin/env bash
@@ -88,10 +88,10 @@ touch /var/lib/secure-base/restic-last-success 2>/dev/null || true
 ```
 
 ```
-chmod 700 /usr/local/sbin/secure-base-backup.sh
+chmod 700 /usr/local/sbin/<FQDN>-backup.sh
 ```
 
-Die `forget`-Politik setzt die Aufbewahrung 7 täglich / 4 wöchentlich / 6 monatlich um. Werden später weitere Datenverzeichnisse gesichert, wird die Pfadliste im `backup`-Aufruf ergänzt. Jede Änderung am Backup-Umfang löst eine RTO-Probe aus (Konzept-Dokument Datensicherung, Kapitel 4).
+Die `forget`-Politik setzt die Aufbewahrung 7 täglich / 4 wöchentlich / 6 monatlich um. Werden später weitere Datenverzeichnisse gesichert, wird die Pfadliste im `backup`-Aufruf ergänzt. Jede Änderung am Backup-Umfang löst eine RTO-Probe aus (siehe [Systembeschreibung Datensicherung, Kapitel 4 — Wiederherstellung und RTO-Probe](../systembeschreibung/05-datensicherung.md)).
 
 Bei der Einrichtung ein Baseline-Kennzeichen setzen, damit vor dem ersten geplanten Lauf kein Fehlalarm entsteht:
 
@@ -102,16 +102,16 @@ touch /var/lib/secure-base/restic-last-success
 
 ## 5. Cron-Eintrag
 
-Datei `/etc/cron.d/secure-base-backup` anlegen:
+Datei `/etc/cron.d/<FQDN>-backup` anlegen:
 
 ```
 # Datensicherung (restic) — täglich um 02:30
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-30 2 * * *  root  /usr/local/sbin/secure-base-backup.sh
+30 2 * * *  root  /usr/local/sbin/<FQDN>-backup.sh
 ```
 
 ```
-chmod 644 /etc/cron.d/secure-base-backup
+chmod 644 /etc/cron.d/<FQDN>-backup
 ```
 
 Der `cron`-Dienst gehört zum Distro-Default und ist aktiv. Die Datei wird beim nächsten cron-Tick eingelesen. `MAILTO=` bleibt absichtlich aus — bei Fehlschlag mailt das Skript selbst, sonst kämen auch erfolgreiche stdout-Zeilen als Mail.

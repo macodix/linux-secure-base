@@ -15,7 +15,7 @@ Dieses Dokument beschreibt die Datensicherung des Grundsystems: -
 
 ## 1. Sicherungsverfahren und Ziel
 
-Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Speicher. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/config/restic-passphrase` mit Mode 600. Der Lauf wird täglich um 02:30 Uhr (default) über `/etc/cron.d/secure-base-backup` als `root` ausgelöst (Skript `/usr/local/sbin/secure-base-backup.sh`, Mode 700).
+Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Speicher. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/config/restic-passphrase` mit Mode 600. Der Lauf wird täglich um 02:30 Uhr (default) über `/etc/cron.d/<FQDN>-backup` als `root` ausgelöst (Skript `/usr/local/sbin/<FQDN>-backup.sh`, Mode 700). `<FQDN>` wird zur Installationszeit aus `secure-base.conf` eingesetzt.
 
 Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log` und `/root`. Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen gg. weitere Pfade hinzu.
 
