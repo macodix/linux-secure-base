@@ -206,6 +206,11 @@ do_install() {
     log INFO "sshd_config haerten: $SSHD_CONFIG"
     ensure_setting "$SSHD_CONFIG" PermitRootLogin no
     ensure_setting "$SSHD_CONFIG" PasswordAuthentication no
+    ensure_setting "$SSHD_CONFIG" PermitEmptyPasswords no
+    ensure_setting "$SSHD_CONFIG" MaxAuthTries 3
+    ensure_setting "$SSHD_CONFIG" LoginGraceTime 60
+    ensure_setting "$SSHD_CONFIG" ClientAliveInterval 300
+    ensure_setting "$SSHD_CONFIG" ClientAliveCountMax 0
     ensure_setting "$SSHD_CONFIG" PubkeyAuthentication yes
     ensure_setting "$SSHD_CONFIG" AllowGroups ssh-users
     ensure_setting "$SSHD_CONFIG" UsePAM yes
@@ -276,6 +281,11 @@ do_uninstall() {
     remove_setting "$SSHD_CONFIG" UsePAM
     remove_setting "$SSHD_CONFIG" AllowGroups
     remove_setting "$SSHD_CONFIG" PubkeyAuthentication
+    remove_setting "$SSHD_CONFIG" ClientAliveCountMax
+    remove_setting "$SSHD_CONFIG" ClientAliveInterval
+    remove_setting "$SSHD_CONFIG" LoginGraceTime
+    remove_setting "$SSHD_CONFIG" MaxAuthTries
+    remove_setting "$SSHD_CONFIG" PermitEmptyPasswords
     remove_setting "$SSHD_CONFIG" PasswordAuthentication
     remove_setting "$SSHD_CONFIG" PermitRootLogin
 
@@ -324,6 +334,11 @@ do_check() {
     # den Wert je nach Version als Alias oder gar nicht auf.
     check_sshd_t permitrootlogin no || rc=1
     check_sshd_t passwordauthentication no || rc=1
+    check_sshd_t permitemptypasswords no || rc=1
+    check_sshd_t maxauthtries 3 || rc=1
+    check_sshd_t logingracetime 60 || rc=1
+    check_sshd_t clientaliveinterval 300 || rc=1
+    check_sshd_t clientalivecountmax 0 || rc=1
     check_sshd_t pubkeyauthentication yes || rc=1
     check_sshd_t kbdinteractiveauthentication yes || rc=1
     check_sshd_t usepam yes || rc=1
@@ -408,6 +423,11 @@ module_doc() {
     doc_file "$SSHD_CONFIG" \
         "PermitRootLogin no" \
         "PasswordAuthentication no" \
+        "PermitEmptyPasswords no" \
+        "MaxAuthTries 3" \
+        "LoginGraceTime 60" \
+        "ClientAliveInterval 300" \
+        "ClientAliveCountMax 0" \
         "PubkeyAuthentication yes" \
         "AllowGroups ssh-users" \
         "AuthenticationMethods publickey,keyboard-interactive" \
