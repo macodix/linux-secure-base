@@ -15,6 +15,16 @@
 # Das Marker-Schema (# secure-base:<key>:begin/:end) erlaubt praezisen
 # Rueckbau ohne den Rest der Datei zu beschaedigen.
 
+#######################################
+# Maskiert ERE-Metazeichen, damit ein Wert woertlich in ein grep -E-Muster
+# (file_has_line) eingesetzt werden kann.
+# Arguments: $1 — Eingabe-String
+# Outputs:   stdout — maskierter String
+#######################################
+ere_escape() {
+    printf '%s' "$1" | sed 's/[^a-zA-Z0-9_@-]/\\&/g'
+}
+
 # Erlaubter Zeichensatz fuer den Schluessel in ensure_setting/remove_setting.
 # Leerzeichen erlaubt fuer Mehrwort-Direktiven (z. B. in monit.conf).
 # Variable statt Inline-Literal, damit das Leerzeichen im [[ =~ ]] nicht

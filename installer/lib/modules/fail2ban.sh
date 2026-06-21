@@ -46,12 +46,6 @@ effective_ignoreip() {
     printf '%s %s' "$IGNOREIP_LOOPBACK" "${IGNOREIP:-}"
 }
 
-# Maskiert ERE-Metazeichen, damit ein Wert woertlich in ein grep -E-Muster
-# (file_has_line) eingesetzt werden kann.
-ere_escape() {
-    printf '%s' "$1" | sed 's/[^a-zA-Z0-9_@-]/\\&/g'
-}
-
 # Prueft, dass der laufende sshd-Jail jeden IGNOREIP-Eintrag geladen hat.
 # Rueckgabe 0 = alle geladen, 1 = mindestens einer fehlt; gibt den fehlenden
 # Token ueber stdout zurueck. Nur bei nicht-leerem IGNOREIP aufrufen.
