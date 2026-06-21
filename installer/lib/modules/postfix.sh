@@ -29,7 +29,7 @@ require_postfix_keys() {
     [ -n "${FQDN:-}" ]        || die "FQDN nicht gesetzt in secure-base.conf"
     [ -n "${ADMIN_MAIL:-}" ]  || die "ADMIN_MAIL nicht gesetzt in secure-base.conf"
     [ -n "${RELAY_HOST:-}" ]  || die "RELAY_HOST nicht gesetzt in secure-base.conf"
-    [ -n "${RELAY_PORT:-}" ]  || die "RELAY_PORT nicht gesetzt in secure-base.conf"
+    : "${RELAY_PORT:=587}"  # optional: Default 587 (Submission/STARTTLS)
     [ -n "${RELAY_USER:-}" ]  || die "RELAY_USER nicht gesetzt in secure-base.conf"
     [[ "$FQDN" =~ ^[A-Za-z0-9.-]+$ ]] \
         || die "FQDN enthaelt unerlaubte Zeichen (nur [A-Za-z0-9.-]): $FQDN"
