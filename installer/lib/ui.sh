@@ -316,11 +316,12 @@ ui_summary() {
 
 #######################################
 # Startet das Lebenszeichen unter der Statusliste.
-# Zeigt auf der Zeile direkt unter der Liste (Cursor-Ruheposition nach
-# ui_list_draw) die juengste Logzeile (Timestamp abgeschnitten) plus eine
-# im Sekundentakt mitlaufende Laufzeit. Aktualisierung rein HORIZONTAL
-# (\r + Clear-to-EOL, kein \n) — die Listengeometrie bleibt unveraendert,
-# ui_list_update/ui_list_draw brauchen keine Anpassung.
+# Zeichnet unter der Liste einen Trennblock (Leerzeile, Linie, Leerzeile) und
+# darunter die "Aktuell:"-Zeile mit der juengsten Logzeile (Timestamp
+# abgeschnitten). Ein Poller aktualisiert NUR diese unterste Zeile rein
+# HORIZONTAL (\r + Clear-to-EOL, kein vertikales Cursor-Movement im Takt).
+# ui_heartbeat_stop raeumt den Block ab und stellt die Cursor-Basis wieder her,
+# daher bleiben ui_list_update/ui_list_draw unangetastet.
 # No-op bei non-TTY, SB_QUIET=1 oder fehlendem Logfile.
 # Globals:   _UI_TTY, _UI_OUT, _UI_HB_PID, SB_CURRENT_LOG, SB_QUIET
 # Arguments: $1 — Anzeige-Label des aktiven Moduls (Fallback-Text)
@@ -330,15 +331,19 @@ ui_heartbeat_start() {
     [ "$_UI_TTY" -eq 1 ] || return 0
     [ "${SB_QUIET:-0}" -eq 0 ] || return 0
     [ -n "${SB_CURRENT_LOG:-}" ] || return 0
-    printf '\r    Aktuell: %s  (0s)\033[K' "$label" >&"$_UI_OUT"
+    local cols linie
+    cols=$(tput cols 2>/dev/null || echo 60)
+    linie=$(printf '─%.0s' $(seq 1 "$cols"))
+    # Block unter der Liste: Leerzeile, Trennlinie, Leerzeile, Aktuell-Zeile.
+    # Die ersten drei Zeilen sind statisch; nur die unterste (Aktuell-)Zeile
+    # aktualisiert der Poller horizontal. ui_heartbeat_stop raeumt alle vier
+    # Zeilen wieder ab und stellt die Cursor-Basis fuer ui_list_update her.
+    printf '\033[K\n%s\033[K\n\033[K\n    Aktuell: %s\033[K' "$linie" "$label" >&"$_UI_OUT"
     (
-        s=0
-        cols=$(tput cols 2>/dev/null || echo 80)
         while :; do
             sleep 1
-            s=$((s + 1))
             letzte=$(tail -n1 "$SB_CURRENT_LOG" 2>/dev/null | cut -d' ' -f2-)
-            zeile="    Aktuell: ${letzte:-$label}  (${s}s)"
+            zeile="    Aktuell: ${letzte:-$label}"
             printf '\r%s\033[K' "${zeile:0:cols}" >&"$_UI_OUT"
         done
     ) &
@@ -356,6 +361,9 @@ ui_heartbeat_stop() {
     kill "$_UI_HB_PID" 2>/dev/null || true
     wait "$_UI_HB_PID" 2>/dev/null || true
     _UI_HB_PID=""
-    [ "$_UI_TTY" -eq 1 ] && printf '\r\033[K' >&"$_UI_OUT"
+    # Aktuell-Zeile und die drei statischen Zeilen (Leer/Linie/Leer) entfernen,
+    # Cursor zurueck auf die Zeile direkt unter der Liste (ui_list_update-Basis).
+    [ "$_UI_TTY" -eq 1 ] \
+        && printf '\r\033[K\033[1A\033[K\033[1A\033[K\033[1A\033[K' >&"$_UI_OUT"
     return 0
 }
