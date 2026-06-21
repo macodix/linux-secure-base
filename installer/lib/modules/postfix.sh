@@ -37,6 +37,8 @@ require_postfix_keys() {
         || die "RELAY_HOST enthaelt unerlaubte Zeichen (nur [A-Za-z0-9.-]): $RELAY_HOST"
     [[ "$RELAY_PORT" =~ ^[0-9]+$ ]] \
         || die "RELAY_PORT muss numerisch sein: $RELAY_PORT"
+    [[ "$ADMIN_MAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] \
+        || die "ADMIN_MAIL ungueltig (erwartet name@domain): $ADMIN_MAIL"
 }
 
 do_install() {
