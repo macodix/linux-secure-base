@@ -19,23 +19,7 @@ readonly MODULE="users"
 # Eingangs-Validierung
 # ---------------------------------------------------------------------
 
-# Buendelt alle Eingangschecks fuer MAIN_USER:
-#  1) nicht leer
-#  2) POSIX-Login-Format (kleingeschrieben, ohne Sonderzeichen)
-#  3) Blacklist gegen System-/systemd-Accounts (Aussperr-/Loesch-Schutz,
-#     vor allem fuer do_uninstall mit UNINSTALL_REMOVE_USER=yes)
-require_main_user_or_die() {
-    [ -n "${MAIN_USER:-}" ] \
-        || die "MAIN_USER ist leer — bitte in secure-base.conf setzen."
-    [[ "$MAIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
-        || die "MAIN_USER enthaelt unzulaessige Zeichen: $MAIN_USER"
-    case "$MAIN_USER" in
-        root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|nobody|messagebus|sshd)
-            die "MAIN_USER darf kein Systembenutzer sein: $MAIN_USER" ;;
-        systemd-*)
-            die "MAIN_USER darf kein systemd-Systembenutzer sein: $MAIN_USER" ;;
-    esac
-}
+# require_main_user_or_die ist in lib/system.sh definiert.
 
 # Prueft als Vorbedingung, dass das root-Konto bereits ein Passwort
 # hat (shadow-Hash weder leer noch '!' noch '*'). Das Modul setzt das
