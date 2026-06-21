@@ -15,6 +15,17 @@ source "$SCRIPT_DIR/lib/common.sh"
 readonly MODULE="base"
 # base hat keine modulspezifische .conf — alle Werte aus secure-base.conf.
 
+readonly SYSCTL_CONF="/etc/sysctl.d/60-secure-base.conf"
+
+# Soll-Parameter gemaess konv-system.md 3.9 a/b/c.
+# Format: "schluessel=wert" (kein Leerzeichen um =).
+readonly -a SYSCTL_PARAMS=(
+    "kernel.randomize_va_space=2"
+    "kernel.kptr_restrict=2"
+    "kernel.dmesg_restrict=1"
+    "kernel.yama.ptrace_scope=1"
+)
+
 #######################################
 # Prueft, dass die fuer base noetigen Keys in secure-base.conf gesetzt sind.
 # Globals:   FQDN, TIMEZONE
@@ -53,6 +64,20 @@ do_install() {
     log INFO "base install: NTP-Zeitsynchronisation aktivieren (timedatectl set-ntp true)"
     timedatectl set-ntp true
 
+    # sysctl-Haertung (konv-system.md 3.9).
+    log INFO "base install: sysctl-Konfig nach $SYSCTL_CONF schreiben"
+    {
+        printf '# Von secure-base/base angelegt — nicht von Hand bearbeiten.\n'
+        printf '# Kernel-Haertung gemaess konv-system.md 3.9\n'
+        local p
+        for p in "${SYSCTL_PARAMS[@]}"; do
+            printf '%s\n' "${p/=/ = }"
+        done
+    } > "$SYSCTL_CONF"
+    chmod 644 "$SYSCTL_CONF"
+    log INFO "base install: sysctl --system anwenden"
+    sysctl --system
+
     pkg_upgrade
 
     if [ -e /var/run/reboot-required ]; then
@@ -76,6 +101,15 @@ do_uninstall() {
     current_tz=$(timedatectl show --property=Timezone --value)
     log INFO "Aktueller Hostname: $current_host"
     log INFO "Aktuelle Zeitzone:  $current_tz"
+
+    if [ -f "$SYSCTL_CONF" ]; then
+        log INFO "base uninstall: $SYSCTL_CONF entfernen"
+        rm -f "$SYSCTL_CONF"
+        log INFO "base uninstall: sysctl --system anwenden (Datei entfernt)"
+        sysctl --system
+    else
+        log INFO "base uninstall: $SYSCTL_CONF nicht vorhanden — uebersprungen"
+    fi
 }
 
 do_check() {
@@ -112,6 +146,20 @@ do_check() {
         exit_code=1
     fi
 
+    # sysctl-Parameter (konv-system.md 3.9 a/b/c).
+    local p key soll ist
+    for p in "${SYSCTL_PARAMS[@]}"; do
+        key="${p%%=*}"
+        soll="${p#*=}"
+        ist=$(sysctl -n "$key" 2>/dev/null || true)
+        if [ "$ist" = "$soll" ]; then
+            log INFO "sysctl $key = $ist OK"
+        else
+            log ERROR "sysctl $key = $ist, soll $soll"
+            exit_code=1
+        fi
+    done
+
     exit "$exit_code"
 }
 
@@ -133,7 +181,13 @@ module_doc() {
     printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
     # shellcheck disable=SC2016
     printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
-    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin. NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b)."
+    doc_files_begin
+    doc_file "$SYSCTL_CONF" \
+        "kernel.randomize_va_space = 2" \
+        "kernel.kptr_restrict = 2" \
+        "kernel.dmesg_restrict = 1" \
+        "kernel.yama.ptrace_scope = 1"
+    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin. NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9."
 }
 
 #######################################
