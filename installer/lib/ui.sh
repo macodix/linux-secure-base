@@ -53,6 +53,8 @@ _UI_OUT=1   # FD fuer TTY-Ausgabe; wird in ui_init auf SB_UI_TTY_FD gesetzt
 _UI_LIST_LINES=0
 _UI_LOG_PATH=""
 _UI_START_TS=0
+# PID des Lebenszeichen-Pollers (ui_heartbeat_start), leer wenn keiner laeuft.
+_UI_HB_PID=""
 
 declare -a _UI_MODULES=()
 declare -A _UI_STATE=()
@@ -310,4 +312,50 @@ ui_summary() {
             "$_SB_C_GREEN" "$ok" "$total" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
     fi
     printf '  Log: %s\n\n' "${_UI_LOG_PATH:-—}" >&"$_UI_OUT"
+}
+
+#######################################
+# Startet das Lebenszeichen unter der Statusliste.
+# Zeigt auf der Zeile direkt unter der Liste (Cursor-Ruheposition nach
+# ui_list_draw) die juengste Logzeile (Timestamp abgeschnitten) plus eine
+# im Sekundentakt mitlaufende Laufzeit. Aktualisierung rein HORIZONTAL
+# (\r + Clear-to-EOL, kein \n) — die Listengeometrie bleibt unveraendert,
+# ui_list_update/ui_list_draw brauchen keine Anpassung.
+# No-op bei non-TTY, SB_QUIET=1 oder fehlendem Logfile.
+# Globals:   _UI_TTY, _UI_OUT, _UI_HB_PID, SB_CURRENT_LOG, SB_QUIET
+# Arguments: $1 — Anzeige-Label des aktiven Moduls (Fallback-Text)
+#######################################
+ui_heartbeat_start() {
+    local label=$1
+    [ "$_UI_TTY" -eq 1 ] || return 0
+    [ "${SB_QUIET:-0}" -eq 0 ] || return 0
+    [ -n "${SB_CURRENT_LOG:-}" ] || return 0
+    printf '\r    Aktuell: %s  (0s)\033[K' "$label" >&"$_UI_OUT"
+    (
+        s=0
+        cols=$(tput cols 2>/dev/null || echo 80)
+        while :; do
+            sleep 1
+            s=$((s + 1))
+            letzte=$(tail -n1 "$SB_CURRENT_LOG" 2>/dev/null | cut -d' ' -f2-)
+            zeile="    Aktuell: ${letzte:-$label}  (${s}s)"
+            printf '\r%s\033[K' "${zeile:0:cols}" >&"$_UI_OUT"
+        done
+    ) &
+    _UI_HB_PID=$!
+}
+
+#######################################
+# Stoppt das Lebenszeichen und loescht seine Zeile.
+# Idempotent. Nach dem Aufruf steht der Cursor am Anfang der (geleerten)
+# Zeile unter der Liste — die Ausgangslage, die ui_list_update erwartet.
+# Globals:   _UI_HB_PID, _UI_TTY, _UI_OUT
+#######################################
+ui_heartbeat_stop() {
+    [ -n "${_UI_HB_PID:-}" ] || return 0
+    kill "$_UI_HB_PID" 2>/dev/null || true
+    wait "$_UI_HB_PID" 2>/dev/null || true
+    _UI_HB_PID=""
+    [ "$_UI_TTY" -eq 1 ] && printf '\r\033[K' >&"$_UI_OUT"
+    return 0
 }
