@@ -84,11 +84,6 @@ do_install() {
     log INFO "base install: sysctl --system anwenden"
     sysctl --system
 
-    # Integritaets-/Cruft-Pruefung (konv-system.md 3.7 a):
-    # debsums: veraenderte Paket-Dateien erkennen (OPS.1.1.3.A10 (S), ergaenzend).
-    # cruft-ng: paketfremde Dateien in System-Pfaden aufspueren (Cruft-Pruefung).
-    pkg_install debsums cruft-ng
-
     # Kernel-Modul-Blacklist (konv-system.md 3.1 c).
     log INFO "base install: Kernel-Modul-Blacklist nach $MODPROBE_CONF schreiben"
     {
@@ -153,9 +148,6 @@ do_uninstall() {
     else
         log INFO "base uninstall: $SYSCTL_CONF nicht vorhanden — uebersprungen"
     fi
-
-    # Pruefwerkzeuge entfernen (konv-system.md 3.7 a).
-    pkg_remove debsums cruft-ng
 
     # Modul-Blacklist entfernen (konv-system.md 3.1 c).
     if [ -f "$MODPROBE_CONF" ]; then
@@ -298,7 +290,7 @@ module_doc() {
     printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
     # shellcheck disable=SC2016
     printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
-    doc_packages apparmor apparmor-utils debsums cruft-ng
+    doc_packages apparmor apparmor-utils
     doc_files_begin
     doc_file "$SYSCTL_CONF" \
         "kernel.randomize_va_space = 2" \
@@ -308,7 +300,7 @@ module_doc() {
     doc_file "$MODPROBE_CONF" \
         "install usb-storage /bin/true" \
         "blacklist usb-storage"
-    doc_note "NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d). AppArmor-Dienst aktiv (konv-system.md 3.10 b): apparmor + apparmor-utils installiert, Dienst enabled. Soll-Teilerfuellung mit Begruendung (qm-richtlinien.md Kap. 5): sshd hat kein Ubuntu-Standard-AppArmor-Profil; seine Eindaemmung erfolgt ueber den restriktiven Paketfilter (ufw) und die SSH-Haertung. Ein eigenes sshd-Profil wird bewusst nicht erstellt (Aussperr-Risiko). Integritaets-/Cruft-Pruefung gemaess konv-system.md 3.7 a: (1) apt-Quellen auf umgangene Signaturpruefung (grep), (2) paketfremde Dateien (cruft-ng), ergaenzend: veraenderte Paket-Dateien (debsums, OPS.1.1.3.A10 (S))."
+    doc_note "NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d). AppArmor-Dienst aktiv (konv-system.md 3.10 b): apparmor + apparmor-utils installiert, Dienst enabled. Soll-Teilerfuellung mit Begruendung (qm-richtlinien.md Kap. 5): sshd hat kein Ubuntu-Standard-AppArmor-Profil; seine Eindaemmung erfolgt ueber den restriktiven Paketfilter (ufw) und die SSH-Haertung. Ein eigenes sshd-Profil wird bewusst nicht erstellt (Aussperr-Risiko)."
 }
 
 dispatch "$MODULE" "$@"
