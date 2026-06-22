@@ -115,3 +115,14 @@ chmod 644 /etc/cron.d/<FQDN>-backup
 ```
 
 Der `cron`-Dienst gehört zum Distro-Default und ist aktiv. Die Datei wird beim nächsten cron-Tick eingelesen. `MAILTO=` bleibt absichtlich aus — bei Fehlschlag mailt das Skript selbst, sonst kämen auch erfolgreiche stdout-Zeilen als Mail.
+
+## 6. Prüfung
+
+Die Sicherung lässt sich über den Installer prüfen, ohne etwas zu verändern:
+
+```
+secure-base-installer check restic   # Repo-Integrität (restic check)
+secure-base-installer test restic     # zusätzlich Probe-Restore einer Einzeldatei
+```
+
+`check restic` führt `restic check` aus (Integrität des Repositorys). `test restic` stellt zusätzlich `/etc/hostname` aus dem neuesten Snapshot in ein temporäres Verzeichnis wieder her — ein automatisierter Kurznachweis, dass ein Restore grundsätzlich funktioniert. Die vollständige RTO-Probe (Sandbox-Restore) bleibt davon unberührt (siehe [Systembeschreibung Datensicherung, Kapitel 4 — Wiederherstellung und RTO-Probe](../systembeschreibung/05-datensicherung.md)).
