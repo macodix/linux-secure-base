@@ -5,7 +5,9 @@ Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von
 
 ## Inhaltsverzeichnis
 
-[01 Vorbedingungen](01-vorbedingungen.md)
+[00 Vorbedingungen](00-vorbedingungen.md)
+
+[01 Grundkonfiguration](01-grundkonfiguration.md)
 
 [02 Mail-Versand](02-mail-versand.md)
 
