@@ -4,6 +4,11 @@
 # Sourct alle thematischen Helper. Modul- und Master-Skripte sourcen
 # ausschliesslich diese Datei.
 
+# Deterministischer PATH fuer root-Skripte gemaess konv-scripting-bash.md 4.14 a.
+# Gilt fuer den Einstieg (sourct diese Datei) und alle Modul-Prozesse
+# (starten als eigene Prozesse, sourcen ebenfalls diese Datei).
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 _sb_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=log.sh
