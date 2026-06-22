@@ -37,6 +37,7 @@ set httpd port 2812 and
 - `set daemon 60` — Prüfzyklus 60 s. Ein Dienst-Ausfall wird innerhalb eines Zyklus erkannt.
 - `set mailserver localhost` — Postfix aus Kapitel 2 der Installationsanleitung übernimmt den Versand.
 - `set httpd ... allow localhost` — Status nur über Loopback abrufbar (`monit status` als root).
+- `from: …` — Absenderadresse der Alarm-Mails; im Installer aus dem Pflichtwert `MONIT_MAIL_FROM` in `secure-base.conf`.
 
 ## 3. Checks
 
