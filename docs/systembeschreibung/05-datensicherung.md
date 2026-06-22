@@ -49,7 +49,9 @@ Die Wiederherstellung binnen 48 h durch den Betreiber setzt eine dokumentierte, 
 1. den Neuaufbau des gehärteten Grundsystems (skriptiert/dokumentiert),
 2. den Restore der gesicherten Pfade aus dem restic-Repository.
 
-Die Wiederherstellung wird regelmäßig durch einen Test-Restore in eine Sandbox. Der Test erfolgt halbjährlich sowie zusätzlich nach jeder Änderung am Backup-Umfang. Zugangs- und Schlüsseldaten für die Wiederherstellung (restic-Passphrase, SFTP-Schlüssel) sind für den Notfall sicher und getrennt vom Server zu hinterlegen.
+Die Wiederherstellung wird regelmäßig durch einen Test-Restore in eine Sandbox erprobt. Der Test erfolgt halbjährlich sowie zusätzlich nach jeder Änderung am Backup-Umfang. Zugangs- und Schlüsseldaten für die Wiederherstellung (restic-Passphrase, SFTP-Schlüssel) sind für den Notfall sicher und getrennt vom Server zu hinterlegen.
+
+Ergänzend bringt das restic-Modul technische Prüfungen mit: `secure-base-installer check restic` führt `restic check` aus (Integrität des Repositorys), `secure-base-installer test restic` zusätzlich einen automatisierten Probe-Restore (Wiederherstellung von `/etc/hostname` aus dem neuesten Snapshot in ein temporäres Verzeichnis). Diese ergänzen die halbjährliche Sandbox-Probe, ersetzen sie aber nicht.
 
 ## Versionshistorie
 
