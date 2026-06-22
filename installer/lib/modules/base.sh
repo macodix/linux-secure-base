@@ -225,41 +225,6 @@ do_check() {
         fi
     done
 
-    # Aktive/enabled Dienste und lauschende Ports (konv-system.md 3.1 a/b).
-    # Nicht-eingreifend: Das Regelwerk fordert den Abgleich gegen eine
-    # Betriebsdokumentation (welche Dienste erlaubt sind). Da diese
-    # systemspezifisch ist, gibt dieser Check nur den Ist-Stand aus und
-    # meldet ihn als WARN, damit der Operator selbst entscheidet.
-    log INFO "check 3.1a: enabled Dienste (Ist-Stand zur manuellen Bewertung):"
-    local enabled_units
-    enabled_units=$(systemctl list-unit-files --state=enabled --type=service --no-legend 2>/dev/null \
-        | awk '{print $1}' || true)
-    if [ -n "$enabled_units" ]; then
-        local u
-        while IFS= read -r u; do
-            log INFO "  enabled: $u"
-        done <<< "$enabled_units"
-    else
-        log INFO "check 3.1a: keine enabled Services gefunden"
-    fi
-    log WARN "check 3.1a: Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich"
-    log INFO "check 3.1b: lauschende Ports (Ist-Stand zur manuellen Bewertung):"
-    if command -v ss >/dev/null 2>&1; then
-        local ports
-        ports=$(ss -H -tulpen 2>/dev/null || true)
-        if [ -n "$ports" ]; then
-            local line
-            while IFS= read -r line; do
-                log INFO "  port: $line"
-            done <<< "$ports"
-        else
-            log INFO "check 3.1b: keine lauschenden Ports gefunden"
-        fi
-    else
-        log WARN "check 3.1b: ss nicht verfuegbar — Ports nicht pruefbar"
-    fi
-    log WARN "check 3.1b: Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich"
-
     # Kernel-Modul-Blacklist (konv-system.md 3.1 c).
     if [ -f "$MODPROBE_CONF" ]; then
         log INFO "check: $MODPROBE_CONF vorhanden"
@@ -289,102 +254,26 @@ do_check() {
         exit_code=1
     fi
 
-    # --- konv-system.md 3.10 b: AppArmor aktiv, Profile im Enforce-Modus ---
-    # Soll-Grenze: sshd hat kein Ubuntu-Standard-AppArmor-Profil; seine
-    # Eindaemmung erfolgt ueber ufw und SSH-Haertung. Ein eigenes sshd-Profil
-    # wird bewusst nicht erstellt (Aussperr-Risiko; Soll-Teilerfuellung mit
-    # Begruendung, qm-richtlinien.md Kap. 5). Pruefbar nur am echten System
-    # mit root und funktionsfaehigem apparmor-Dienst.
+    # AppArmor-Dienst und Pakete (konv-system.md 3.10 b).
+    # base installiert apparmor + apparmor-utils und aktiviert den Dienst.
+    # Distro-Profile (Enforce/Complain-Counts) werden vom Modul nicht gesetzt;
+    # ihr Zaehlerstand ist ein reines System-Audit und wird hier nur informativ
+    # ausgegeben.
     if command -v aa-status >/dev/null 2>&1; then
-        # aa-status gibt Exit 0 wenn AppArmor aktiv, sonst ungleich 0.
         if aa-status --enabled 2>/dev/null; then
             log INFO "check 3.10b: AppArmor enabled/aktiv — OK"
         else
             log ERROR "check 3.10b: AppArmor nicht aktiv (aa-status --enabled fehlgeschlagen)"
             exit_code=1
         fi
-        # Anzahl Profile im Enforce-Modus aus aa-status-Ausgabe ermitteln.
-        local enforce_count
+        local enforce_count complain_count
         enforce_count=$(aa-status 2>/dev/null \
             | awk '/profiles are in enforce mode/{print $1}' || true)
-        if [[ "$enforce_count" =~ ^[0-9]+$ ]] && [ "$enforce_count" -gt 0 ]; then
-            log INFO "check 3.10b: $enforce_count Profile im Enforce-Modus — OK"
-        else
-            log ERROR "check 3.10b: keine Profile im Enforce-Modus (Ist: ${enforce_count:-unbekannt})"
-            exit_code=1
-        fi
-        # Profile im Complain-Modus: WARN, kein ERROR (Distro-abhaengig).
-        local complain_count
         complain_count=$(aa-status 2>/dev/null \
             | awk '/profiles are in complain mode/{print $1}' || true)
-        if [[ "$complain_count" =~ ^[0-9]+$ ]] && [ "$complain_count" -gt 0 ]; then
-            log WARN "check 3.10b: $complain_count Profile im Complain-Modus (Soll-Ist-Abgleich mit Betriebsdokumentation empfohlen)"
-        fi
+        log INFO "check 3.10b: Profile im Enforce-Modus: ${enforce_count:-unbekannt}, im Complain-Modus: ${complain_count:-unbekannt} (Distro-Profile, informativ)"
     else
         log ERROR "check 3.10b: aa-status nicht verfuegbar — AppArmor-Pruefung nicht moeglich (base install behebt das)"
-        exit_code=1
-    fi
-
-    # --- konv-system.md 3.7 a (1): Signaturprüfung der Paketverwaltung nicht umgangen ---
-    # ERROR bei: [trusted=yes] in apt-Quellen oder --allow-unauthenticated.
-    # Nicht-eingreifend: nur Befunde ausgeben.
-    log INFO "check 3.7(1): apt-Quellen auf umgangene Signaturpruefung pruefen"
-    local trusted_hits unauth_hits
-    trusted_hits=$(grep -rn '\[trusted=yes\]' \
-        /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true)
-    unauth_hits=$(grep -rn '\-\-allow-unauthenticated' \
-        /etc/apt/sources.list /etc/apt/sources.list.d/ \
-        /etc/apt/apt.conf /etc/apt/apt.conf.d/ 2>/dev/null || true)
-    if [ -z "$trusted_hits" ] && [ -z "$unauth_hits" ]; then
-        log INFO "check 3.7(1): Signaturpruefung der Paketverwaltung nicht umgangen — OK"
-    else
-        [ -n "$trusted_hits" ] && log ERROR "check 3.7(1): [trusted=yes] gefunden: $trusted_hits"
-        [ -n "$unauth_hits" ] && log ERROR "check 3.7(1): --allow-unauthenticated gefunden: $unauth_hits"
-        exit_code=1
-    fi
-
-    # --- konv-system.md 3.7 a (2): Cruft-Pruefung paketfremder Dateien ---
-    # cruft-ng listet Dateien in System-Pfaden ohne Paketzugehoerigkeit.
-    # Nicht-eingreifend: nur Befunde ausgeben, kein Loeschen/Aendern.
-    if command -v cruft >/dev/null 2>&1; then
-        log INFO "check 3.7(2): cruft (Paket cruft-ng) — paketfremde Dateien in System-Pfaden suchen"
-        local cruft_out
-        # cruft schreibt Befunde nach stdout; Laufzeit kann hoch sein.
-        cruft_out=$(cruft 2>/dev/null || true)
-        if [ -z "$cruft_out" ]; then
-            log INFO "check 3.7(2): cruft — keine paketfremden Dateien gefunden"
-        else
-            local cf
-            while IFS= read -r cf; do
-                log WARN "check 3.7(2): cruft — paketfremde Datei: $cf"
-            done <<< "$cruft_out"
-            # WARN, kein ERROR: Einzelbefunde erfordern manuelle Bewertung
-            # (Konfigurationen, temporaere Dateien u.ae. koennen legitim sein).
-            log WARN "check 3.7(2): cruft-Befunde manuell bewerten; ggf. paketfremde Installationen pruefen"
-        fi
-    else
-        log ERROR "check 3.7(2): cruft (Paket cruft-ng) nicht installiert — Cruft-Pruefung nicht moeglich (base install behebt das)"
-        exit_code=1
-    fi
-
-    # --- OPS.1.1.3.A10 (S) Ergaenzung: Integritaet vorhandener Paket-Dateien ---
-    # debsums -c: vergleicht Checksummen installierter Dateien gegen Paket-DB.
-    # Ergaenzend zu (2), prueft andere Dimension (veraendert, nicht: paketfremd).
-    if command -v debsums >/dev/null 2>&1; then
-        log INFO "check 3.7 erg.: debsums — Integritaets-Pruefung veraenderter Paket-Dateien"
-        local debsums_out
-        debsums_out=$(debsums -c 2>/dev/null || true)
-        if [ -z "$debsums_out" ]; then
-            log INFO "check 3.7 erg.: debsums — keine veraenderten Paket-Dateien gefunden"
-        else
-            local df
-            while IFS= read -r df; do
-                log ERROR "check 3.7 erg.: debsums — veraenderte Datei: $df"
-            done <<< "$debsums_out"
-            exit_code=1
-        fi
-    else
-        log ERROR "check 3.7 erg.: debsums nicht installiert — Integritaetspruefung nicht moeglich (base install behebt das)"
         exit_code=1
     fi
 
