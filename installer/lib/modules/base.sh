@@ -344,24 +344,24 @@ do_check() {
     # --- konv-system.md 3.7 a (2): Cruft-Pruefung paketfremder Dateien ---
     # cruft-ng listet Dateien in System-Pfaden ohne Paketzugehoerigkeit.
     # Nicht-eingreifend: nur Befunde ausgeben, kein Loeschen/Aendern.
-    if command -v cruft-ng >/dev/null 2>&1; then
-        log INFO "check 3.7(2): cruft-ng — paketfremde Dateien in System-Pfaden suchen"
+    if command -v cruft >/dev/null 2>&1; then
+        log INFO "check 3.7(2): cruft (Paket cruft-ng) — paketfremde Dateien in System-Pfaden suchen"
         local cruft_out
-        # cruft-ng schreibt Befunde nach stdout; Laufzeit kann hoch sein.
-        cruft_out=$(cruft-ng 2>/dev/null || true)
+        # cruft schreibt Befunde nach stdout; Laufzeit kann hoch sein.
+        cruft_out=$(cruft 2>/dev/null || true)
         if [ -z "$cruft_out" ]; then
-            log INFO "check 3.7(2): cruft-ng — keine paketfremden Dateien gefunden"
+            log INFO "check 3.7(2): cruft — keine paketfremden Dateien gefunden"
         else
             local cf
             while IFS= read -r cf; do
-                log WARN "check 3.7(2): cruft-ng — paketfremde Datei: $cf"
+                log WARN "check 3.7(2): cruft — paketfremde Datei: $cf"
             done <<< "$cruft_out"
             # WARN, kein ERROR: Einzelbefunde erfordern manuelle Bewertung
             # (Konfigurationen, temporaere Dateien u.ae. koennen legitim sein).
-            log WARN "check 3.7(2): cruft-ng-Befunde manuell bewerten; ggf. paketfremde Installationen pruefen"
+            log WARN "check 3.7(2): cruft-Befunde manuell bewerten; ggf. paketfremde Installationen pruefen"
         fi
     else
-        log WARN "check 3.7(2): cruft-ng nicht installiert — Cruft-Pruefung nicht moeglich (base install behebt das)"
+        log ERROR "check 3.7(2): cruft (Paket cruft-ng) nicht installiert — Cruft-Pruefung nicht moeglich (base install behebt das)"
         exit_code=1
     fi
 
