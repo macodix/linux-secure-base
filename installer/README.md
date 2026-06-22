@@ -146,6 +146,8 @@ Oder direkt die Installation gestartet werden:
 >Die Konfigurations-Datei sollte unmittelbar nach der Installation vom Server entfernt oder gelöscht werden
 >
 >Für mehr Information über den Installationsverlauf kann die Logdatei `/var/log/secure-base/secure-base.log` per `tail -f` in einem zweiten Terminal überwacht werden.
+>
+>In Tests unter `tmux` blieb die Live-Anzeige des Installers gelegentlich stehen, während die Installation im Hintergrund korrekt weiterlief. Im Zweifel den Verlauf über die Logdatei (siehe oben) prüfen oder die Installation ohne `tmux` starten.
 
 ---
 
