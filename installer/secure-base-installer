@@ -58,6 +58,8 @@ SB_TOTAL=0
 declare -a SB_DONE_MODULES=()
 # Fehlertext des abgebrochenen Moduls; in lib/ui.sh (ui_summary) gelesen.
 SB_FAIL_TEXT=""
+# Anzahl fehlgeschlagener Module bei check/test (kein Abbruch, Bilanz am Ende).
+SB_FAIL_COUNT=0
 
 # Optionen
 OPT_QUIET=0
@@ -218,11 +220,12 @@ _sb_master_finish() {
 
     if [ "$rc" -eq 0 ]; then
         log INFO "=== Sammelbilanz ${SB_SUB}: alle ${SB_TOTAL} Module erfolgreich ==="
-        ui_summary
+    elif { [ "$SB_SUB" = "check" ] || [ "$SB_SUB" = "test" ]; } && [ "$SB_FAIL_COUNT" -gt 0 ]; then
+        log ERROR "=== Sammelbilanz ${SB_SUB}: ${SB_TOTAL}/${SB_TOTAL} Module geprüft, ${SB_FAIL_COUNT} mit Mängeln ==="
     else
         log ERROR "=== Sammelbilanz ${SB_SUB}: ${SB_DONE_COUNT}/${SB_TOTAL} Module erledigt, Abbruch bei ${SB_CURRENT_MODUL} ==="
-        ui_summary
     fi
+    ui_summary
     _sb_close_log
 }
 
@@ -408,7 +411,15 @@ main() {
         if [ "$modul_rc" -eq 0 ]; then
             log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
             ui_list_update "$modul" ok
+            SB_DONE_COUNT=$((SB_DONE_COUNT + 1))
+            SB_DONE_MODULES+=("$modul")
+        elif [ "$sub" = "check" ] || [ "$sub" = "test" ]; then
+            # check/test: nicht abbrechen, alle Module durchlaufen und bilanzieren.
+            log ERROR "[$idx/$total] Modul meldet Maengel: $modul ($sub) — Exit $modul_rc"
+            ui_list_update "$modul" error "Maengel gefunden (Exit $modul_rc)"
+            SB_FAIL_COUNT=$((SB_FAIL_COUNT + 1))
         else
+            # install/uninstall: Fail-Fast wie bisher.
             # Fehlermeldung des Moduls ab dessen Start-Marker aus dem Logfile,
             # BEVOR der Installer seine eigene ERROR-Zeile schreibt.
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
@@ -417,10 +428,13 @@ main() {
             ui_list_update "$modul" error "fehlgeschlagen (Exit $modul_rc)"
             exit 1
         fi
-
-        SB_DONE_COUNT=$((SB_DONE_COUNT + 1))
-        SB_DONE_MODULES+=("$modul")
     done
+    # Bei check/test mit Mängeln: Exit 1, damit _sb_master_finish rc=1 sieht
+    # und die Bilanz korrekt ausgibt. Bei install/uninstall bleibt der Schleifenende
+    # (rc=0) korrekt; Fehler dort verlassen die Schleife per exit 1 oben.
+    if { [ "$sub" = "check" ] || [ "$sub" = "test" ]; } && [ "$SB_FAIL_COUNT" -gt 0 ]; then
+        exit 1
+    fi
     # Abschluss-Sammelbilanz uebernimmt _sb_master_finish (EXIT-Trap).
 }
 

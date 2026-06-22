@@ -281,7 +281,7 @@ ui_summary() {
     local dauer
     printf -v dauer '%dm%02ds' "$min" "$sec"
 
-    # Bei Fehler das abgebrochene Modul ermitteln (erstes mit Fehlerzustand).
+    # Bei Fehler: bei install/uninstall das abgebrochene Modul ermitteln.
     local fail_modul=""
     if [ "$err" -gt 0 ]; then
         for m in "${_UI_MODULES[@]}"; do
@@ -292,8 +292,20 @@ ui_summary() {
         done
     fi
 
+    # check/test laufen durch alle Module; "Abgebrochen" waere irreführend.
+    local sub="${SB_SUB:-}"
+    local is_diagnose=0
+    if [ "$sub" = "check" ] || [ "$sub" = "test" ]; then
+        is_diagnose=1
+    fi
+
     printf '\n' >&"$_UI_OUT"
-    if [ "$err" -gt 0 ]; then
+    if [ "$err" -gt 0 ] && [ "$is_diagnose" -eq 1 ]; then
+        _ui_rule "Fertig"
+        printf '\n' >&"$_UI_OUT"
+        printf '%b  %d/%d Module geprüft · %d mit Mängeln · %d Warnungen · %s%b\033[K\n' \
+            "$_SB_C_RED" "$total" "$total" "$err" "$warn" "$dauer" "$_SB_C_RESET" >&"$_UI_OUT"
+    elif [ "$err" -gt 0 ]; then
         _ui_rule "Abgebrochen"
         printf '\n' >&"$_UI_OUT"
         printf '%b  ✗  Abbruch bei %s — %s%b\033[K\n' \
