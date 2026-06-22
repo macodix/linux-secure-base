@@ -382,7 +382,7 @@ do_check() {
             exit_code=1
         fi
     else
-        log WARN "check 3.7 erg.: debsums nicht installiert — Integritaetspruefung nicht moeglich (base install behebt das)"
+        log ERROR "check 3.7 erg.: debsums nicht installiert — Integritaetspruefung nicht moeglich (base install behebt das)"
         exit_code=1
     fi
 
