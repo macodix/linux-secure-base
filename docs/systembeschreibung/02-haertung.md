@@ -40,13 +40,15 @@ Interaktiver Login erfolgt nicht ohne zweiten Faktor. Für SSH ist das Public-Ke
 
 Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. `sudo` gehört zur Ubuntu-Standardinstallation und bleibt installiert, weil der CIS-Benchmark es erwartet, wird aber nicht genutzt. Der Hauptbenutzer ist kein Mitglied administrativer Gruppen (insbesondere nicht der Gruppe `sudo`). Änderungen an der sudo-Konfiguration werden durch `auditd` überwacht.
 
-Der SSH-Zugang ist auf eine eigene Gruppe beschränkt (`AllowGroups ssh-users`). Die Konfiguration für den Login ist restriktiv (u. a. `PermitRootLogin no`, `PasswordAuthentication no`, `MaxAuthTries`, `LoginGraceTime`) und ggf. mit `sshd -T` überprüfbar.
+Der SSH-Zugang ist auf eine eigene Gruppe beschränkt (`AllowGroups ssh-users`). Die Konfiguration für den Login ist restriktiv (`PermitRootLogin no`, `PasswordAuthentication no`, `PermitEmptyPasswords no`, `MaxAuthTries 3`, `LoginGraceTime 60`, `ClientAliveInterval 300`, `ClientAliveCountMax 0`) und mit `sshd -T` überprüfbar.
 
 Jeder SSH-Login löst eine Mail-Benachrichtigung an die Admin-Adresse aus. Die Benachrichtigung läuft über `pam_exec` in `/etc/pam.d/sshd` (Session-Zeile `optional`, Skript als `root` mit Mode 700), nicht über `sshrc` (`optional` sorgt dafür, dass ein Mail-Fehler den Login nicht blockiert). Sicherheitsrelevante Ereignisse werden persistent in `journald` protokolliert und mindestens drei Monate aufbewahrt.
 
 ## 4. Minimale Angriffsfläche
 
 Eingehend ist im Grundzustand nur SSH offen. Die Web-Ports 80 und 443 öffnen erst mit dem aktiven Webserver, Port 80 nur temporär zur Zertifikatsausstellung. Alle Dienste laufen mit minimal möglichen  Rechten.
+
+Über die Netz- und Rechte-Ebene hinaus härtet das `base`-Modul den Kernel per `sysctl` (vollständiges ASLR `kernel.randomize_va_space=2`, verborgene Kernel-Pointer `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`, eingeschränktes `ptrace` über `kernel.yama.ptrace_scope=1`). Ungenutzte Schnittstellen werden gesperrt: das Kernel-Modul `usb-storage` ist per modprobe-Blacklist deaktiviert, `autofs` ist maskiert. Die Systemzeit wird über NTP synchronisiert (`timedatectl set-ntp true`) — Voraussetzung für verlässliche Protokoll-Zeitstempel und gültige TLS-Verbindungen.
 
 ## 5. Brute-Force-Schutz
 
@@ -67,7 +69,7 @@ Dienste, die keine root-Rechte benötigen (Postfix, nginx), laufen unter einem e
 
 Über die Benutzer-Trennung hinaus sieht der BSI-Grundschutz Mandatory-Access-Control (AppArmor) oder Isolation per Container/chroot für exponierte Dienste vor. Die Umsetzung ist zweistufig festgelegt:
 - Stufe 1: jede selbst eingerichtete systemd-Unit erhält Hardening-Direktiven (`NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectHome`).
-- Stufe 2: die von Ubuntu mitgelieferten AppArmor Profile laufen im Enforce-Modus und werden in einem Härtungs-Prüflauf kontrolliert. Wo keine AppArmor Profile mitgeliefert werden, werden einegen profile erstellt (Beispiel `nginx`).
+- Stufe 2: das `base`-Modul installiert `apparmor` und `apparmor-utils` und stellt den aktiven Dienst sicher; die von Ubuntu mitgelieferten AppArmor-Profile laufen im Enforce-Modus und werden in einem Härtungs-Prüflauf kontrolliert. Wo keine Profile mitgeliefert werden, werden eigene erstellt (Beispiel `nginx`).
 
 ## 8. Härtungsprüfung
 
