@@ -55,10 +55,46 @@ _UI_LOG_PATH=""
 _UI_START_TS=0
 # PID des Lebenszeichen-Pollers (ui_heartbeat_start), leer wenn keiner laeuft.
 _UI_HB_PID=""
+# 1 wenn ein statischer Hinweisblock (ui_notice_start) aktiv ist, sonst 0.
+_UI_NOTICE_ACTIVE=0
 
 declare -a _UI_MODULES=()
 declare -A _UI_STATE=()
 declare -A _UI_LABEL=()
+
+#######################################
+# Zeichnet einen statischen Hinweisblock unter der Statusliste.
+# Kein Hintergrund-Poller; kein vertikales Cursor-Movement im Takt.
+# Struktur identisch zum Heartbeat-Block (Leerzeile, Linie, Leerzeile, Textzeile),
+# damit ui_notice_stop denselben Aufraeum-Weg wie ui_heartbeat_stop nutzen kann.
+# No-op bei non-TTY oder SB_QUIET=1.
+# Globals:   _UI_TTY, _UI_OUT, _UI_NOTICE_ACTIVE, SB_QUIET
+# Arguments: $1 — Hinweistext
+#######################################
+ui_notice_start() {
+    local text=$1
+    [ "$_UI_TTY" -eq 1 ] || return 0
+    [ "${SB_QUIET:-0}" -eq 0 ] || return 0
+    local cols linie
+    cols=$(tput cols 2>/dev/null || echo 60)
+    linie=$(printf '─%.0s' $(seq 1 "$cols"))
+    # Block: Leerzeile, Trennlinie, Leerzeile, Hinweiszeile — statisch.
+    printf '\033[K\n%s\033[K\n\033[K\n    %s\033[K' "$linie" "$text" >&"$_UI_OUT"
+    _UI_NOTICE_ACTIVE=1
+}
+
+#######################################
+# Entfernt den statischen Hinweisblock und stellt die Cursor-Basis wieder her.
+# Idempotent. Spiegelt exakt die Aufraeum-Logik von ui_heartbeat_stop.
+# Globals:   _UI_NOTICE_ACTIVE, _UI_TTY, _UI_OUT
+#######################################
+ui_notice_stop() {
+    [ "${_UI_NOTICE_ACTIVE:-0}" -eq 1 ] || return 0
+    _UI_NOTICE_ACTIVE=0
+    [ "$_UI_TTY" -eq 1 ] \
+        && printf '\r\033[K\033[1A\033[K\033[1A\033[K\033[1A\033[K' >&"$_UI_OUT"
+    return 0
+}
 
 #######################################
 # Initialisiert die UI-Zustandsvariablen.
