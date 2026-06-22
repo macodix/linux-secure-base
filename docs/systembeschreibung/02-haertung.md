@@ -84,3 +84,4 @@ Ein Schutzvor Schadsoftware wird von `rkhunter`, mit täglichem Lauf aus `cron.d
 | Version | Datum | Wer | Änderung |
 |---|---|---|---|
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
+| 0.02 | 2026-06-22 | macodix | base-Grundhärtung (sysctl, usb-Blacklist, autofs, NTP) und konkrete sshd-Sollwerte ergänzt; AppArmor-Aktivierung durch base benannt. |

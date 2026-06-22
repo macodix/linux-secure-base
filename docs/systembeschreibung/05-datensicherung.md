@@ -58,3 +58,4 @@ Ergänzend bringt das restic-Modul technische Prüfungen mit: `secure-base-insta
 | Version | Datum | Wer | Änderung |
 |---|---|---|---|
 | 0.01 | 2026-06-18 | macodix | Erstanlage durch bereinigte Übernahme. |
+| 0.02 | 2026-06-22 | macodix | restic check und Probe-Restore (check/test) ergänzt; unvollständigen Satz korrigiert. |
