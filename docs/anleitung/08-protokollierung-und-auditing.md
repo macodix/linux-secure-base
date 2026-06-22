@@ -1,6 +1,6 @@
 # Protokollierung und Auditing
 
-Drei Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `logwatch` als tägliche Mail-Zusammenfassung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten.
+Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `logwatch` als tägliche Mail-Zusammenfassung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs.
 
 ## 1. journald persistent
 
@@ -16,6 +16,8 @@ MaxRetentionSec=3month
 - `Storage=persistent` — Logs überleben Reboots (Ablage in `/var/log/journal/`).
 - `SystemMaxUse=1G` — maximaler Plattenverbrauch.
 - `MaxRetentionSec=3month` — erfüllt die Mindest-Aufbewahrung sicherheitsrelevanter Logs.
+
+Die Werte `SystemMaxUse` und `MaxRetentionSec` stammen aus `JOURNALD_MAX_USE` bzw. `JOURNALD_MAX_RETENTION` in `secure-base.conf` (Vorgaben: `1G` und `3month`).
 
 Anschließend neu starten:
 
@@ -76,11 +78,24 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 
 Die Regeln für Identität, sudoers und lastlog sind das Pflicht-Minimum. Der Watch auf `/usr/bin/su` ergänzt sie um den tatsächlich genutzten Weg der Privilegien-Erhöhung. Da `sudo` nicht genutzt wird, ist zudem jede Änderung an seiner Konfiguration per se verdächtig.
 
-Regeln laden und Dienst aktivieren:
+Dienst aktivieren — beim Start liest `auditd` die Regeldateien aus `/etc/audit/rules.d/`:
 
 ```
-augenrules --load
 systemctl enable --now auditd
 ```
 
+Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen mit `augenrules --load`.
+
 Überprüfung: `auditctl -l` listet die Soll-Regeln vollständig, `auditctl -s` meldet `enabled 2`. Wegen des Immutable-Modus (`-e 2`) verlangt jede Regeländerung einen Reboot.
+
+## 4. sudo-Protokollierung
+
+`sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`), seine Aufrufe werden aber dennoch protokolliert. In `/etc/sudoers.d/secure-base-sudolog` (Mode 440):
+
+```
+Defaults logfile="/var/log/sudo.log"
+```
+
+## 5. Log-Rotation
+
+Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` rotiert (`weekly`, `rotate 8` — acht Wochen Vorhaltung). `journald` und `auditd` verwalten die Rotation ihrer Logs selbst.
