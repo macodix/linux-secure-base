@@ -2,7 +2,7 @@
 
 Der Mail-Versand dient ausschließlich Systembenachrichtigungen. Der MTA `postfix` wird als Satellite-System (Smarthost) eingerichtet. Der Versand läuft über einen externen SMTP-Server des Hosters. Postfix lauscht nur auf `loopback`, nicht von außen.
 
-Für den Mailversand wird hier per default der Port 587 genutzt und muss in den Firewall-Einstellungen ausgehend offens ein.
+Für den Mailversand wird der Port aus `RELAY_PORT` in `secure-base.conf` genutzt (Vorgabe 587) — er muss in den Firewall-Einstellungen ausgehend offen sein.
 
 ## 1. Installation und Grundkonfiguration
 
