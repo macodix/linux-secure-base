@@ -84,6 +84,11 @@ do_install() {
     log INFO "base install: sysctl --system anwenden"
     sysctl --system
 
+    # Integritaets-/Cruft-Pruefung (konv-system.md 3.7 a):
+    # debsums: veraenderte Paket-Dateien erkennen (OPS.1.1.3.A10 (S), ergaenzend).
+    # cruft-ng: paketfremde Dateien in System-Pfaden aufspueren (Cruft-Pruefung).
+    pkg_install debsums cruft-ng
+
     # Kernel-Modul-Blacklist (konv-system.md 3.1 c).
     log INFO "base install: Kernel-Modul-Blacklist nach $MODPROBE_CONF schreiben"
     {
@@ -133,6 +138,9 @@ do_uninstall() {
     else
         log INFO "base uninstall: $SYSCTL_CONF nicht vorhanden — uebersprungen"
     fi
+
+    # Pruefwerkzeuge entfernen (konv-system.md 3.7 a).
+    pkg_remove debsums cruft-ng
 
     # Modul-Blacklist entfernen (konv-system.md 3.1 c).
     if [ -f "$MODPROBE_CONF" ]; then
@@ -264,6 +272,69 @@ do_check() {
         exit_code=1
     fi
 
+    # --- konv-system.md 3.7 a (1): Signaturprüfung der Paketverwaltung nicht umgangen ---
+    # ERROR bei: [trusted=yes] in apt-Quellen oder --allow-unauthenticated.
+    # Nicht-eingreifend: nur Befunde ausgeben.
+    log INFO "check 3.7(1): apt-Quellen auf umgangene Signaturpruefung pruefen"
+    local trusted_hits unauth_hits
+    trusted_hits=$(grep -rn '\[trusted=yes\]' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true)
+    unauth_hits=$(grep -rn '\-\-allow-unauthenticated' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/ \
+        /etc/apt/apt.conf /etc/apt/apt.conf.d/ 2>/dev/null || true)
+    if [ -z "$trusted_hits" ] && [ -z "$unauth_hits" ]; then
+        log INFO "check 3.7(1): Signaturpruefung der Paketverwaltung nicht umgangen — OK"
+    else
+        [ -n "$trusted_hits" ] && log ERROR "check 3.7(1): [trusted=yes] gefunden: $trusted_hits"
+        [ -n "$unauth_hits" ] && log ERROR "check 3.7(1): --allow-unauthenticated gefunden: $unauth_hits"
+        exit_code=1
+    fi
+
+    # --- konv-system.md 3.7 a (2): Cruft-Pruefung paketfremder Dateien ---
+    # cruft-ng listet Dateien in System-Pfaden ohne Paketzugehoerigkeit.
+    # Nicht-eingreifend: nur Befunde ausgeben, kein Loeschen/Aendern.
+    if command -v cruft-ng >/dev/null 2>&1; then
+        log INFO "check 3.7(2): cruft-ng — paketfremde Dateien in System-Pfaden suchen"
+        local cruft_out
+        # cruft-ng schreibt Befunde nach stdout; Laufzeit kann hoch sein.
+        cruft_out=$(cruft-ng 2>/dev/null || true)
+        if [ -z "$cruft_out" ]; then
+            log INFO "check 3.7(2): cruft-ng — keine paketfremden Dateien gefunden"
+        else
+            local cf
+            while IFS= read -r cf; do
+                log WARN "check 3.7(2): cruft-ng — paketfremde Datei: $cf"
+            done <<< "$cruft_out"
+            # WARN, kein ERROR: Einzelbefunde erfordern manuelle Bewertung
+            # (Konfigurationen, temporaere Dateien u.ae. koennen legitim sein).
+            log WARN "check 3.7(2): cruft-ng-Befunde manuell bewerten; ggf. paketfremde Installationen pruefen"
+        fi
+    else
+        log WARN "check 3.7(2): cruft-ng nicht installiert — Cruft-Pruefung nicht moeglich (base install behebt das)"
+        exit_code=1
+    fi
+
+    # --- OPS.1.1.3.A10 (S) Ergaenzung: Integritaet vorhandener Paket-Dateien ---
+    # debsums -c: vergleicht Checksummen installierter Dateien gegen Paket-DB.
+    # Ergaenzend zu (2), prueft andere Dimension (veraendert, nicht: paketfremd).
+    if command -v debsums >/dev/null 2>&1; then
+        log INFO "check 3.7 erg.: debsums — Integritaets-Pruefung veraenderter Paket-Dateien"
+        local debsums_out
+        debsums_out=$(debsums -c 2>/dev/null || true)
+        if [ -z "$debsums_out" ]; then
+            log INFO "check 3.7 erg.: debsums — keine veraenderten Paket-Dateien gefunden"
+        else
+            local df
+            while IFS= read -r df; do
+                log ERROR "check 3.7 erg.: debsums — veraenderte Datei: $df"
+            done <<< "$debsums_out"
+            exit_code=1
+        fi
+    else
+        log WARN "check 3.7 erg.: debsums nicht installiert — Integritaetspruefung nicht moeglich (base install behebt das)"
+        exit_code=1
+    fi
+
     exit "$exit_code"
 }
 
@@ -285,6 +356,7 @@ module_doc() {
     printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
     # shellcheck disable=SC2016
     printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
+    doc_packages debsums cruft-ng
     doc_files_begin
     doc_file "$SYSCTL_CONF" \
         "kernel.randomize_va_space = 2" \
@@ -294,7 +366,7 @@ module_doc() {
     doc_file "$MODPROBE_CONF" \
         "install usb-storage /bin/true" \
         "blacklist usb-storage"
-    doc_note "Keine Pakete installiert; apt-upgrade laeuft ohne Versionspin. NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d)."
+    doc_note "NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d). Integritaets-/Cruft-Pruefung gemaess konv-system.md 3.7 a: (1) apt-Quellen auf umgangene Signaturpruefung (grep), (2) paketfremde Dateien (cruft-ng), ergaenzend: veraenderte Paket-Dateien (debsums, OPS.1.1.3.A10 (S))."
 }
 
 dispatch "$MODULE" "$@"
