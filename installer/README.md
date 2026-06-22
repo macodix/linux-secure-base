@@ -79,6 +79,8 @@ tar xzf linux-secure-base.tar.gz
 mv linux-secure-base-main linux-secure-base
 ```
 
+**Echtheit prüfen:** Signierte Tags lassen sich mit dem Projekt-Schlüssel verifizieren (`git tag -v <tag>`) — Fingerabdruck und Anleitung im Abschnitt „Echtheit prüfen (Signatur)" des [Haupt-README](../README.md). `main` ist der unsignierte Entwicklungsstand.
+
 ### 2. Installer Verzeichnis
 
 ```
