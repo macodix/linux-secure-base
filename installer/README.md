@@ -147,7 +147,7 @@ Oder direkt die Installation gestartet werden:
 >
 >Für mehr Information über den Installationsverlauf kann die Logdatei `/var/log/secure-base/secure-base.log` per `tail -f` in einem zweiten Terminal überwacht werden.
 >
->In Tests unter `tmux` blieb die Live-Anzeige des Installers gelegentlich stehen, während die Installation im Hintergrund korrekt weiterlief. Im Zweifel den Verlauf über die Logdatei (siehe oben) prüfen oder die Installation ohne `tmux` starten.
+>Beim Firewall-Schritt (ufw-Aktivierung) kann die Live-Anzeige kurz aussetzen, weil das Schärfen des Regelwerks die laufende Verbindung kurz berührt. Die Installation läuft im Hintergrund weiter. Den Verlauf bei Bedarf über die Logdatei verfolgen: `tail -f /var/log/secure-base/secure-base.log`
 
 ---
 
