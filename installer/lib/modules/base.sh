@@ -230,26 +230,27 @@ do_check() {
     # Betriebsdokumentation (welche Dienste erlaubt sind). Da diese
     # systemspezifisch ist, gibt dieser Check nur den Ist-Stand aus und
     # meldet ihn als WARN, damit der Operator selbst entscheidet.
-    log WARN "check 3.1a: enabled Dienste (Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich):"
+    log INFO "check 3.1a: enabled Dienste (Ist-Stand zur manuellen Bewertung):"
     local enabled_units
     enabled_units=$(systemctl list-unit-files --state=enabled --type=service --no-legend 2>/dev/null \
         | awk '{print $1}' || true)
     if [ -n "$enabled_units" ]; then
         local u
         while IFS= read -r u; do
-            log WARN "  enabled: $u"
+            log INFO "  enabled: $u"
         done <<< "$enabled_units"
     else
         log INFO "check 3.1a: keine enabled Services gefunden"
     fi
-    log WARN "check 3.1b: lauschende Ports (Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich):"
+    log WARN "check 3.1a: Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich"
+    log INFO "check 3.1b: lauschende Ports (Ist-Stand zur manuellen Bewertung):"
     if command -v ss >/dev/null 2>&1; then
         local ports
         ports=$(ss -H -tulpen 2>/dev/null || true)
         if [ -n "$ports" ]; then
             local line
             while IFS= read -r line; do
-                log WARN "  port: $line"
+                log INFO "  port: $line"
             done <<< "$ports"
         else
             log INFO "check 3.1b: keine lauschenden Ports gefunden"
@@ -257,6 +258,7 @@ do_check() {
     else
         log WARN "check 3.1b: ss nicht verfuegbar — Ports nicht pruefbar"
     fi
+    log WARN "check 3.1b: Soll-Ist-Abgleich mit Betriebsdokumentation erforderlich"
 
     # Kernel-Modul-Blacklist (konv-system.md 3.1 c).
     if [ -f "$MODPROBE_CONF" ]; then
