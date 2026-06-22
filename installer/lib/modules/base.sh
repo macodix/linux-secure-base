@@ -2,7 +2,7 @@
 #
 # Linux Secure Base — Modul base
 # Hostname, Zeitzone, NTP-Zeitsynchronisation, Paketquellen,
-# Kernel-Modul-Blacklist und autofs-Deaktivierung.
+# Kernel-Modul-Blacklist, autofs-Deaktivierung und AppArmor-Aktivierung.
 # Aufruf: base.sh {install|uninstall|check|test}
 
 set -euo pipefail
@@ -105,6 +105,21 @@ do_install() {
     # systemctl mask ist robust: schlaegt nicht fehl, wenn das Paket fehlt.
     log INFO "base install: autofs maskieren (systemctl mask autofs)"
     systemctl mask autofs 2>/dev/null || true
+
+    # AppArmor sicherstellen (konv-system.md 3.10 b).
+    # apparmor-utils liefert aa-status. AppArmor ist Ubuntu-Basis-
+    # Infrastruktur und wird beim uninstall NICHT entfernt (analog openssh-server).
+    # Kein eigenes sshd-Profil: sshd hat kein Ubuntu-Standard-AppArmor-Profil;
+    # seine Eindaemmung erfolgt ueber den restriktiven Paketfilter (ufw) und die
+    # SSH-Haertung. Ein eigenes Profil wuerde Aussperr-Risiko erzeugen und wird
+    # bewusst nicht erstellt (Soll-Teilerfuellung mit Begruendung,
+    # qm-richtlinien.md Kap. 5).
+    pkg_install apparmor apparmor-utils
+    if ! svc_active apparmor; then
+        svc_enable_now apparmor
+    else
+        log INFO "base install: apparmor bereits aktiv — uebersprungen"
+    fi
 
     pkg_upgrade
 
@@ -272,6 +287,42 @@ do_check() {
         exit_code=1
     fi
 
+    # --- konv-system.md 3.10 b: AppArmor aktiv, Profile im Enforce-Modus ---
+    # Soll-Grenze: sshd hat kein Ubuntu-Standard-AppArmor-Profil; seine
+    # Eindaemmung erfolgt ueber ufw und SSH-Haertung. Ein eigenes sshd-Profil
+    # wird bewusst nicht erstellt (Aussperr-Risiko; Soll-Teilerfuellung mit
+    # Begruendung, qm-richtlinien.md Kap. 5). Pruefbar nur am echten System
+    # mit root und funktionsfaehigem apparmor-Dienst.
+    if command -v aa-status >/dev/null 2>&1; then
+        # aa-status gibt Exit 0 wenn AppArmor aktiv, sonst ungleich 0.
+        if aa-status --enabled 2>/dev/null; then
+            log INFO "check 3.10b: AppArmor enabled/aktiv — OK"
+        else
+            log ERROR "check 3.10b: AppArmor nicht aktiv (aa-status --enabled fehlgeschlagen)"
+            exit_code=1
+        fi
+        # Anzahl Profile im Enforce-Modus aus aa-status-Ausgabe ermitteln.
+        local enforce_count
+        enforce_count=$(aa-status 2>/dev/null \
+            | awk '/profiles are in enforce mode/{print $1}' || true)
+        if [[ "$enforce_count" =~ ^[0-9]+$ ]] && [ "$enforce_count" -gt 0 ]; then
+            log INFO "check 3.10b: $enforce_count Profile im Enforce-Modus — OK"
+        else
+            log ERROR "check 3.10b: keine Profile im Enforce-Modus (Ist: ${enforce_count:-unbekannt})"
+            exit_code=1
+        fi
+        # Profile im Complain-Modus: WARN, kein ERROR (Distro-abhaengig).
+        local complain_count
+        complain_count=$(aa-status 2>/dev/null \
+            | awk '/profiles are in complain mode/{print $1}' || true)
+        if [[ "$complain_count" =~ ^[0-9]+$ ]] && [ "$complain_count" -gt 0 ]; then
+            log WARN "check 3.10b: $complain_count Profile im Complain-Modus (Soll-Ist-Abgleich mit Betriebsdokumentation empfohlen)"
+        fi
+    else
+        log ERROR "check 3.10b: aa-status nicht verfuegbar — AppArmor-Pruefung nicht moeglich (base install behebt das)"
+        exit_code=1
+    fi
+
     # --- konv-system.md 3.7 a (1): Signaturprüfung der Paketverwaltung nicht umgangen ---
     # ERROR bei: [trusted=yes] in apt-Quellen oder --allow-unauthenticated.
     # Nicht-eingreifend: nur Befunde ausgeben.
@@ -356,7 +407,7 @@ module_doc() {
     printf '**Hostname:** `%s`\n\n' "$(doc_val FQDN)"
     # shellcheck disable=SC2016
     printf '**Zeitzone:** `%s`\n\n' "$(doc_val TIMEZONE)"
-    doc_packages debsums cruft-ng
+    doc_packages apparmor apparmor-utils debsums cruft-ng
     doc_files_begin
     doc_file "$SYSCTL_CONF" \
         "kernel.randomize_va_space = 2" \
@@ -366,7 +417,7 @@ module_doc() {
     doc_file "$MODPROBE_CONF" \
         "install usb-storage /bin/true" \
         "blacklist usb-storage"
-    doc_note "NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d). Integritaets-/Cruft-Pruefung gemaess konv-system.md 3.7 a: (1) apt-Quellen auf umgangene Signaturpruefung (grep), (2) paketfremde Dateien (cruft-ng), ergaenzend: veraenderte Paket-Dateien (debsums, OPS.1.1.3.A10 (S))."
+    doc_note "NTP-Zeitsynchronisation via systemd-timesyncd aktiviert (timedatectl set-ntp true, konv-system.md 3.5 b). sysctl-Haertung gemaess konv-system.md 3.9. USB-Storage-Blacklist gemaess konv-system.md 3.1 c. autofs maskiert (systemctl mask autofs, konv-system.md 3.1 d). AppArmor-Dienst aktiv (konv-system.md 3.10 b): apparmor + apparmor-utils installiert, Dienst enabled. Soll-Teilerfuellung mit Begruendung (qm-richtlinien.md Kap. 5): sshd hat kein Ubuntu-Standard-AppArmor-Profil; seine Eindaemmung erfolgt ueber den restriktiven Paketfilter (ufw) und die SSH-Haertung. Ein eigenes sshd-Profil wird bewusst nicht erstellt (Aussperr-Risiko). Integritaets-/Cruft-Pruefung gemaess konv-system.md 3.7 a: (1) apt-Quellen auf umgangene Signaturpruefung (grep), (2) paketfremde Dateien (cruft-ng), ergaenzend: veraenderte Paket-Dateien (debsums, OPS.1.1.3.A10 (S))."
 }
 
 dispatch "$MODULE" "$@"
