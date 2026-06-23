@@ -81,8 +81,8 @@ do_install() {
         done
     } > "$SYSCTL_CONF"
     chmod 644 "$SYSCTL_CONF"
-    log INFO "base install: sysctl --system anwenden"
-    sysctl --system
+    log INFO "base install: sysctl-Parameter anwenden ($SYSCTL_CONF)"
+    sysctl -p "$SYSCTL_CONF"
 
     # Kernel-Modul-Blacklist (konv-system.md 3.1 c).
     log INFO "base install: Kernel-Modul-Blacklist nach $MODPROBE_CONF schreiben"
