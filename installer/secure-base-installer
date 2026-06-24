@@ -23,6 +23,13 @@ readonly INSTALL_ORDER=(
     logging unattended restic monit lynis
 )
 
+# Optionale Pakete (Schalter -o). Eigene Reihenfolge, laufen nach den
+# Kernmodulen. Aktivierung ueber conf/secure-base-optional.conf, NICHT
+# ueber MODULES_ENABLED.
+readonly OPTIONAL_ORDER=(
+    nginx
+)
+
 # Interaktive Module: fuer diese kein Lebenszeichen (Passwort-/Pubkey-Eingaben
 # und Prompts liegen auf derselben Terminalzeile und wuerden gestoert).
 readonly INTERACTIVE_MODULES=(users)
@@ -44,6 +51,7 @@ declare -rA SB_MODUL_LABEL=(
     [monit]="Monitoring"
     [lynis]="Härtungsprüfung"
     [report]="Abschluss-Dokumentation"
+    [nginx]="Webserver nginx"
 )
 
 # Gemeinsamer Name des UI-Pseudo-Eintrags fuer die Abschluss-Doku.
@@ -65,6 +73,7 @@ SB_FAIL_COUNT=0
 OPT_QUIET=0
 OPT_VERBOSE=0
 OPT_DRYRUN=0
+OPT_OPTIONAL=0
 
 # -------------------------------------------------------------------------
 # Hilfsfunktionen
@@ -86,6 +95,8 @@ OPTIONEN
     -q, --quiet        Nur WARN und ERROR ausgeben (kein INFO)
     -v, --verbose      INFO auch auf der Shell ausgeben (sonst nur im Logfile)
     -n, --dry-run      Trockenlauf: Statusliste sichtbar, keine Aenderungen
+    -o, --optional     Zusaetzlich die in secure-base-optional.conf aktivierten
+                       optionalen Pakete verarbeiten (nginx u. a.)
     -h, --help         Diese Hilfe ausgeben
 
 EXIT STATUS
@@ -97,6 +108,12 @@ HINWEISE
     Ohne Modul-Argumente laufen alle in MODULES_ENABLED (secure-base.conf) aktivierten
     Module in der fest vorgegebenen Reihenfolge. Mit Modul-Argumenten nur die
     angegebenen (ebenfalls in der kanonischen Reihenfolge).
+
+    Optionale Pakete (z. B. nginx) werden ueber conf/secure-base-optional.conf
+    aktiviert und nur mit dem Schalter -o verarbeitet. Sie laufen nach den
+    Kernmodulen (bei uninstall davor). Ein einzeln benanntes optionales Modul
+    (z. B. "install nginx") laeuft auch ohne -o, muss aber in der
+    optional-conf aktiviert sein.
 
     Logdatei: /var/log/secure-base/secure-base.log (Append-Modus, alle Laeufe)
 EOF
@@ -119,9 +136,11 @@ in_list() {
 }
 
 #######################################
-# Validiert Modul-Argumente und gibt die Auswahl in INSTALL_ORDER-Reihenfolge
-# auf stdout aus (ein Modul pro Zeile). Ohne Argumente: alle aktivierten Module.
-# Globals:   INSTALL_ORDER, MODULES_ENABLED
+# Validiert Modul-Argumente und gibt die Auswahl in kanonischer Reihenfolge
+# auf stdout aus (ein Modul pro Zeile). Ohne Argumente: alle aktivierten
+# Kernmodule, bei OPT_OPTIONAL zusaetzlich alle aktivierten optionalen Pakete.
+# Globals:   INSTALL_ORDER, OPTIONAL_ORDER, MODULES_ENABLED,
+#            OPTIONAL_ENABLED, OPT_OPTIONAL
 # Arguments: $* — optionale Modulnamen
 # Outputs:   stdout — ein Modulname pro Zeile
 #######################################
@@ -129,26 +148,42 @@ select_modules() {
     local args=("$@")
     local m
 
+    # Gesamt-Reihenfolge: Kernmodule, dann optionale Pakete.
+    local gesamt=("${INSTALL_ORDER[@]}")
+    if [ "$OPT_OPTIONAL" -eq 1 ]; then
+        gesamt+=("${OPTIONAL_ORDER[@]}")
+    fi
+
     if [ "${#args[@]}" -eq 0 ]; then
-        for m in "${INSTALL_ORDER[@]}"; do
-            if in_list "$m" "${MODULES_ENABLED[@]}"; then
+        for m in "${gesamt[@]}"; do
+            if _modul_aktiviert "$m"; then
                 printf '%s\n' "$m"
             fi
         done
         return 0
     fi
 
+    # Mit Argumenten: optionale Module duerfen auch ohne -o benannt werden,
+    # muessen aber in der jeweiligen Liste bekannt und aktiviert sein.
     local arg
     for arg in "${args[@]}"; do
-        if ! in_list "$arg" "${INSTALL_ORDER[@]}"; then
-            die "Unbekanntes Modul: $arg. Bekannte Module: ${INSTALL_ORDER[*]}"
-        fi
-        if ! in_list "$arg" "${MODULES_ENABLED[@]}"; then
-            die "Modul $arg ist nicht in MODULES_ENABLED aktiviert (in secure-base.conf ergaenzen)"
+        if in_list "$arg" "${INSTALL_ORDER[@]}"; then
+            if ! in_list "$arg" "${MODULES_ENABLED[@]}"; then
+                die "Modul $arg ist nicht in MODULES_ENABLED aktiviert (in secure-base.conf ergaenzen)"
+            fi
+        elif in_list "$arg" "${OPTIONAL_ORDER[@]}"; then
+            if ! _optional_modul_aktiviert "$arg"; then
+                die "Optionales Paket $arg ist nicht in secure-base-optional.conf aktiviert"
+            fi
+        else
+            die "Unbekanntes Modul: $arg. Kernmodule: ${INSTALL_ORDER[*]}; optional: ${OPTIONAL_ORDER[*]}"
         fi
     done
 
-    for m in "${INSTALL_ORDER[@]}"; do
+    # Ausgabe in kanonischer Reihenfolge ueber die Gesamtliste (inkl. optional,
+    # damit benannte optionale Module korrekt einsortiert werden).
+    local alle=("${INSTALL_ORDER[@]}" "${OPTIONAL_ORDER[@]}")
+    for m in "${alle[@]}"; do
         if in_list "$m" "${args[@]}"; then
             printf '%s\n' "$m"
         fi
@@ -295,6 +330,7 @@ parse_args() {
             --quiet) args+=(-q) ;;
             --verbose) args+=(-v) ;;
             --dry-run) args+=(-n) ;;
+            --optional) args+=(-o) ;;
             --help) args+=(-h) ;;
             --) args+=("$a") ;;
             --*) printf 'Unbekannte Option: %s\n' "$a" >&2; exit 2 ;;
@@ -304,12 +340,13 @@ parse_args() {
     set -- "${args[@]}"
 
     local opt
-    while getopts ':c:qvnh' opt; do
+    while getopts ':c:qvnoh' opt; do
         case "$opt" in
             c) SB_CONF=$OPTARG ;;
             q) OPT_QUIET=1 ;;
             v) OPT_VERBOSE=1 ;;
             n) OPT_DRYRUN=1 ;;
+            o) OPT_OPTIONAL=1 ;;
             h) usage ;;
             :) printf 'Option -%s erwartet ein Argument\n' "$OPTARG" >&2; exit 2 ;;
             \?) printf 'Unbekannte Option: -%s\n' "$OPTARG" >&2; exit 2 ;;
@@ -369,6 +406,13 @@ main() {
 
     if ! [[ -v MODULES_ENABLED ]]; then
         die "MODULES_ENABLED nicht definiert in $SB_CONF"
+    fi
+
+    # Optional-conf laden, wenn -o gesetzt ist ODER ein optionales Modul
+    # namentlich aufgerufen wurde. load_optional_conf setzt OPTIONAL_ENABLED
+    # (Array) und prueft das vhost-Schema fuer aktivierte Pakete.
+    if [ "$OPT_OPTIONAL" -eq 1 ] || optional_arg_present "$@"; then
+        load_optional_conf
     fi
 
     # Modul-Auswahl in separatem Schritt, damit die aus select_modules
