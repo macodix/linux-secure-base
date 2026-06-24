@@ -16,6 +16,10 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Monitoring (via EMail)
 - optional nginx Webserver
 
+Optionale Pakete (zurzeit nginx) werden über eine eigene Konfigurationsdatei
+(`conf/secure-base-optional.conf`) und den Schalter `-o` installiert, getrennt
+vom gehärteten Grundsystem.
+
 Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt.
 
 Die Installations-Scripte werden komplett über Konfigurationsverezichnisse gesteuert.

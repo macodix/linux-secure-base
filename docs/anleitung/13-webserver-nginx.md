@@ -4,6 +4,77 @@ Einrichtung des multidomain-fähigen nginx als Webserver für statische Inhalte.
 
 Die Einrichtung folgt je Domain demselben Ablauf. Die Schritte sind hier für eine Domain `<domain>` beschrieben und für jede weitere Domain zu wiederholen. Erwartet werden zwei bis vier Domains.
 
+## 0. Installation über den Installer
+
+nginx ist ein optionales Paket des Installers. Es wird nicht über
+`MODULES_ENABLED` aktiviert, sondern über die eigene Konfigurationsdatei
+`conf/secure-base-optional.conf` und nur mit dem Schalter `-o` verarbeitet.
+
+Vorbereitung — die Vorlage kopieren und die vhosts eintragen:
+
+```
+cp conf/secure-base-optional.conf.example conf/secure-base-optional.conf
+```
+
+In `conf/secure-base-optional.conf` nginx aktivieren und mindestens einen
+vhost definieren:
+
+```
+OPTIONAL_ENABLED=(nginx)
+NGINX_VHOSTS=(
+    "example.com"
+    "shop.example.com|/srv/www/shop"
+)
+NGINX_CERTBOT_MAIL="admin@example.com"
+```
+
+**Erstlauf zuerst im Staging-Modus.** Let's Encrypt begrenzt die Zahl der
+Zertifikatsanforderungen pro Domain und Zeitraum scharf (Rate-Limit). Ein
+Fehlversuch mit echten Zertifikaten (falscher DNS-Eintrag, Port 80 nicht
+erreichbar) kann die Domain für Stunden sperren. Daher den ersten Lauf je
+neuer Domain verbindlich im Staging-Modus durchführen, der die echten
+Limits nicht berührt:
+
+```
+NGINX_CERTBOT_MODE="staging"
+```
+
+Erst nach erfolgreichem Staging-Lauf (Zertifikate werden bezogen, nginx lädt,
+HTTPS-Abruf funktioniert; das Staging-Zertifikat ist erwartungsgemäß nicht
+vertrauenswürdig) auf `NGINX_CERTBOT_MODE="live"` umstellen und erneut
+installieren. Die Staging-Zertifikate werden dabei durch echte ersetzt.
+
+Installation als Komplettlauf oder getrennt:
+
+```
+secure-base-installer -o install           # Kernsystem und optionale Pakete
+```
+
+oder getrennt:
+
+```
+secure-base-installer install              # Kernsystem
+secure-base-installer -o install nginx     # nginx als optionales Paket
+```
+
+Der nginx-Schritt öffnet 443/tcp dauerhaft, 80/tcp nur temporär für den
+Zertifikatsbezug, bezieht je Domain ein Let's-Encrypt-Zertifikat, setzt den
+HTTP→HTTPS-Redirect und schließt Port 80 anschließend wieder. Für den
+Zertifikatsbezug (HTTP-01-Challenge) muss Port 80 von außen erreichbar sein;
+das ist unabhängig davon gegeben, ob die Firewall (ufw) bereits aktiv ist:
+bei inaktiver Firewall ist der Port ohnehin offen, bei aktiver Firewall öffnet
+ihn die nginx-Regel temporär. Der nginx-Schritt läuft daher in jedem Fall
+durch; die Firewall wird wie üblich am Ende des Kernlaufs interaktiv aktiviert.
+
+Das Modul richtet zudem ein AppArmor-Basisprofil für nginx im
+`complain`-Modus ein: AppArmor protokolliert Verstöße, blockiert aber nichts.
+Den Wechsel auf `enforce` (Blockieren) nimmt der Betreiber bewusst vor, sobald
+das Profil im Testbetrieb vollständig ist — siehe Abschnitt zum AppArmor-Profil
+weiter unten.
+
+Die folgenden Abschnitte beschreiben die Einzelschritte, die der Installer
+ausführt — als Hintergrund und für die manuelle Einrichtung.
+
 ## 1. Installation und Grundkonfiguration
 
 ```
@@ -177,10 +248,42 @@ systemctl daemon-reload && systemctl restart nginx
 
 ## 10. AppArmor-Profil
 
-nginx ist der einzige von außen erreichbare Anwendungsdienst und damit der exponierte Dienst. Weder das `nginx`-Paket noch `apparmor-profiles-extra` liefern auf Ubuntu ein AppArmor-Profil für nginx mit. Den Stand bestätigen:
+nginx ist der einzige von außen erreichbare Anwendungsdienst und damit der
+exponierte Dienst. Weder das `nginx`-Paket noch `apparmor-profiles-extra`
+liefern auf Ubuntu ein AppArmor-Profil für nginx mit.
+
+Der Installer richtet daher selbst ein Basis-Profil
+(`/etc/apparmor.d/usr.sbin.nginx`) ein: `aa-autodep nginx` erzeugt ein an die
+nginx-Binärdatei gebundenes Startprofil, `aa-complain` setzt es in den
+`complain`-Modus. In diesem Modus protokolliert AppArmor jeden Zugriff
+außerhalb des Profils in das Audit-Log, blockiert aber nichts. Der Webserver
+läuft uneingeschränkt, während sich die tatsächlich benötigten Pfade (docroots,
+Zertifikatspfade, Logs) im Log ansammeln. Den Stand bestätigen:
 
 ```
 aa-status | grep -i nginx
 ```
 
-Liefert der Befund kein Profil, wird ein eigenes über `aa-genprof` im Complain-Modus erarbeitet und nach dem Prüflauf auf Enforce gesetzt. Sein Umfang wird erst nach Festlegung der ausgelieferten Verzeichnisse aller Domains bestimmt. Im Enforce-Modus wird das Profil im Härtungs-Prüflauf (Kapitel 12 der Installationsanleitung) kontrolliert.
+Enforce wird vom Installer bewusst **nicht** automatisch gesetzt: Ein zu enges
+Profil im enforce-Modus würde nginx blockieren (Aussperr-/Funktionsrisiko),
+sobald ein konfigurierter Pfad nicht erfasst ist — der Pfadsatz hängt von den
+ausgelieferten docroots aller Domains ab. Der Wechsel ist eine bewusste
+Betreiber-Entscheidung nach ausreichendem Testbetrieb:
+
+```
+# 1. nginx im complain-Modus normal betreiben, alle Domains aufrufen,
+#    Zertifikatserneuerung (certbot renew --dry-run) auslösen.
+# 2. Protokollierte Zugriffe ins Profil übernehmen:
+sudo aa-logprof
+# 3. Profil auf enforce setzen:
+sudo aa-enforce nginx
+# 4. Funktion erneut prüfen; bei Blockaden zurück zu Schritt 1/2.
+```
+
+Den aktuellen Modus zeigt `aa-status` (Abschnitte „enforce mode" /
+„complain mode"). Der Installer-Check (`secure-base-installer -o check nginx`)
+meldet den Modus mit. Im Enforce-Modus wird das Profil im Härtungs-Prüflauf
+(Kapitel 12 der Installationsanleitung) kontrolliert.
+
+Nach der nginx-Installation die Härtungsprüfung (lynis) erneut ausführen, da
+nginx nach dem Kern-lynis-Lauf installiert wird.
