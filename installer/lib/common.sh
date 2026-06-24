@@ -31,5 +31,7 @@ source "${_sb_lib_dir}/dispatch.sh"
 source "${_sb_lib_dir}/check.sh"
 # shellcheck source=doc.sh
 source "${_sb_lib_dir}/doc.sh"
+# shellcheck source=optional.sh
+source "${_sb_lib_dir}/optional.sh"
 
 unset _sb_lib_dir
