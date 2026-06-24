@@ -1,8 +1,10 @@
 #!/bin/bash
 #
 # Linux Secure Base — Modul ufw
-# Firewall installieren, Default-Policy deny incoming/outgoing setzen,
-# die in secure-base.conf gelisteten Ports oeffnen und die Firewall aktivieren.
+# Firewall installieren, Default-Policy deny incoming/outgoing setzen
+# und die in secure-base.conf gelisteten Ports konfigurieren.
+# Die Aktivierung (ufw enable) erfolgt nicht hier, sondern am Ende der
+# Installation als interaktive Abfrage (_sb_offer_ufw_enable).
 # Sitzungs-kritisch: check/test ohne Service-Eingriff.
 # Aufruf: ufw.sh {install|uninstall|check|test}
 
@@ -73,10 +75,10 @@ rules_match() {
     diff -q <(expected_rules | sort) <(actual_rules | sort) >/dev/null 2>&1
 }
 
-# --- WARN-Hinweis ----------------------------------------------------
+# --- Hinweis nach Regelset-Konfiguration -----------------------------
 
-warn_sitzungs_verifikation() {
-    log WARN "Firewall ist jetzt aktiv mit deny default. In einer ZWEITEN Sitzung SSH-Login verifizieren. Bei Fehlschlag aus der laufenden Sitzung heraus 'ufw disable' als Rettungsanker."
+info_regeln_gesetzt() {
+    log INFO "ufw install: Firewall-Regeln gesetzt. Die Firewall ist noch NICHT aktiv. Aktivierung am Ende der Installation (Abfrage) oder manuell mit 'ufw enable'."
 }
 
 # --- Subkommandos ----------------------------------------------------
@@ -114,13 +116,10 @@ do_install() {
         ufw allow out "${p}/udp"
     done
 
-    # Default-Deny greift erst mit enable; 22/tcp ist bereits eingetragen.
-    # TEST: 'ufw --force enable' voruebergehend deaktiviert, um zu pruefen,
-    # ob das Aktivieren der Firewall das Anzeige-Haengen ausloest.
-    log WARN "ufw install: TEST — ufw --force enable uebersprungen (Firewall NICHT aktiv)"
-    # ufw --force enable
-
-    warn_sitzungs_verifikation
+    # Default-Deny greift erst nach Aktivierung; 22/tcp ist bereits eingetragen.
+    # Die Aktivierung erfolgt am Ende der Installation als interaktive Abfrage
+    # (_sb_offer_ufw_enable in secure-base-installer), nicht hier.
+    info_regeln_gesetzt
 }
 
 do_uninstall() {

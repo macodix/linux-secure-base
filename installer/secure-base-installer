@@ -189,6 +189,55 @@ _letzte_fehlerzeile() {
 }
 
 # -------------------------------------------------------------------------
+# Interaktive ufw-Aktivierung nach erfolgreichem Install-Lauf
+# -------------------------------------------------------------------------
+
+#######################################
+# Bietet nach einem erfolgreichen install-Lauf die interaktive Aktivierung
+# der Firewall an. Laeuft nur, wenn ufw in SB_DONE_MODULES ist und ein
+# echtes Terminal verfuegbar ist.
+# Ohne interaktives Terminal: nur log INFO, keine Aktivierung.
+# Default: NICHT aktivieren (nur explizites j/ja/y fuehrt zu ufw enable).
+# Globals:   SB_DONE_MODULES (lesend)
+# Arguments: keine
+#######################################
+_sb_offer_ufw_enable() {
+    if ! in_list "ufw" "${SB_DONE_MODULES[@]}"; then
+        return 0
+    fi
+
+    if ! [ -r /dev/tty ]; then
+        log INFO "ufw: Firewall nicht aktiviert (kein interaktives Terminal) — manuell mit 'ufw enable' aktivieren."
+        return 0
+    fi
+
+    {
+        printf '\n'
+        printf 'Die Firewall (ufw) ist konfiguriert, aber noch nicht aktiv.\n'
+        printf 'Das Aktivieren kann die laufende SSH-Verbindung kurz unterbrechen\n'
+        printf 'und die Anzeige aussetzen lassen — danach den Login in einer zweiten\n'
+        printf 'Sitzung pruefen; bei Problemen: ufw disable\n'
+        printf '\n'
+        printf 'Firewall jetzt aktivieren? [j/N] '
+    } >/dev/tty
+
+    local antwort
+    read -r antwort </dev/tty || antwort=""
+
+    case "${antwort,,}" in
+        j | ja | y | yes)
+            ufw --force enable
+            printf 'Firewall aktiviert — Login in einer zweiten Sitzung pruefen.\n' >/dev/tty
+            log INFO "ufw: Firewall auf Anfrage aktiviert. Login in zweiter Sitzung pruefen."
+            ;;
+        *)
+            printf 'Firewall nicht aktiviert — spaeter manuell mit: ufw enable\n' >/dev/tty
+            log INFO "ufw: Firewall nicht aktiviert — manuell mit 'ufw enable' aktivieren."
+            ;;
+    esac
+}
+
+# -------------------------------------------------------------------------
 # Abschluss-Sammelbilanz (EXIT-Trap)
 # -------------------------------------------------------------------------
 
@@ -226,6 +275,9 @@ _sb_master_finish() {
         log ERROR "=== Sammelbilanz ${SB_SUB}: ${SB_DONE_COUNT}/${SB_TOTAL} Module erledigt, Abbruch bei ${SB_CURRENT_MODUL} ==="
     fi
     ui_summary
+    if [ "$SB_SUB" = "install" ] && [ "$rc" -eq 0 ]; then
+        _sb_offer_ufw_enable
+    fi
     _sb_close_log
 }
 
