@@ -27,11 +27,6 @@ readonly INSTALL_ORDER=(
 # und Prompts liegen auf derselben Terminalzeile und wuerden gestoert).
 readonly INTERACTIVE_MODULES=(users)
 
-# Verbindungskritische Module: berühren beim Ausführen kurz die laufende
-# SSH/Netzverbindung. Kein fortlaufender TTY-Poller (wuerde blockieren/einfrieren),
-# stattdessen statischer Hinweis via ui_notice_start.
-readonly CONNECTION_CRITICAL_MODULES=(ufw)
-
 # Anzeige-Beschreibung je Modul fuer die Statusliste (Fallback: Modulname).
 # In lib/ui.sh (ui_init) gelesen.
 # shellcheck disable=SC2034  # cross-file in lib/ui.sh verwendet
@@ -204,10 +199,8 @@ _letzte_fehlerzeile() {
 #######################################
 _sb_master_finish() {
     local rc=$?
-    # Lebenszeichen-Poller und statischen Hinweis beenden (idempotent),
-    # bevor Doku/Summary erscheinen.
+    # Lebenszeichen-Poller beenden (idempotent), bevor Doku/Summary erscheinen.
     ui_heartbeat_stop
-    ui_notice_stop
     # Abschluss-Doku: Erfolg -> Voll-Doku, Abbruch -> Teil-Doku mit Vermerk.
     # SB_REPORT_UI_NAME ist die gemeinsame readonly-Konstante des UI-Pseudo-
     # Eintrags (Plan 2.8); kein lokales Literal.
@@ -387,20 +380,14 @@ main() {
 
         ui_list_update "$modul" run
 
-        # Lebenszeichen unter der Liste — nicht fuer interaktive oder
-        # verbindungskritische Module. Verbindungskritische Module erhalten
-        # stattdessen einen statischen Hinweis (kein TTY-Poller).
-        if in_list "$modul" "${CONNECTION_CRITICAL_MODULES[@]}"; then
-            ui_notice_start \
-                "Firewall wird scharfgeschaltet — die Live-Anzeige kann kurz aussetzen, die Installation läuft im Hintergrund weiter. Bitte nicht abbrechen."
-        elif ! in_list "$modul" "${INTERACTIVE_MODULES[@]}"; then
+        # Lebenszeichen unter der Liste — nicht fuer interaktive Module.
+        if ! in_list "$modul" "${INTERACTIVE_MODULES[@]}"; then
             ui_heartbeat_start "${SB_MODUL_LABEL[$modul]:-$modul}"
         fi
 
         skript="$SCRIPT_DIR/lib/modules/${modul}.sh"
         if [ ! -x "$skript" ]; then
             ui_heartbeat_stop
-            ui_notice_stop
             log ERROR "Modul nicht installiert: ${modul}.sh fehlt unter $SCRIPT_DIR/lib/modules/"
             ui_list_update "$modul" error "nicht installiert"
             # shellcheck disable=SC2034  # in lib/ui.sh (ui_summary) gelesen
@@ -418,10 +405,8 @@ main() {
             "$skript" "$sub" || modul_rc=$?
         fi
 
-        # Lebenszeichen bzw. statischen Hinweis stoppen, bevor der naechste
-        # Zustandswechsel gezeichnet wird.
+        # Lebenszeichen stoppen, bevor der naechste Zustandswechsel gezeichnet wird.
         ui_heartbeat_stop
-        ui_notice_stop
 
         if [ "$modul_rc" -eq 0 ]; then
             log INFO "[$idx/$total] Modul abgeschlossen: $modul ($sub)"
