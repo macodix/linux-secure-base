@@ -10,6 +10,7 @@ Dieses Dokument beschreibt Festlegungen für die Einrichtung des Webserver nginx
 3. Port 443 dauerhaft, Port 80 nur temporär
 4. HTTP-zu-HTTPS-Redirect als Absicherung
 5. Härtung
+6. Umsetzung im Installer
 
 
 ## 1. Multidomain mit getrennten Server-Blöcken
@@ -36,6 +37,19 @@ Im Normalbetrieb ist Port 80 in der Firewall geschlossen, der Redirect-Block wir
 Global werden die Versions-Anzeige abgeschaltet (`server_tokens off`) und die TLS-Parameter über die von certbot mitgelieferte Datei gesetzt. Der nginx-Dienst erhält systemd-Hardening-Direktiven.
 
 Für `nginx` wird ein eigenes AppArmor-Profil erstellt, da weder das `nginx`-Paket noch `apparmor-profiles-extra` vonf Ubuntu ein Profil mitliefert.
+
+## 6. Umsetzung im Installer
+
+nginx ist als optionales Paket des Installers umgesetzt (`lib/modules/nginx.sh`).
+Es wird über `conf/secure-base-optional.conf` aktiviert (Schlüssel
+`OPTIONAL_ENABLED`, `NGINX_VHOSTS`, `NGINX_CERTBOT_MAIL`, `NGINX_CERTBOT_MODE`)
+und nur mit dem Schalter `-o` verarbeitet, getrennt von den Kernmodulen. Das
+Modul ergänzt die Firewall selbst (443 dauerhaft, 80 temporär; additiv,
+unabhängig vom ufw-Aktivierungszustand), bezieht die Zertifikate über certbot
+und setzt systemd-Hardening sowie ein AppArmor-Basisprofil im `complain`-Modus.
+Enforce setzt der Betreiber nach Testbetrieb selbst (Weg: `aa-logprof` →
+`aa-enforce`), da das Profil von den konfigurierten docroots abhängt und ein
+automatisches enforce ein Aussperr-/Funktionsrisiko wäre.
 
 ## Versionshistorie
 
