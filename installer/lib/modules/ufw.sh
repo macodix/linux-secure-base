@@ -79,29 +79,6 @@ warn_sitzungs_verifikation() {
     log WARN "Firewall ist jetzt aktiv mit deny default. In einer ZWEITEN Sitzung SSH-Login verifizieren. Bei Fehlschlag aus der laufenden Sitzung heraus 'ufw disable' als Rettungsanker."
 }
 
-# --- TEMPORAERE Diagnose: sporadischer SSH-Sitzungsabbruch bei enable ---
-# Haelt rund um 'ufw enable' den Verbindungs- und Tracking-Zustand im
-# Logfile fest (ueberlebt Abbruch/Reboot). Rein lesend, kein Eingriff.
-# Nach Klaerung der Ursache wieder entfernen.
-ufw_diag() {
-    local phase=$1 zeile
-    log INFO "ufw diag [$phase]: SSH_CONNECTION=${SSH_CONNECTION:-<leer>}"
-    log INFO "ufw diag [$phase]: established TCP auf :22 (ss):"
-    while IFS= read -r zeile; do
-        log INFO "  ss: $zeile"
-    done < <(ss -tn state established 2>/dev/null | grep ':22 ' || true)
-    log INFO "ufw diag [$phase]: conntrack Port 22:"
-    if command -v conntrack >/dev/null 2>&1; then
-        while IFS= read -r zeile; do log INFO "  ct: $zeile"; done \
-            < <(conntrack -L -p tcp 2>/dev/null | grep -E 'dport=22|sport=22' || true)
-    elif [ -r /proc/net/nf_conntrack ]; then
-        while IFS= read -r zeile; do log INFO "  ct: $zeile"; done \
-            < <(grep -E 'dport=22|sport=22' /proc/net/nf_conntrack 2>/dev/null || true)
-    else
-        log INFO "  ct: (conntrack/nf_conntrack nicht verfuegbar)"
-    fi
-}
-
 # --- Subkommandos ----------------------------------------------------
 
 do_install() {
@@ -138,10 +115,8 @@ do_install() {
     done
 
     # Default-Deny greift erst mit enable; 22/tcp ist bereits eingetragen.
-    ufw_diag "vor enable"
     log INFO "ufw install: Firewall aktivieren (boot-persistent)"
     ufw --force enable
-    ufw_diag "nach enable"
 
     warn_sitzungs_verifikation
 }
