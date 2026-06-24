@@ -339,11 +339,27 @@ ui_summary() {
 # Arguments: $1 — Anzeige-Label des aktiven Moduls (Fallback-Text)
 #######################################
 ui_heartbeat_start() {
-    # TESTWEISE DEAKTIVIERT (No-op): der nebenlaeufige Poller las 1×/s die
-    # letzte Logzeile und schrieb sie ueber die SSH-Verbindung aufs TTY. Er
-    # steht im Verdacht, das Anzeige-Haengen beim ufw-Modul auszuloesen.
-    # Zum Pruefen ausgesetzt; die Statusliste (ui_list_update) bleibt aktiv.
-    return 0
+    local label=$1
+    [ "$_UI_TTY" -eq 1 ] || return 0
+    [ "${SB_QUIET:-0}" -eq 0 ] || return 0
+    [ -n "${SB_CURRENT_LOG:-}" ] || return 0
+    local cols linie
+    cols=$(tput cols 2>/dev/null || echo 60)
+    linie=$(printf '─%.0s' $(seq 1 "$cols"))
+    # Block unter der Liste: Leerzeile, Trennlinie, Leerzeile, Aktuell-Zeile.
+    # Die ersten drei Zeilen sind statisch; nur die unterste (Aktuell-)Zeile
+    # aktualisiert der Poller horizontal. ui_heartbeat_stop raeumt alle vier
+    # Zeilen wieder ab und stellt die Cursor-Basis fuer ui_list_update her.
+    printf '\033[K\n%s\033[K\n\033[K\n    Aktuell: %s\033[K' "$linie" "$label" >&"$_UI_OUT"
+    (
+        while :; do
+            sleep 1
+            letzte=$(tail -n1 "$SB_CURRENT_LOG" 2>/dev/null | cut -d' ' -f2-)
+            zeile="    Aktuell: ${letzte:-$label}"
+            printf '\r%s\033[K' "${zeile:0:cols}" >&"$_UI_OUT"
+        done
+    ) &
+    _UI_HB_PID=$!
 }
 
 #######################################
@@ -353,6 +369,13 @@ ui_heartbeat_start() {
 # Globals:   _UI_HB_PID, _UI_TTY, _UI_OUT
 #######################################
 ui_heartbeat_stop() {
-    # TESTWEISE DEAKTIVIERT (No-op) — siehe ui_heartbeat_start.
+    [ -n "${_UI_HB_PID:-}" ] || return 0
+    kill "$_UI_HB_PID" 2>/dev/null || true
+    wait "$_UI_HB_PID" 2>/dev/null || true
+    _UI_HB_PID=""
+    # Aktuell-Zeile und die drei statischen Zeilen (Leer/Linie/Leer) entfernen,
+    # Cursor zurueck auf die Zeile direkt unter der Liste (ui_list_update-Basis).
+    [ "$_UI_TTY" -eq 1 ] \
+        && printf '\r\033[K\033[1A\033[K\033[1A\033[K\033[1A\033[K' >&"$_UI_OUT"
     return 0
 }
