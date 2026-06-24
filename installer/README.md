@@ -204,7 +204,7 @@ secure-base-installer [OPTIONEN] <KOMMANDO> [<modul> ...]
 | `install` | Module installieren und konfigurieren |
 | `uninstall` | Modul-Konfiguration zurücknehmen (umgekehrte Reihenfolge) |
 | `check` | Soll-Ist-Vergleich, ändert nichts |
-| `test` | Scharfer Funktionstest, ändert nichts |
+| `test` | Funktionstest, ändert nichts |
 
 Ohne Modul-Argumente laufen alle in `MODULES_ENABLED` aktivierten Module.
 Mit den Modul-Argumenten können auch einzelne Module installiert, deinstalliert
