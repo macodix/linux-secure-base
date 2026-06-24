@@ -79,7 +79,7 @@ KOMMANDOS
     install    Module installieren und konfigurieren
     uninstall  Module-Konfiguration zuruecknehmen (umgekehrte Reihenfolge)
     check      Soll-Ist-Vergleich ohne Aenderungen
-    test       Scharfer Funktionstest ohne Aenderungen
+    test       Funktionstest ohne Aenderungen
 
 OPTIONEN
     -c, --conf <pfad>  Alternative Konfigdatei (Default: conf/secure-base.conf)

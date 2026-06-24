@@ -368,7 +368,7 @@ do_test() {
     # Kein Login-Probe, kein Restart.
     if sshd -t; then
         log INFO "ssh test: sshd -t ok (syntaktischer Konfig-Test)"
-        log INFO "Fuer scharfen Login-Test in zweiter SSH-Sitzung manuell verifizieren (Pubkey + TOTP)."
+        log INFO "Fuer Login-Test in zweiter SSH-Sitzung manuell verifizieren (Pubkey + TOTP)."
         exit 0
     fi
     log ERROR "ssh test: sshd -t fehlgeschlagen"

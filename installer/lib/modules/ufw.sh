@@ -92,7 +92,7 @@ do_install() {
 
     # Deterministischer Ausgangszustand: vorhandene Regeln verwerfen.
     # reset DEAKTIVIERT ufw kurz (Firewall offen) — die laufende
-    # SSH-Sitzung bleibt unberuehrt, bis enable am Ende scharfschaltet.
+    # SSH-Sitzung bleibt unberuehrt, bis enable am Ende aktiviert.
     log INFO "ufw install: deterministischer Ausgangszustand (ufw --force reset)"
     ufw --force reset
 
@@ -216,7 +216,7 @@ do_test() {
         rc=1
     fi
 
-    log INFO "test: scharfer Firewall-Test (neue SSH-Verbindung von aussen gegen 22/tcp) in zweiter Sitzung manuell verifizieren."
+    log INFO "test: Firewall-Test (neue SSH-Verbindung von aussen gegen 22/tcp) in zweiter Sitzung manuell verifizieren."
     exit "$rc"
 }
 
