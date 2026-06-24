@@ -115,8 +115,10 @@ do_install() {
     done
 
     # Default-Deny greift erst mit enable; 22/tcp ist bereits eingetragen.
-    log INFO "ufw install: Firewall aktivieren (boot-persistent)"
-    ufw --force enable
+    # TEST: 'ufw --force enable' voruebergehend deaktiviert, um zu pruefen,
+    # ob das Aktivieren der Firewall das Anzeige-Haengen ausloest.
+    log WARN "ufw install: TEST — ufw --force enable uebersprungen (Firewall NICHT aktiv)"
+    # ufw --force enable
 
     warn_sitzungs_verifikation
 }
