@@ -6,10 +6,16 @@ Dieses Dokument hält die Ziele und die bisher getroffenen Festlegungen für die
 
 ## 1. Ziele
 
-- Den Installer von Bash auf Python umstellen, nativ neu aufgebaut — kein Wrapper um die bestehenden Skripte. Anlass ist eine bessere Bedienoberfläche für die Installation.
-- Prozesskontrolle und die Überwachung der Ein- und Ausgabe sollen zentral verfügbar sein.
-- Das Konstrukt aus Modulen und Actions soll generisch sein und sich für weitere Aufgaben (z. B. Systemadministration) erweitern lassen.
-- Die Steuerung erfolgt bevorzugt über Konfiguration. Ob die Konfiguration über eine Konfigurationsdatei oder einen Dialog erfolgt, ist offen — bevorzugt beides.
+Den Installer von Bash auf Python umstellen.
+
+Der Installer wird dabei nativ neu aufgebaut (kein Wrapper um die bestehenden Skripte).
+
+Gründe für die Umstellung sind
+
+- bessere Bedienoberfläche,
+- Prozesskontrolle und Überwachung der Ein- und Ausgaben
+- generischer Aufbau und Wiederverwendbarkeit für weitere Aufgaben (z. B. Systemadministration),
+- Die Steuerung über Konfiguration. Konfiguration soll über Konfigurationsdateien und/ oder Dialog erfolgt, möglich sein
 
 ## 2. Festlegungen
 
@@ -17,22 +23,40 @@ Festgelegt ist bisher der grundlegende Aufbau sowie einzelne Punkte zur Bereitst
 
 ### 2.1 Aufbau
 
-- Eine abstrakte Modul-Klasse. Die konkreten Module erben von ihr und regeln das Fach- und Modulspezifische, bei Bedarf mit eigenen oder überschriebenen Methoden.
-- Ein Action-Interface. Die konkreten Actions definieren einzelne Aktivitäten — etwa Datei kopieren, Suchen und Ersetzen in Konfigurationsdateien, Dateien erstellen und befüllen, Systemaufrufe.
-- Ein Modul hat eine oder mehrere Actions (Komposition).
-- Die Actions erhalten ihre Arbeitsumgebung über Context-Objekte (mehrere). Damit ist die Existenz von Context-Klassen festgelegt; ihr Zuschnitt ist noch offen.
-- Welche Konfiguration ein Modul benötigt, gibt das Modul selbst an.
+#### 2.1.1 Abstrakte Modul-Klasse.
+
+Die konkreten Module erben von ihr und regeln das Fach- und Modulspezifische, bei Bedarf mit eigenen oder überschriebenen Methoden.
+
+
+#### 2.1.2 Action-Interface-Klasse
+
+Die konkreten Actions definieren einzelne Aktivitäten — etwa Datei kopieren, Suchen und Ersetzen in Konfigurationsdateien, Dateien erstellen und befüllen, Systemaufrufe usw
+
+#### 2.1.3 Modell
+
+Ein Modul hat eine oder mehrere Actions (Komposition).
+
+Die Actions erhalten ihre Arbeitsumgebung über Context-Objekte (mehrere).
+
+Damit ist die Existenz von Context-Klassen festgelegt. Die Eigenschaften der Context-Klassen sind noch nicht festgelegt. 
+
+Welche Konfiguration ein Modul benötigt, wird aus den Konfigurationen (s. a. Ziele) bezogen.
 
 ### 2.2 Bereitstellung und Bedienung
 
-- Rich und questionary werden mitgeliefert, damit auf dem Zielserver nichts installiert werden muss.
-- Ein reiner Planungsmodus erzeugt ausschließlich eine Konfigurationsdatei, ohne Änderung am System — etwa zur Vorbereitung eines anderen Servers.
+Für das UI werden die Python Komponenten Rich und questionary mitgeliefert, damit auf dem Zielserver nichts installiert werden muss.
+
+Der Installer soll über einen Planungsmodus zur Erzeugung von Konfigurationsdateien verfügen.
 
 ## 3. Offene Punkte
 
 Diese Fragen sind noch zu entscheiden:
 
-- Welche Aufgaben eine Action erfüllen muss. Sicher ist das Ausführen einer Aktivität; ob eine Action auch prüfen und rückgängig machen können soll, ist offen.
-- Welche Context-Objekte es gibt und welche Informationen jedes davon enthält.
-- Wie der Installer die Module ansteuert und welche Daten er ihnen dabei übergibt.
-- Wie ein Modul seine Actions aufruft und mit Daten versorgt.
+Soll eine Aufgabe nur eine Aktion ausführen oder auch Prüf- und Rollback-Funktionen enthalten?
+
+Welche Context-Klassen werden benötigt und welche Eigenschaften sollen diese haben?
+
+Wie ruft der Installer oder auch ggf. ein anderes Tool die einzelnen Module auf bzw. steuert deren Ablauf? 
+
+Wie ruft ein Modul seine Actions auf? Wie werden Daten an die Actions übergeben?
+
