@@ -15,7 +15,7 @@ Gründe für die Umstellung sind
 - bessere Bedienoberfläche,
 - Prozesskontrolle und Überwachung der Ein- und Ausgaben
 - generischer Aufbau und Wiederverwendbarkeit für weitere Aufgaben (z. B. Systemadministration),
-- Die Steuerung über Konfiguration. Konfiguration soll über Konfigurationsdateien und/ oder Dialog erfolgt, möglich sein
+- Die Steuerung soll über  Konfigurationsdateien erfolgen. Die Konfigurationsdateien können als Datei und/ oder Dialog erstellt werden.
 
 ## 2. Festlegungen
 
@@ -40,7 +40,7 @@ Die Actions erhalten ihre Arbeitsumgebung über Context-Objekte (mehrere).
 
 Damit ist die Existenz von Context-Klassen festgelegt. Die Eigenschaften der Context-Klassen sind noch nicht festgelegt. 
 
-Welche Konfiguration ein Modul benötigt, wird aus den Konfigurationen (s. a. Ziele) bezogen.
+Welche Konfiguration ein Modul benötigt, wird im Modul festgelegt. Damit wird das Modul auch zur fachlichen Referenz zur Erstellung der Konfigurationsdatei.
 
 ### 2.2 Bereitstellung und Bedienung
 
