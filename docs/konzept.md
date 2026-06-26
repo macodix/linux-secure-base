@@ -50,7 +50,7 @@ Sinn dieser Klassen ist es eine möglicht vollständig Kontrolle über die jewei
 
 Aktionen sind Experten für ihre spezifische Aufgabe und können daher noch mit Optionen zur versehen werden, um die Ausführung an bestimmte Bedingungen anzupassen, wie z. B. eine Datei sichern, bevor sie neu erstellt oder geändert wird. Dabei soll der "atomare" Charakter i. S. d. der UNIX Regel "Gestalte jedes Programm so, dass es *eine* Aufgabe *gut* erledigt, nicht verändert werden.
 
-Praktisch wird es eine Eltern-Klasse Aktionen geben, die sicherstellt, dass jede konkrete Implementierung dieser Klasse über ein gleiches Grundset an Objektvariablen und Methoden verfügt, insbesondere auch für Rückmeldung an die aufrufenden Module.
+Praktisch wird es eine Eltern-Klasse Aktionen geben, die sicherstellt, dass jede konkrete Implementierung dieser Klasse über ein gleiches Grundset an Objektvariablen und Methoden verfügt, insbesondere auch für Rückmeldung an die aufrufenden Module. Fehler und Ausnahmen müssen immer an das aufrufende Modul weitergleitet werden.
 
 Auch wenn diese AKtionen nun erstmals im Rahmen des Installers definiert werden ist es das Ziel dieses Designentschedung ist ein flexibles Set an Aktionen zu bekommen, die von unterschiedlichen Werkzeugen/Aufrufern (z. B. in der Systemadministration) genutzt werden können.
 
@@ -75,13 +75,15 @@ Die einzelenen Module erben von einer gemeinsamen Elternklasse Modul alle gemein
 - der Interaktion mit bzw. Steuerung von Aktionen
 - der Interaktion mit dem aufrufenden Prozess (z. B. Installer)
 
-Die Konfigurationsdaten aus dem Config-Objekt werden in Klassenvariablen abgelegt. Für die Klassenvariablen stehen getter und setter zur Verfügung. Ds Config-Objekt selber bleibt 'mutable' kann slo durch das Modul geändert werden. 
+Die Konfigurationsdaten aus dem Config-Objekt werden in den Klassenvariablen des Moduls abgelegt.
 
 Die spezifischen Module (als die Erben der Elternklasse) sollen beschreibende Namen erhalten. Ein Modul, welches beispielsweise zur Installation einer Komponente dient, sollte auch eindeutig als Installations-Modul im Namen erkennbar sein (z. B. inst-.....py). Die Namenskonvention sind ggf. noch im Projektverlauf festzulegen. Per Konvention kann dann festgelegt werden, das bestimmte Typen von Module (z. B. aller inst-...-py Module) bestimmte Methoden oder Variablen enthalten müssen (z. B. kann festgelegt werden, dass alle inst* Module eine eine 'rollback'-Methode aufweisen müssen).
 
-Module die Veränderungen am System bewirken (z. B. Installationsmodule) sollen einen Überprüfungsmodus anbieten, welches den Erfolg der Aktionen und Eingriffe gezielt und vollstädndig prüft. 
+Module die Veränderungen am System bewirken (z. B. Installationsmodule) sollen 
+- einen Überprüfungsmodus anbieten, welches den Erfolg der Aktionen und Eingriffe gezielt und vollstädndig prüft,
+- und einen Rollback-Mechanismus zur Verfügung stellen 
 
-Die Module sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Hier ist noch festzulegen in welcher Form diese Deklaration erfolgen soll. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unetrschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
+Die Modul-Klassen sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Hier ist noch festzulegen in welcher Form diese Deklaration erfolgen soll. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unterschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
 
 
 ### 3.1.3. Konfiguration
@@ -111,49 +113,62 @@ Mit weiteren Parametern kann festgelegt werden
 Sind die Parameter nicht gesetzt müssen sie per Dialog abgefargt werden. 
 
 
-## 3.2. Kommunikation, Ausnahmen und Datenaustausch
+## 3.2. Aufruf, Steuerung, Konfiguration, Logfile und Ausnahmen
 
-### 3.2.1. Konfigurationsdaten und Parameter
+### 3.2.1. Aufruf und Steuerung
+
+Die Aufrufer (beispielsweise der Installer) startet ein Modul über IPC. Dabei wird ein Config-Objekt übergeben. 
+
+Die Aktionen stellen sicher, dass die der Status der Aktion und ggf. der IO-Kanäle (insbesondere stdout und stderr) den Modulen vollständig als Variable und/oder Methode zur Verfügung gestellt werden. 
+
+Es muss grundsätzlich  möglich sein, dass ein Modul auch nicht Logging relevante Nachrichten an den aufrufenden Prozess senden kann, damit ggf. der Aufrufer über den weiteren Ablauf entscheiden kann. Genauso muss es umgekehrt möglich sein, dass der Aufrufer Nachrichten an das Modul senden kann um z. B. die Übermittlung von Daten anzufordern (z. B. Variablewerte) oder das Modul zu Aktivitäten (=Modul-Methoden) auffordern kann. 
+
+### 3.2.2. Konfigurationsdaten und Parameter
 
 Der Aufrufer (z. B. der Installer) ist für die Beschaffung der Konfigurationdaten, sofern erforderlich, zuständig. Die geschieht durch die Instatziierung eines entsprechenden Konfig-Objekts. 
 
-Mit dem Konfig-Objekt kann dann das gewünschte Modul instanziiert werden und die Methoden des Modul-Objektes genutzt werden. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen kann ds Modul-Objekt auch direkt instanziiert werden. Evtl. vorhandene Klassenvariablen in den Modulen können ggf. auch zur Laufzeit geändert werden!
+Mit dem Konfig-Objekt kann dann das gewünschte Modul instanziiert werden und die Methoden des Modul-Objektes genutzt werden. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen entfällt die Übergabe eine Config-Objektes.
 
 Die Aktionen sind Bestandteil der Module (Komposition) und werden i. d. R von den Modulen über Parameter oder Manipulation von Klassenvariablen gesteuert.
 
-###
+### 3.2.3. Logging
+
+Das Logging wird durch den Aufrufer vorgenommen. Module und Aktionen erhalten keine eigene Logger Umgebung. Die Module entscheiden welche Meldungen an den Aufrufer per IPC-Kommunikation weitergreicht werden. Der aufrufer entscheidt was er davon in das Logfile aufnehmen möchte.
+
+Grundsätzlich soll beim Logging wzischen 4 Stufen unterschieden werden: INFO, WARN, ERROR, CRITICAL. Die Module sollten die Meldung entsprechen gleich qualifizieren. Das Loglevel des Aufrufers soll einstellbar sein. Das Loglevel soll auch an die Module weitergegeben werden.
+
+
+### 3.2.4 Ausnahmen / Exceptions
+
+Aktionen und Module sollen im Fehlerfall Ausnahmen (Exceptions) erzeugen. Die Exceptions sind entsprechend des eingestellten Loglevels durch die Module an den Aufrufer weiterzuleiten. In den seltenen Fällen in denen ein Modul einen Fehler als CRITICAL einstuft und sich beendet, muss vorher sichergestelt sein dass die Excpetion Meldungen noch an den Aufrufer weitergeleitet werden. 
+
+
+## 3.3 ZU DISKUTIEREN
+
+Da der Aufrufer schon relative viele Funktionen und Methoden (z. B. Logger, IPC usw.) haben muss, ist es m. E. zu Erwägen einen "Standardaufrufer" als Klasse zu erstellen, der von den entsprechenden Aufrufern (z. B. Installer) beerbt werden kann. Dies würde es erleichtern sich in den jeweiligen spezfischen Aufrufern auf die jeweilig Fachlogik zu konzentrieren.   
+
+
+# 4. LSB Installer
+
+Der LSB Installer ist (vermutlich) die erste Anwendung die 'pifos' als Aufrufer nutzt.
+
+Der LSB Installer ist als UI TWerkzeug konzipert und soll ein angemehmes Frontend für die Einrichtung eine 'linux-secure-base"-Servers liefern. Dazu zählt
+
+- eine Übersicht über die zu installeirenden Komponenten
+- Installationsstatus der Komponenten
+- Gesamtstatus
+- Betriebsanzeige (laufe noch)
+- aktuelle Statusmeldungen
+- dialogische Abfrage von unkonfigurierten Parametern
+- Erstellung von Konfiguration mit Hilfe des Konfigurators   
 
 
 
-### 3.2.1 Kommunikation 
-
-Die Aktionen stellen sicher, dass die der Status der Aktion und ggf. der IO-Kanäle (insbesondere stdout und stderr) vollständig den Modulen zur Verfügung gestellt werden. Auch stellen die Aktionen sicher, dass bei allen Fehlern entsprechende Exceptions an die Module weitergereicht werden.  
-
-
-
-
-
-
-
-Der Rückweg hat zwei getrennte Teile. Über den Meldekanal laufen die Meldungen während der Arbeit. Die Ausgabe der Befehle geht in die Logdatei, der Status und der Fortschritt in die Anzeige. Am Ende der Operation steht das Ergebnis. Es nennt den Ausgang, also gelungen oder gescheitert, und bei einem Fehlschlag den Grund und den Stand der Rücknahme.
-
-Der Meldekanal gehört dem Aufrufer. Das Modul bleibt von der Bedienoberfläche unabhängig.
-
-### 2.5 Ausführung
-
-Jedes Modul läuft als eigener Prozess. Kommunikation und Steuerung laufen über IPC. Über die Prozessgrenze gehen nur einfache Daten.
-
-Der Installer steuert die Modulprozesse von außen. Er kann sie starten, parallel laufen lassen, anhalten und fortsetzen sowie beenden. Parallel laufen nur Module, die voneinander unabhängig sind. Das Anhalten und Fortsetzen geschieht über die Signale SIGSTOP und SIGCONT.
-
-Ein Fehler mit Abbruch erreicht den Installer nicht als unbehandelte Ausnahme. Die Operation meldet einen Fehlschlag. Der Installer ist zusätzlich gegen unerwartete Ausnahmen abgesichert. Das Modul nimmt sein bereits Getanes zurück und meldet, ob das vollständig, teilweise oder nicht gelang. Was sich nicht zurücknehmen ließ, bleibt in einem bekannten und gekennzeichneten Zustand.
-
-Ein hängendes Modul wird beendet. Ein im Voraus geschätzter Timeout ist dafür nicht nötig und bleibt nur eine Möglichkeit. Der Sonderfall ufw wird darüber gelöst. Der Installer legt den ufw-Modulprozess während des Laufs schlafen und aktiviert ufw erst am Ende der Installation.
-
-### 2.6 Bereitstellung und Bedienung
+# 5. Bereitstellung und Bedienung
 
 Für die Bedienoberfläche werden die Python-Komponenten Rich und questionary mitgeliefert, damit auf dem Zielserver nichts installiert werden muss.
 
-Der Installer verfügt über einen Planungsmodus, der Konfigurationsdateien erzeugt, ohne das Zielsystem zu ändern.
+
 
 
 
