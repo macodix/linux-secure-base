@@ -127,7 +127,7 @@ Es muss grundsätzlich  möglich sein, dass ein Modul auch nicht Logging relevan
 
 Der Aufrufer (z. B. der Installer) ist für die Beschaffung der Konfigurationsdaten, sofern erforderlich, zuständig. Dies geschieht durch die Instanziierung eines entsprechenden Konfig-Objekts. 
 
-Die Konfig wird dann dann entsprechend den Anforderungen des Moduls beim Start des Moduls übergeben. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen entfällt die Übergabe eines Config-Objektes.
+Die Konfig wird dann entsprechend den Anforderungen des Moduls beim Start des Moduls übergeben. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen entfällt die Übergabe eines Config-Objektes.
 
 Die Aktionen sind Bestandteil der Module (Komposition) und werden i. d. R von den Modulen über Parameter oder Manipulation von Klassenvariablen gesteuert.
 
