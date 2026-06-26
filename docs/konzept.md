@@ -15,45 +15,69 @@ Gründe für die Umstellung sind:
 - ein generischer Aufbau, der sich über die Server-Härtung hinaus für weitere Aufgaben wiederverwenden lässt,
 - die Steuerung über Konfigurationsdateien, die als Datei oder über einen Dialog erstellt werden.
 
-Das Projekt ist daher kein einzelner Installer, sondern ein generischer Bausatz aus Modulen, Aktionen, den nötigen abstrakten Klassen und Schnittstellen sowie den Wegen, über die Daten und Meldungen laufen. Der Installer für die Server-Härtung ist nur ein Nutzer dieses Bausatzes. Andere Werkzeuge können ihn auf dieselbe Weise verwenden.
+Allerdings hat sich das Projekt weiterentwickelt. Neben der Entwicklung eines neuen Installers soll ein Ökosystem an Pyhton Modulen entstehen, dass eine gute und transparente (z. B. Logging) Steuerung und Kontrolle von Aktivitäten auf einem stem ermöglichen soll. Der Installer baut auf diesem Ökosystem auf. Gleichzeitig kann dieses Python-Modul-System auch von anderen Aufrufern genutzt werden. Ggf. ist daher im Projektverlauf sinnvoll dieses Ökosystem nicht nur im Rahmen des Installers zuer Verfügung zu stellen, sonder als allgemein nutzbare Komponenet auf dem jeweiligen System zu implementieren. 
 
-## 2. Festlegungen
+## 2. Aufbau / Design "Ökosystem"
 
-Festgelegt sind die Bausteine des Bausatzes sowie einzelne Punkte zur Bereitstellung und Bedienung.
+Die grundlegenden Bausteine für das zu erstellende Ökosystem sind
 
-### 2.1 Aktion
+- Aktionen
+- Konfiguration
+- Module
 
-Eine Aktion ist der kleinste Baustein. Sie ist atomar und erfüllt genau eine Aufgabe. Beispiele sind eine Datei kopieren, in einer Konfigurationsdatei suchen und ersetzen, eine Datei erstellen und befüllen oder einen Systemaufruf ausführen. Eine Datei zu erstellen und eine Datei zu löschen sind zwei getrennte Aktionen.
 
-Eine Aktion ist fachneutral. Sie enthält keine fachliche Kenntnis und lässt sich in jedem Modul wiederverwenden.
+### 2.1 Aktionen
 
-Eine Aktion nimmt sich nicht selbst zurück. Die Daten, auf die sie wirkt, erhält sie vom Modul. Über den einzelnen Lauf hinaus hält sie keinen Zustand.
+Eine Aktion ist eine Python Klasse die genau eine Aufgabe in der Systemumgebung erledigt. Sie ist atomar und erfüllt genau eine Aufgabe. Beispiele sind Aktionen wie Datei kopieren, in Textdatei suchen und ersetzen, Datei erstellen oder einen Systembefehl auszuführen.
 
-Aktionen, die eine Datei erstellen oder ändern, haben eine abschaltbare Sicherung. Ist sie eingeschaltet, sichern sie den vorherigen Stand vor der Änderung. Die Sicherung liegt am Ort der Datei und behält deren Zugriffsrechte. Sie wird nicht an einen anderen Ort kopiert. Die Aktion sichert nur den Stand. Das Zurückspielen ist eine eigene Aktion.
+Sinn dieser Klassen ist es eine möglicht vollständig Kontrolle über die jeweiligen Aktionen zu erhalten um diese zu steuern, zu überwachen inkl. der Ausgaben (stdout, stderr) und so auch ein vollständiges Logging erstellen zu können. 
 
-### 2.2 Modul
+Aktionen sind Experten für ihre spezifische Aufgabe und können daher noch mit Optionen zur versehen werden, um die Ausführung an bestimmte Bedingungen anzupassen, wie z. B. eine Datei sichern, bevor sie neu erstellt oder geändert wird. Dabei soll der "atomare" Charakter i. S. d. der UNIX Regel "Gestalte jedes Programm so, dass es *eine* Aufgabe *gut* erledigt, nicht verändert werden.
 
-Ein Modul ist die fachliche Einheit. Es fasst eine fachliche Aufgabe zusammen und steuert seine Aktionen. Die konkreten Module erben von einer abstrakten Modul-Klasse und regeln das Fachliche, bei Bedarf mit eigenen oder überschriebenen Methoden. Ein Modul hat eine oder mehrere Aktionen.
+Praktisch wird es eine Eltern-Klasse Aktionen geben, die sicherstellt, dass jede konkrete Implementierung dieser Klasse über ein gleiches Grundset an Objektvariablen und Methoden verfügt, insbesondere auch für Rückmeldung an die aufrufenden Module.
 
-Ein Modul deklariert die Konfiguration, die es benötigt. Diese Deklaration erfüllt drei Zwecke. Sie prüft die eingehenden Werte. Sie ist die Vorlage für die Konfigurationsdatei. Sie steuert den Dialog. Damit ist das Modul zugleich die fachliche Referenz für die Erstellung der Konfigurationsdatei.
+Auch wenn diese AKtionen nun erstmals im Rahmen des Installers definiert werden ist es das Ziel dieses Designentschedung ist ein flexibles Set an Aktionen zu bekommen, die von unterschiedlichen Werkzeugen/Aufrufern (z. B. in der Systemadministration) genutzt werden können.
 
-Ein Modul erhält die ungeprüften Werte seines Konfigurationsabschnitts. Es prüft und deutet sie selbst.
+In der Praxis wird muss von Fall zu Fall entschieden werden ob es insbesonder bei Systemaufrufen sinnvoll ist spezielle Aktionen zu erstellen (z. B. für apt) oder ob es ausreichend ist, eine generische Aktionen (z. B. syscmd) für Systemaufrufe zu nutzen. Keinesfalls ist es sinnvoll Systemkommandos (wie z. B. apt) mit vielen Optione/Parametern quasi in Python "nachzubauen". Die Entscheidung für oder gegen ein spezfisches Modul für einen speziellen Systemaufruf muss sich also an der Frage orientieren, ob die Aufgabe *spezifische* Funktione/Methoden zu Erfüllung benötigt.
 
-Die Rücknahme liegt beim Modul. Sie ist eine Abfolge von Aktionen, die das Modul zusammenstellt. Sie ist nicht zwangsläufig die Umkehrung der Installation. Unterstützt ein Modul keine Rücknahme, meldet es das.
+Eine weitere Abgrenzung ist zu treffen bei Aktionen die sowohl auf Systemebene als auch auf in Python existieren (z. B. cp, mkdir etc.). Hier ist der entscheidende Maßstab welches Werkzeug (python oder System= die bessere Kontrolle über die Aufgabe bietet. 
 
-Jedes Modul läuft als eigener Prozess. Die Begründung steht im Kapitel „Ausführung".
+
+### 2.2 Module 
+
+Ein Modul ist eine eine Python Klasse zur Erledigung einer Aufgabe. Zur Erfüllung diese Aufgabe nutzt eine Modul die Aktions-Klassen, kann aber auch zusätzliche Methoden/Aktivitäten die zur Erfüllung der Aufgabe dienen enthalten. Die Parameter, die ggf. für die Erfüllung der Aufgabe erforderlich sind (z. B. Werte zur Änderung einer Konfigurationsdatei) erhält ein Modul als Config Objekt (s. Kap 2.3 Konfiguration).
+
+Die einzelenen Module erben von einer gemeinsamen Elternklasse Modul alle gemeinsamen Methoden und Variablen, u. a. 
+- zu der Systemumgebung (z. B. Systemvariablen, gemeinsamer Logger)
+- für den Aufruf von Aktionen
+- der Interaktion mit bzw. Steuerung von Aktionen
+- der Interaktion mit dem aufrufenden Prozess (z. B. Installer)
+
+Die spezifischen Module (als die Erben der Elternklasse) sollen beschreibende Namen erhalten. Ein Modul, welches beispielsweise zur Installation einer Komponente dient, sollte auch eindeutig als Installations-Modul im Namen erkennbar sein (z. B. inst-.....py). Die Namenskonvention sind ggf. noch im Projektverlauf festzulegen. Per Konvention kann dann festgelegt werden, das bestimmte Typen von Module (z. B. aller inst-...-py Module) bestimmte Methoden oder Variablen enthalten müssen (z. B. kann festgelegt werden, dass alle inst* Module eine eine 'rollback'-Methode aufweisen müssen).
+
+Die Module sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Hier ist noch festzulegen in welcher Form diese Deklaration erfolgen soll. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unetrschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
+
+
+
 
 ### 2.3 Konfiguration und Daten
 
-Die Daten des Installers stammen aus einer Konfigurationsdatei. Der Dialog und der Planungsmodus erzeugen eine solche Datei. Einen zweiten, eigenen Eingang gibt es nicht.
+### 2.3 Konfiguration
 
-Die Daten sind nach Modul gegliedert. Je Modul gibt es einen Abschnitt mit benannten Werten. Ein Wert kann auch eine Liste sein.
+Die Schnittstelle zwischen Anwender und dem hier geschaffenen Ökosystem bilden die Konfigurationen. In der Praxis können Konfigurationen sehr unterschiedliche Formen habe. Als Datei in verschiedenen Formaten, wie 'ini', 'extended', toml', 'json' oder sogar als Parameterliste. Um hier kein unnötige Festlegung zu schaffen, wwird ein Config-Objekt eingeführt.
 
-Eine Klasse `Config` stellt die Daten bereit. Hinter ihr liegen Klassen für die einzelnen Formate, etwa ini oder toml. Jede Format-Klasse liest ihr Format und gibt die Daten als dict zurück. `Config` erhält einen Parameter, den Dateipfad oder das Format, ruft die passende Format-Klasse auf und liefert die gewünschte Form: das vollständige dict, einen Abschnitt als dict, einen Abschnitt als Liste oder die ungeprüften Werte. Der Aufrufer kennt nur die Klasse `Config`.
+Die Config-Klasse liefert eine zentrale Schnittstelle zwischen Konfiguarionen und den aufrufenden Programmen (z. B. Installer). Für jede genutzte Konfigart (ini, toml etc.) gibt es eine eigenen Klasse die von dem config-objekt genutzt wird. Diese spezifische Klasse stellt Methoden zur Verfügung um die jeweilige Konfiguration an die config-Klasse standardisiert zu übergebn. Konkret soll die Konfig i. d. R. als dict an die config-Klasse übergeben werden. Zusätzlich soll aber auch eine Übergabe aös "raw" möglich sein.
 
-Das dict hat einen festen, vereinbarten Aufbau aus Abschnitten und benannten Werten. Formate mit geringerem Umfang, etwa ini, bilden in ihrer Format-Klasse auf diesen Aufbau ab.
+Die spezifischen Config-Klassen können sich bei Bedarf an den Aktionsklassen bedienen, z. B. um Dateien einzulesen oder zu schreiben.   
 
-Die Werte sind zunächst ungeprüft. Geprüft und gedeutet werden sie erst im Modul, gegen dessen Deklaration.
+Die Config Klasse wiederum stellt Methoden zur Verfügung um den Aufrufer mit der gewünschten Konfiguration zur versorgen. Dies können einzelen Werte sein, Sektionen (als dict oder list), sortierte oder unsortierte Listen usw.
+
+Eine inhaltliche Prüfung der Konfigurationdaten findet nicht statt. Allerdings könnenn grundlegende Prüfmuster bei Bedarf in die config-Klasse aufegenommen werden (z. B, 'ist leer', 'Wert existiert', 'ist syntaktisch gültige Mailadresse', ist Zahl, ist kommaspariert, ist Liste usw.)
+
+#### 2.3.2 Konfigurator
+
+Optional kann ein UI-Konfigurator erstellt werden, mit dessen Hilfe für ein oder mehrere Module Konfiguration erstellt werden können. Der Konfigurator soll die Deklarationen in den Modulen nutzen um die eroderlichen Konfigurationsitems- und werte zu bestimmen und über die Mölgichkeit verfügen dies in unterschiedlichen Fromaten abzulegen. Der Konfigurator nutzt zur UI Gesatltung rich unn questionary.
+
 
 ### 2.4 Kommunikation zwischen Installer und Modul
 
@@ -94,3 +118,8 @@ Eine Überwachung gegen hängenden Modulcode über den aufgerufenen Befehl hinau
 Ein Kontextobjekt gibt es vorerst nicht. Es lohnt sich erst, wenn mehrere für den ganzen Lauf gleiche Dinge zusammenkommen, etwa der Meldekanal, ein Trockenlauf und die Sicherung.
 
 Die Einordnung des Schalters für den Trocken- oder Planungslauf ist offen.
+
+
+
+
+Aktionen, die eine Datei erstellen oder ändern, haben eine abschaltbare Sicherung. Ist sie eingeschaltet, sichern sie den vorherigen Stand vor der Änderung. Die Sicherung liegt am Ort der Datei und behält deren Zugriffsrechte. Sie wird nicht an einen anderen Ort kopiert. Die Aktion sichert nur den Stand. Das Zurückspielen ist eine eigene Aktion.
