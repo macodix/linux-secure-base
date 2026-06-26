@@ -77,7 +77,7 @@ Die einzelnen Module erben von einer gemeinsamen Elternklasse Modul alle gemeins
 
 Die Konfigurationsdaten aus dem Config-Objekt werden in den Klassenvariablen des Moduls abgelegt.
 
-Die spezifischen Module (als die Erben der Elternklasse) sollen beschreibende Namen erhalten. Ein Modul, welches beispielsweise zur Installation einer Komponente dient, sollte auch eindeutig als Installations-Modul im Namen erkennbar sein (z. B. inst-.....py). Die Namenskonvention sind ggf. noch im Projektverlauf festzulegen. Per Konvention kann dann festgelegt werden, das bestimmte Typen von Module (z. B. aller inst-...-py Module) bestimmte Methoden oder Variablen enthalten sollen (z. B. kann festgelegt werden, dass alle inst* Module eine eine 'rollback'-Methode aufweisen sollen).
+Die spezifischen Module (als die Erben der Elternklasse) sollen beschreibende Namen erhalten. Ein Modul, welches beispielsweise zur Installation einer Komponente dient, sollte auch eindeutig als Installations-Modul im Namen erkennbar sein (z. B. inst-.....py). Die Namenskonvention sind ggf. noch im Projektverlauf festzulegen. Per Konvention kann dann festgelegt werden, das bestimmte Typen von Module (z. B. aller inst-...-py Module) bestimmte Methoden oder Variablen enthalten sollen (z. B. kann festgelegt werden, dass alle inst* Module eine eine 'rollback'-Methode aufweisen sollen). (Soll eine solche Anforderung verbindlich erzwungen werden, ist eine eigene Basisklasse je Modultyp verlässlicher als der Name.)
 
 Module die Veränderungen am System bewirken (z. B. Installationsmodule) sollen 
 - einen Überprüfungsmodus anbieten, welches den Erfolg der Aktionen und Eingriffe gezielt und vollständig prüft,
