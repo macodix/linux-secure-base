@@ -131,6 +131,7 @@ Module, die das System verändern, müssen ihren Erfolg prüfen und rückgängig
 |----|-------|-------------|
 | MOD-12 | MUSS | Ein Modul, das Veränderungen am System bewirkt, bietet einen Überprüfungsmodus, der den Erfolg seiner Aktionen und Eingriffe gezielt und vollständig prüft. |
 | MOD-13 | MUSS | Ein Modul, das Veränderungen am System bewirkt, stellt einen Rollback-Mechanismus bereit. |
+| MOD-14 | KANN | Ein systemveränderndes Modul kann bei erneutem Lauf einen bereits erfolgten Eingriff erkennen und nicht wiederholen (Idempotenz). Eine allgemeine Pflicht dazu besteht nicht. |
 
 ## 6. Konfiguration
 
@@ -203,6 +204,15 @@ Aufrufer und Modul tauschen während der Ausführung Nachrichten in beide Richtu
 | STR-03 | MUSS | Ein Modul kann nicht logging-relevante Nachrichten an den aufrufenden Prozess senden, damit dieser über den weiteren Ablauf entscheiden kann. |
 | STR-04 | MUSS | Der Aufrufer kann Nachrichten an ein Modul senden, um Daten anzufordern (z. B. Variablenwerte) oder das Modul zu Aktivitäten aufzufordern. |
 
+### 8.3 Abschluss und Nebenläufigkeit
+
+Ein Modul meldet seinen Abschluss; der Aufrufer kann mehrere Module nebenläufig führen.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| STR-05 | MUSS | Ein Modul signalisiert seinen regulären Abschluss über einen Returncode. 0 bedeutet Erfolg, ein Wert ungleich 0 einen Fehler. Der Aufrufer wertet ihn aus. |
+| STR-06 | MUSS | Der Aufrufer kann mehrere Module sequenziell oder parallel führen. |
+
 ## 9. Logging
 
 Das Logging übernimmt der Aufrufer; Module und Aktionen führen kein eigenes Log.
@@ -232,11 +242,12 @@ pifos stellt eine Basisklasse für Aufrufer bereit, die die gemeinsame Infrastru
 | ID | Verb. | Anforderung |
 |----|-------|-------------|
 | CAL-01 | MUSS | pifos stellt eine Aufrufer-Basisklasse bereit, von der konkrete Aufrufer (z. B. der Installer) erben. |
-| CAL-02 | MUSS | Die Aufrufer-Basisklasse stellt Methoden bereit, um Modulprozesse zu starten, anzuhalten und zu beenden. |
+| CAL-02 | MUSS | Die Aufrufer-Basisklasse stellt Methoden bereit, um Modulprozesse zu starten, anzuhalten, fortzusetzen und zu beenden. |
 | CAL-03 | MUSS | Die Aufrufer-Basisklasse stellt Methoden bereit, um über IPC Befehle an Module zu senden. |
 | CAL-04 | MUSS | Die Aufrufer-Basisklasse stellt Methoden bereit, um über IPC Meldungen und Ergebnisse zu erhalten oder anzufordern. |
 | CAL-05 | MUSS | Die Aufrufer-Basisklasse stellt Methoden bereit, um Logfiles zu führen. |
 | CAL-06 | MUSS | Ein konkreter Aufrufer steuert nur seine Fachlogik und Oberfläche bei. |
+| CAL-07 | MUSS | Die Aufrufer-Basisklasse bietet überschreibbare Leer- oder Standardmethoden, mit denen der konkrete Aufrufer auf den Ausgang eines Moduls (Erfolg, Fehler, Abbruch) reagiert. |
 
 ## 12. Bereitstellung
 
@@ -252,5 +263,6 @@ pifos wird mit den nötigen Bibliotheken ausgeliefert, damit auf dem Zielserver 
 | Version | Datum | Wer | Änderung |
 |---------|-------|-----|----------|
 | 0.01 | 2026-06-26 | macodix | Erstanlage: Anforderungen aus `docs/pifos/konzept.md` abgeleitet, gegliedert nach den pifos-Bausteinen, mit IDs und Verbindlichkeit (MUSS/KANN). |
+| 0.02 | 2026-06-26 | macodix | Klärungen eingearbeitet: CAL-02 um Fortsetzen ergänzt; neu STR-05 (Abschluss über Returncode), STR-06 (sequenziell/parallel), CAL-07 (Reaktion auf Modulausgang), MOD-14 (Idempotenz modulabhängig). |
 </content>
 </invoke>
