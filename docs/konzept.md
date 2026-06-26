@@ -83,7 +83,7 @@ Module die Veränderungen am System bewirken (z. B. Installationsmodule) sollen
 - einen Überprüfungsmodus anbieten, welches den Erfolg der Aktionen und Eingriffe gezielt und vollständig prüft,
 - und einen Rollback-Mechanismus zur Verfügung stellen 
 
-Die Modul-Klassen sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Hier ist noch festzulegen in welcher Form diese Deklaration erfolgen soll. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unterschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
+Die Modul-Klassen sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Die Deklaration erfolgt als Klassenattribut `CONFIG`, eine Liste von `ConfigItem` (dataclass in `config.py`). Jedes `ConfigItem` trägt `name`, `required`, `default`, `check` und `description`. Beim Start prüft das Modul die eingehenden Werte gegen diese Liste und legt sie in seinen Klassenvariablen ab. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unterschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
 
 
 ### 3.1.3. Konfiguration
@@ -94,7 +94,7 @@ Die Config-Klasse liefert eine zentrale Schnittstelle zwischen Konfigurationen u
 
 Die spezifischen Config-Klassen können sich bei Bedarf an den Aktionsklassen bedienen, z. B. um Dateien einzulesen oder zu schreiben.   
 
-Die Config Klasse wiederum stellt Methoden zur Verfügung um den Aufrufer mit der gewünschten Konfiguration zu versorgen. Dies können einzelne Werte sein, Sektionen (als dict oder list), sortierte oder unsortierte Listen usw.
+Die Config Klasse wiederum stellt Methoden zur Verfügung um den Aufrufer mit der gewünschten Konfiguration zu versorgen. Dies können einzelne Werte sein, Sektionen (als dict oder list), sortierte oder unsortierte Listen usw. `ConfigItem` liegt in `config.py` und wird sowohl von `Config` als auch von den Modul-Deklarationen genutzt.
 
 Eine inhaltliche Prüfung der Konfigurationsdaten findet nicht statt. Allerdings können grundlegende Prüfmuster bei Bedarf in die config-Klasse aufgenommen werden (z. B. 'ist leer', 'Wert existiert', 'ist syntaktisch gültige Mailadresse', ist Zahl, ist kommasepariert, ist Liste usw.)
 
@@ -143,9 +143,16 @@ Grundsätzlich soll beim Logging zwischen 4 Stufen unterschieden werden: INFO, W
 Aktionen und Module sollen im Fehlerfall Ausnahmen (Exceptions) erzeugen. Die Exceptions sind entsprechend des eingestellten Loglevels durch die Module an den Aufrufer weiterzuleiten. In den seltenen Fällen in denen ein Modul einen Fehler als CRITICAL einstuft und sich beendet, muss vorher sichergestellt sein dass die Exception Meldungen noch an den Aufrufer weitergeleitet werden. 
 
 
-## 3.3 ZU DISKUTIEREN
+## 3.3 Standardaufrufer
 
-Da der Aufrufer schon relativ viele Funktionen und Methoden (z. B. Logger, IPC usw.) haben muss, ist es m. E. zu erwägen einen "Standardaufrufer" als Klasse zu erstellen, der von den entsprechenden Aufrufern (z. B. Installer) beerbt werden kann. Dies würde es erleichtern sich in den jeweiligen spezifischen Aufrufern auf die jeweilige Fachlogik zu konzentrieren.   
+Der Aufrufer braucht viel gemeinsame Infrastruktur (Logger, IPC usw.). Diese liegt in einer Basisklasse `PifosCaller` in der Datei `pifos_caller.py`, von der die konkreten Aufrufer wie der Installer erben.
+
+Die Basisklasse trägt:
+- Modulprozesse starten, anhalten und beenden,
+- IPC: Befehle an die Module, Meldungen und Ergebnisse zurück,
+- das Schreiben des Logfiles (`QueueListener`) und das Loglevel.
+
+Der konkrete Aufrufer bringt nur seine Fachlogik und Oberfläche.   
 
 
 # 4. LSB Installer
