@@ -1,6 +1,6 @@
 # Linux Secure Base
 
-Dokumentation und Installations-Scripte für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx), auf der Basis von Ubuntu 26.04 LTS (minimal).
+Dokumentation und Installer für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx), auf der Basis von Ubuntu 26.04 LTS (minimal).
 
 ## Zweck
 
@@ -16,9 +16,9 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Monitoring (via EMail)
 - optional nginx Webserver
 
-Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt.
+Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden müssen. Alle Benachrichtigungen werden per EMail an eine festzulegende Adresse gesandt.
 
-Die Installations-Scripte werden komplett über Konfigurationsverezichnisse gesteuert.
+Die Installation wird vollständig über Konfiguration gesteuert.
 
 
 ## Grenzen & Warnung
@@ -27,7 +27,7 @@ Aufgrund der Ausgestaltung von Backup und Monitoring ist diese Installation insb
 
 **Die Nutzung dieser Anleitung und der Scripte entbindet ausdrücklich NICHT das eigene Hirn vom selbständigen Nachdenken!**
 
-Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden, wird für die Anwendung keineerlei Gewährleistung übernommen. Niemand muss diese Anleitung und Scripte nutzen. Und wer für die Beurteilung dieser Dokumente und Scripte nicht hinreichend sachkundig ist, sollte besser die Finger davon lassen!
+Auch wenn Dokumentation und Scripte nach bestem Wissen und Gewissen erstellt wurden, wird für die Anwendung keinerlei Gewährleistung übernommen. Niemand muss diese Anleitung und Scripte nutzen. Und wer für die Beurteilung dieser Dokumente und Scripte nicht hinreichend sachkundig ist, sollte besser die Finger davon lassen!
 
 
 ## Echtheit prüfen (Signatur)
@@ -59,11 +59,13 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 
 ## Repository Aufbau
 
-- `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
 - `docs/systembeschreibung/` — Systembeschreibung, Härtungskonzept.
+- `docs/pifos/` — Konzept des Installationsbausatzes pifos.
+- `docs/installer/` — Konzept des Installers, der pifos nutzt.
+- `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
 - `docs/INDEX.md` — Navigation.
 
 
 ## Status
 
-In Aufbau.
+In Aufbau. Der Installer wird derzeit von Bash auf Python umgestellt. Grundlage ist der wiederverwendbare Bausatz pifos; siehe `docs/pifos/`.
