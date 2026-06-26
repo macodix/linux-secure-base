@@ -70,7 +70,7 @@ Es muss eine Klasse für System-Befehle geben, die für alle Befehle genutzt wer
 Ein Modul ist eine Python Klasse zur Erledigung einer Aufgabe. Zur Erfüllung diese Aufgabe nutzt eine Modul die Aktions-Klassen, kann aber auch zusätzliche Methoden/Aktivitäten die zur Erfüllung der Aufgabe dienen enthalten. Die Parameter, die ggf. für die Erfüllung der Aufgabe erforderlich sind (z. B. Werte zur Änderung einer Konfigurationsdatei) erhält ein Modul als Config Objekt (s. Kap 2.3 Konfiguration).
 
 Die einzelnen Module erben von einer gemeinsamen Elternklasse Modul alle gemeinsamen Methoden und Variablen, u. a. 
-- zu der Systemumgebung (z. B. Systemvariablen, gemeinsamer Logger)
+- zu der Systemumgebung (z. B. Systemvariablen)
 - für den Aufruf von Aktionen
 - der Interaktion mit bzw. Steuerung von Aktionen
 - der Interaktion mit dem aufrufenden Prozess (z. B. Installer)
@@ -127,7 +127,7 @@ Es muss grundsätzlich  möglich sein, dass ein Modul auch nicht Logging relevan
 
 Der Aufrufer (z. B. der Installer) ist für die Beschaffung der Konfigurationsdaten, sofern erforderlich, zuständig. Dies geschieht durch die Instanziierung eines entsprechenden Konfig-Objekts. 
 
-Mit dem Konfig-Objekt kann dann das gewünschte Modul instanziiert werden und die Methoden des Modul-Objektes genutzt werden. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen entfällt die Übergabe eines Config-Objektes.
+Die Konfig wird dann dann entsprechend den Anforderungen des Moduls beim Start des Moduls übergeben. Grundsätzlich ist es auch möglich Module zu haben für die keine Konfig erforderlich ist. In diesen Fällen entfällt die Übergabe eines Config-Objektes.
 
 Die Aktionen sind Bestandteil der Module (Komposition) und werden i. d. R von den Modulen über Parameter oder Manipulation von Klassenvariablen gesteuert.
 
@@ -169,24 +169,6 @@ Der LSB Installer ist als UI Werkzeug konzipiert und soll ein angenehmes Fronten
 Für die Bedienoberfläche werden die Python-Komponenten Rich und questionary mitgeliefert, damit auf dem Zielserver nichts installiert werden muss.
 
 
-
-
-
-
-### 2.3 Konfiguration und Daten
-
-## 3. Offene Punkte
-
-
-
-
-## INSTALLER
-
-Eine Überwachung gegen hängenden Modulcode über den aufgerufenen Befehl hinaus wird erst bei Bedarf eingeführt.
-
-Der Installer ruft eine Operation des Moduls auf. Möglich sind ausführen, zurücknehmen und planen. Er übergibt dabei die Konfiguration und einen Meldekanal.
-
-Die Einordnung des Schalters für den Trocken- oder Planungslauf ist offen.
 
 
 
