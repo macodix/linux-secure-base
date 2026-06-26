@@ -94,8 +94,7 @@ Die Config-Klasse liefert eine zentrale Schnittstelle zwischen Konfigurationen u
 
 Die spezifischen Config-Klassen können sich bei Bedarf an den Aktionsklassen bedienen, z. B. um Dateien einzulesen oder zu schreiben.   
 
-Die Config Klasse wiederum stellt Methoden zur Verfügung um den Aufrufer mit der gewünschten Konfiguration zu versorgen. Dies können einzelne Werte sein, Sektionen (als dict oder list), sortierte oder unsortierte Listen usw. `ConfigItem` liegt in `config.py` und wird sowohl von `Config` als auch von den Modul-Deklarationen genutzt.
-
+Die Config Klasse stellt Methoden zur Verfügung um den Aufrufer mit der gewünschten Konfiguration zu versorgen. Dies können einzelne Werte sein, Sektionen (als dict oder list), sortierte oder unsortierte Listen usw. Für die Definition der jeweiligen Einträge wird ein Klasse `ConfigItem` in der `config.py` zur Verfügung gestellt.
 Eine inhaltliche Prüfung der Konfigurationsdaten findet nicht statt. Allerdings können grundlegende Prüfmuster bei Bedarf in die config-Klasse aufgenommen werden (z. B. 'ist leer', 'Wert existiert', 'ist syntaktisch gültige Mailadresse', ist Zahl, ist kommasepariert, ist Liste usw.)
 
 #### 3.1.3.1. Konfigurator
@@ -147,10 +146,11 @@ Aktionen und Module sollen im Fehlerfall Ausnahmen (Exceptions) erzeugen. Die Ex
 
 Der Aufrufer braucht viel gemeinsame Infrastruktur (Logger, IPC usw.). Diese liegt in einer Basisklasse `PifosCaller` in der Datei `pifos_caller.py`, von der die konkreten Aufrufer wie der Installer erben.
 
-Die Basisklasse trägt:
-- Modulprozesse starten, anhalten und beenden,
-- IPC: Befehle an die Module, Meldungen und Ergebnisse zurück,
-- das Schreiben des Logfiles (`QueueListener`) und das Loglevel.
+Die Basisklasse enthält insbesonder Methoden um
+- Modulprozesse zu starten, anzuhalten und zu beenden,
+- über IPC Befehle an die Module zu senden
+- über IPC Meldungen und Ergebnisse zu erhalten oder anzufordern,
+- dieLogfiles zu führen.
 
 Der konkrete Aufrufer bringt nur seine Fachlogik und Oberfläche.   
 
