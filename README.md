@@ -66,6 +66,15 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 - `docs/INDEX.md` — Navigation.
 
 
+## Umstellung auf Python
+
+Der Installer wird von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos; siehe [`docs/pifos/konzept.md`](docs/pifos/konzept.md).
+
+Auslöser sind Probleme der Bash-Umsetzung mit nebenläufiger Terminal-Ausgabe und externem Befehlsaufruf: `ufw enable` aus dem Installer stört die SSH-Verbindung und die Live-Anzeige, die Statusanzeige über SSH ist fragil, und die Trennung von Befehls-Ausgabe und Bedienoberfläche ist in Bash umständlich.
+
+Die Python-Fassung trennt stdout und stderr je Befehl sauber über `subprocess`, macht die Statusanzeige robuster und die Fehler- und Ablaufsteuerung klarer.
+
+
 ## Status
 
-In Aufbau. Der Installer wird derzeit von Bash auf Python umgestellt. Grundlage ist der wiederverwendbare Bausatz pifos; siehe `docs/pifos/`.
+In Aufbau.
