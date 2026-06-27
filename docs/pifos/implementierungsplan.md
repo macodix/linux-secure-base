@@ -1,8 +1,8 @@
-# pifos — Technische Machbarkeit
+# pifos — Implementierungsplan
 
-**Status:** [in Klärung] · **Stand:** 2026-06-27
+**Status:** [in Bearbeitung] · **Stand:** 2026-06-27
 
-Dieses Dokument prüft Vollständigkeit und technische Machbarkeit der Umsetzung des Bausatzes pifos in Python. Maßgeblich sind das Konzept (`docs/pifos/konzept.md`), die Anforderungsliste (`docs/pifos/anforderungen.md`) und die Diagramme (`docs/pifos/diagramme.md`).
+Dieses Dokument ist die Ausgangsbasis (Rohmaterial) des Implementierungsplans für pifos. Es sammelt offene WIE-Themen mit Optionen und Empfehlungen aus der ersten Durchsicht. Es wird zum vollständigen, detaillierten Implementierungsplan ausgearbeitet, sobald die Machbarkeit (`docs/pifos/machbarkeit.md`) bestätigt ist. Maßgeblich sind das Konzept (`docs/pifos/konzept.md`), die Anforderungsliste (`docs/pifos/anforderungen.md`) und die Diagramme (`docs/pifos/diagramme.md`).
 
 Für jede Stelle, an der Konzept oder Anforderungen das WIE offenlassen oder mehrere Umsetzungswege bestehen, folgt ein Abschnitt mit Frage, Optionen und Empfehlung. Detailfragen mit eindeutigem fachlichem Standard sind als Empfehlung entschieden. Nur Fragen mit echter Abwägung ohne klaren Standard sind als „Entscheidung durch Martin offen" markiert. Themen, deren Festlegung noch Vorarbeit voraussetzt, sind als „vertagt" gekennzeichnet, mit Angabe des auslösenden Ereignisses.
 
