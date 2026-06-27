@@ -7,4 +7,4 @@ Der Code ist noch nicht vorhanden. Eine Bedienungsanleitung folgt mit der Umsetz
 ## Konzept
 
 - Installer: [`docs/installer/lsb-installer.md`](../docs/installer/lsb-installer.md)
-- Bausatz pifos: [`docs/pifos/konzept.md`](../docs/pifos/konzept.md)
+- Bausatz pifos: eigenes Projekt [github.com/macodix/pifos](https://github.com/macodix/pifos)
