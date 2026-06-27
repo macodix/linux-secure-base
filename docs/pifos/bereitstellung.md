@@ -6,6 +6,15 @@ Dieses Dokument legt fest, wie der wiederverwendbare Bausatz pifos auf ein Ziels
 
 Nicht behandelt: die Sicherheitsprüfung. Sicherheitsrelevante Auffälligkeiten stehen knapp am Dokumentende.
 
+## Inhaltsverzeichnis
+
+**1. Geltung und Abgrenzung**  
+**2. Auslieferung des Kerns**  
+**3. Ablageort nach FHS**  
+**4. Python-Mindestversion 3.13**  
+**5. Schreibweg je Konfigurationsformat**  
+**6. Hinweise an den sicherheits-auditor**  
+
 ## 1. Geltung und Abgrenzung
 
 Gegenstand ist allein der pifos-**Kern**: die Basisklassen und -komponenten (Aktionen, Module, Konfiguration, Aufrufer-Basisklasse `PifosCaller`, IPC, die Format-Konfigklassen) samt den Bibliotheken, die der Kern für seine Bedienoberfläche und seinen Betrieb braucht.
@@ -13,6 +22,8 @@ Gegenstand ist allein der pifos-**Kern**: die Basisklassen und -komponenten (Akt
 Konkrete Module und Aktionen, die auf dem Kern aufbauen, dürfen darüber hinaus eigene Abhängigkeiten mitbringen. Diese sind **nicht** Teil der Kern-Auslieferung und hier nicht behandelt. Der Kern darf keine Laufzeit-Abhängigkeit voraussetzen, die nicht mit ihm ausgeliefert wird (BRS-02).
 
 ## 2. Auslieferung des Kerns
+
+Die Auslieferung bringt den Kern und die von ihm benötigten Bibliotheken auf das Zielsystem, ohne dass dort nachinstalliert wird. Dieses Kapitel legt Umfang und Verfahren fest und grenzt den Interpreter als Voraussetzung ab.
 
 ### 2.1 Umfang: Kern und mitgelieferte Bibliotheken
 
@@ -59,7 +70,7 @@ Innerhalb von `/opt/pifos/` spiegelt der Baum die Repo-Struktur aus `konv-script
 Die Mindestversion ist Python 3.13 (gesetzt durch Martin). Daraus folgt für die Umsetzung:
 
 - **toml-Lesen mit der Standardbibliothek gegeben.** `tomllib` ist seit Python 3.11 Teil der Standardbibliothek und damit auf dem Ziel ohne Mitlieferung vorhanden. Das toml-Lesen einer Konfigurationsklasse braucht keine Fremdbibliothek (siehe Kapitel „Schreibweg je Konfigurationsformat").
-- **Werkzeug-Zielversion.** Die Zielversion für ruff und mypy ist `py313` statt des in `konv-scripting-python.md` genannten `py314` (siehe Hinweis am Dokumentende).
+- **Werkzeug-Zielversion.** Die Zielversion für ruff und mypy ist `py313`, übereinstimmend mit dem Regeltext von `konv-scripting-python.md`.
 - **Voraussetzung an das Ziel.** Das Zielsystem muss Python 3.13 oder neuer bereitstellen; der Interpreter wird nicht mitgeliefert (Kapitel „Python-Interpreter als Voraussetzung").
 
 ## 5. Schreibweg je Konfigurationsformat
@@ -85,14 +96,11 @@ toml-Schreiben ist optional und wird erst aktiviert, wenn ein Aufrufer es brauch
 - Die mitgelieferten Fremdbibliotheken (Rich, questionary, deren Schließung, bei Bedarf `tomli-w`) sind Bestandteil der Auslieferung. Ihre Herkunft sichert das Hash-Pinning der `requirements.txt`; die Bewertung der Fremdsoftware obliegt der Sicherheitsprüfung.
 - Der voranstehende pifos-eigene Importpfad bestimmt, dass die gebündelten statt etwaiger systemweiter Versionen geladen werden. Die Reihenfolge der Importpfad-Einträge ist sicherheitsrelevant und zu prüfen.
 
-## 7. Hinweis an den Hauptchat
-
-`konv-scripting-python.md` (Kapitel „Werkzeuge und Mindestversion") nennt Python 3.14 als Mindestversion und `py314` als Zielversion für ruff und mypy. Für pifos ist 3.13 gesetzt. Diese Abweichung ist zu klären: entweder eine begründete Ausnahme für pifos in der Konvention vermerken oder die pifos-Mindestversion auf 3.14 anheben. Bis zur Klärung gilt für pifos die gesetzte Version 3.13.
-
 ## Versionshistorie
 
 | Version | Datum | Wer | Änderung |
 |---------|-------|-----|----------|
 | 0.01 | 2026-06-27 | Claude | Erstanlage: Auslieferung des Kerns (vendoring), Ablageort `/opt/pifos` nach FHS, Konsequenzen der Mindestversion 3.13, Schreibweg je Konfigurationsformat. |
+| 0.02 | 2026-06-27 | Claude | Konsistenz: Inhaltsverzeichnis und Kapiteleinleitung (Kapitel 2) ergänzt; falschen Python-Versionskonflikt entfernt (Regeltext der Konvention nennt 3.13), Kapitel „Hinweis an den Hauptchat" gestrichen. |
 </content>
 </invoke>
