@@ -6,19 +6,19 @@ Dieses Dokument leitet die Anforderungen an den wiederverwendbaren Software-Baus
 
 ## Inhaltsverzeichnis
 
-1. Geltung und Begriffe
-2. Anforderungsformat
-3. Übergreifende Anforderungen
-4. Aktionen
-5. Module
-6. Konfiguration
-7. Konfigurator
-8. Aufruf und Steuerung
-9. Logging
-10. Ausnahmen
-11. Standardaufrufer
-12. Bereitstellung
-13. Sicherheit
+**1. Geltung und Begriffe**  
+**2. Anforderungsformat**  
+**3. Übergreifende Anforderungen**  
+**4. Aktionen**  
+**5. Module**  
+**6. Konfiguration**  
+**7. Konfigurator**  
+**8. Aufruf und Steuerung**  
+**9. Logging**  
+**10. Ausnahmen**  
+**11. Standardaufrufer**  
+**12. Bereitstellung**  
+**13. Sicherheit**  
 
 ## 1. Geltung und Begriffe
 
@@ -171,7 +171,7 @@ pifos prüft die Konfiguration nur formal, nicht inhaltlich.
 
 ## 7. Konfigurator
 
-Der Konfigurator ist eine optionale Komponente, die mithilfe der Moduldeklarationen Konfigurationsdateien erstellt.
+Der Konfigurator ist eine optionale Komponente, die mithilfe der Moduldeklarationen Konfigurationsdateien erstellt. Stellt pifos einen Konfigurator bereit, gelten die folgenden Pflichtanforderungen für ihn; ohne Konfigurator entfallen sie.
 
 | ID | Verb. | Anforderung |
 |----|-------|-------------|
@@ -286,7 +286,7 @@ Die generische Aktion für Systembefehle (AKT-08) ist die am stärksten exponier
 
 ### 13.3 IPC und Serialisierung
 
-`multiprocessing` serialisiert mit `pickle`. Eine Deserialisierung, die Code ausführen kann, ist nur aus vertrauenswürdiger lokaler Quelle zulässig.
+Aufrufer und Modul tauschen über IPC Daten zwischen getrennten Prozessen aus. Wird beim Empfang eine Deserialisierung verwendet, die Code ausführen kann, ist sie nur aus vertrauenswürdiger lokaler Quelle zulässig.
 
 | ID | Verb. | Anforderung |
 |----|-------|-------------|
@@ -360,5 +360,6 @@ pifos liefert Rich, questionary und deren Abhängigkeiten mit (BRS-01). Herkunft
 | 0.01 | 2026-06-26 | macodix | Erstanlage: Anforderungen aus `docs/pifos/konzept.md` abgeleitet, gegliedert nach den pifos-Bausteinen, mit IDs und Verbindlichkeit (MUSS/KANN). |
 | 0.02 | 2026-06-26 | macodix | Klärungen eingearbeitet: CAL-02 um Fortsetzen ergänzt; neu STR-05 (Abschluss über Returncode), STR-06 (sequenziell/parallel), CAL-07 (Reaktion auf Modulausgang), MOD-14 (Idempotenz modulabhängig). |
 | 0.03 | 2026-06-27 | macodix | Kapitel 13 Sicherheit ergänzt (SIC-01 bis SIC-26, 23 MUSS / 3 KANN), Bereichskürzel SIC: Eingabevalidierung an der Verwendungsstelle, Systembefehl-Aktion, IPC/Serialisierung, Rechtekontext, safe-mode, Konfig-Laden, Protokollierung, Fehlerzustand, mitgelieferte Bibliotheken. |
+| 0.04 | 2026-06-27 | macodix | Konsistenz: Inhaltsverzeichnis ohne Listen-Markup; Konfigurator-Pflichtanforderungen als bedingt gekennzeichnet (nur falls Konfigurator vorhanden); Implementierungsdetail (multiprocessing/pickle) aus Kapitel 13.3 entfernt. |
 </content>
 </invoke>
