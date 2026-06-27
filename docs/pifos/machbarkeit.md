@@ -4,6 +4,21 @@
 
 Dieses Dokument prüft, ob das in `docs/pifos/konzept.md` beschriebene Projekt `pifos` hinreichende Realisierungschancen hat. Grundlage für die Bewertung sind das Konzept und die daraus abgeleitete Anforderungsliste `docs/pifos/anforderungen.md`.
 
+## Inhaltsverzeichnis
+
+**1. Maßstab und Lesart**  
+**2. Aktionen**  
+**3. Module**  
+**4. Konfiguration**  
+**5. Konfigurator**  
+**6. Aufruf, Steuerung und IPC**  
+**7. Logging**  
+**8. Fehlerbehandlung und Ausnahmen**  
+**9. Standardaufrufer**  
+**10. Übergreifende Anforderungen**  
+**11. Gesamturteil**  
+**12. Hinweise an andere Rollen**  
+
 ## 1. Maßstab und Lesart
 
 Die Machbarkeit wird in drei Stufen bewertet:
@@ -96,4 +111,4 @@ Die folgenden Auffälligkeiten liegen außerhalb der Machbarkeitsprüfung und ge
 
 | Version | Datum | Wer | Änderung |
 |---------|-------|-----|----------|
-| 0.01 | 2026-06-27 | macodix | Erstanlage: Machbarkeitsprüfung je Konzeptbaustein mit Einzelurteilen, Gesamturteil und Bedingungsliste, abgeleitet aus `docs/pifos/konzept.md` und `docs/pifos/anforderungen.md`. |
+| 1.0 | 2026-06-27 | macodix | Erstanlage und Abschluss: Machbarkeitsprüfung je Konzeptbaustein mit Einzelurteilen, Gesamturteil und Bedingungsliste, abgeleitet aus `docs/pifos/konzept.md` und `docs/pifos/anforderungen.md`; Inhaltsverzeichnis ergänzt. |
