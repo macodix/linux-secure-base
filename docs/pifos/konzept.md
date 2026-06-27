@@ -81,9 +81,8 @@ Die spezifischen Module (als die Erben der Elternklasse) sollen beschreibende Na
 
 Module die Veränderungen am System bewirken (z. B. Installationsmodule) sollen 
 - einen Überprüfungsmodus anbieten, welches den Erfolg der Aktionen und Eingriffe gezielt und vollständig prüft,
-- und einen Rollback-Mechanismus zur Verfügung stellen 
-
-[KI-Einfügung] Ob ein Modul bei erneutem Lauf einen bereits erfolgten Eingriff erkennt und nicht wiederholt, ist modulabhängig. Bei Installationsmodulen ist das sinnvoll. Eine allgemeine Festlegung für alle Module besteht nicht.
+- und einen Rollback-Mechanismus zur Verfügung stellen
+- bei Bedarf sicherstellen, das eine schon erfolgte Veränderung (erneuter Start des Moduls) erkannt wird
 
 Die Modul-Klassen sollten die erforderlich Konfiguration deklarativ nachvollziehbar enthalten, damit sichtbar ist welche Konfiguration übergeben werden muss. Die Deklaration erfolgt als Klassenattribut `CONFIG`, eine Liste von `ConfigItem` (dataclass in `config.py`). Jedes `ConfigItem` trägt `name`, `required`, `default`, `check` und `description`. Beim Start prüft das Modul die eingehenden Werte gegen diese Liste und legt sie in seinen Klassenvariablen ab. Bei der Deklaration muss zwischen Pflicht- und Kann-Werten unterschieden werden. Grundsätzlich sollten Module - wann immer möglich - sinnfällig Vorgabewerte enthalten.
 
@@ -118,13 +117,13 @@ Sind die Parameter nicht gesetzt müssen sie per Dialog abgefragt werden.
 
 ### 3.2.1. Aufruf und Steuerung
 
-Die Aufrufer (beispielsweise der Installer) startet ein Modul über IPC. Dabei wird ein Config-Objekt übergeben. 
+Die Aufrufer (beispielsweise der Installer) startet ein Modul über IPC. Dabei wird ein Config-Objekt übergeben. Der Start
 
 Die Aktionen stellen sicher, dass die der Status der Aktion und ggf. der IO-Kanäle (insbesondere stdout und stderr) den Modulen vollständig als Variable und/oder Methode zur Verfügung gestellt werden. 
 
 Es muss grundsätzlich  möglich sein, dass ein Modul auch nicht Logging relevante Nachrichten an den aufrufenden Prozess senden kann, damit ggf. der Aufrufer über den weiteren Ablauf entscheiden kann. Genauso muss es umgekehrt möglich sein, dass der Aufrufer Nachrichten an das Modul senden kann um z. B. die Übermittlung von Daten anzufordern (z. B. Variablewerte) oder das Modul zu Aktivitäten (=Modul-Methoden) auffordern kann. 
 
-[KI-Einfügung] Der Aufrufer kann mehrere Module sequenziell oder parallel führen. Ein Modul signalisiert seinen regulären Abschluss über einen Returncode. 0 steht für Erfolg, ein Wert ungleich 0 für einen Fehler. Der Aufrufer wertet den Returncode aus.
+Modul-Prozesse lieferen bnei regulärem Abschluß den Returncode 0. Die Returncodes bei Fehlern oder Abbrüchen sind ungleich 0 und werden vom Modul festgelegt (keine Vorgaben).
 
 ### 3.2.2. Konfigurationsdaten und Parameter
 
@@ -151,15 +150,14 @@ Aktionen und Module sollen im Fehlerfall Ausnahmen (Exceptions) erzeugen. Die Ex
 Der Aufrufer braucht viel gemeinsame Infrastruktur (Logger, IPC usw.). Diese liegt in einer Basisklasse `PifosCaller` in der Datei `pifos_caller.py`, von der die konkreten Aufrufer wie der Installer erben.
 
 Die Basisklasse enthält insbesonder Methoden um
-- Modulprozesse zu starten, anzuhalten, fortzusetzen und zu beenden, [KI-Einfügung]
+- Modulprozesse zu starten, anzuhalten, fortzusetzen und zu beenden,
 - über IPC Befehle an die Module zu senden
 - über IPC Meldungen und Ergebnisse zu erhalten oder anzufordern,
 - dieLogfiles zu führen.
 
-Der konkrete Aufrufer bringt nur seine Fachlogik und Oberfläche.   
+Der konkrete Aufrufer enthält somit nur seine Fachlogik und ggf. und UI.   
 
-
-[KI-Einfügung] Wie der Aufrufer auf den Ausgang eines Moduls reagiert, entscheidet er selbst. Die Basisklasse `PifosCaller` bietet dafür überschreibbare Leer- oder Standardmethoden, die der konkrete Aufrufer bei Bedarf mit eigener Logik füllt.
+Die Basisklasse `PifosCaller` enthält überschreibbare Leer- oder Standardmethoden für Behandlung von der unterschieldichen Beendigungszustände der Module (mind. für Retunrcode 0 und ungleich 0).
 
 
 # 4. LSB Installer
