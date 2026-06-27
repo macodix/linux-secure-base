@@ -60,7 +60,6 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 ## Repository Aufbau
 
 - `docs/systembeschreibung/` — Systembeschreibung, Härtungskonzept.
-- `docs/pifos/` — Konzept des Installationsbausatzes pifos.
 - `docs/installer/` — Konzept des Installers, der pifos nutzt.
 - `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
 - `docs/INDEX.md` — Navigation.
@@ -68,7 +67,7 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 
 ## Umstellung auf Python
 
-Der Installer wird von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos; siehe [`docs/pifos/konzept.md`](docs/pifos/konzept.md).
+Der Installer wird von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos, der als eigenes Projekt geführt wird: [github.com/macodix/pifos](https://github.com/macodix/pifos).
 
 Auslöser sind Probleme der Bash-Umsetzung mit nebenläufiger Terminal-Ausgabe und externem Befehlsaufruf: `ufw enable` aus dem Installer stört die SSH-Verbindung und die Live-Anzeige, die Statusanzeige über SSH ist fragil, und die Trennung von Befehls-Ausgabe und Bedienoberfläche ist in Bash umständlich.
 
