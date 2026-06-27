@@ -2,13 +2,14 @@
 
 **Status:** [Abgeschlossen] · **Stand:** 2026-06-27
 
-Dieses Dokument prüft, ob der in `docs/pifos/konzept.md` festgelegte Bausatz pifos hinreichende Aussicht hat, in Python umgesetzt zu werden. Es bewertet allein das OB der Umsetzbarkeit, nicht das WIE. Grundlage sind das Konzept und die daraus abgeleitete Anforderungsliste `docs/pifos/anforderungen.md`; ergänzend `docs/pifos/diagramme.md`. Der Detailgrad des WIE und die Optionen aus `docs/pifos/implementierungsplan.md` sind nicht Gegenstand dieser Prüfung.
+Dieses Dokument prüft, ob das in `docs/pifos/konzept.md` beschriebene Projekt `pifos` hinreichende Realisierungschancen hat. Grundlage für die Bewertung sind das Konzept und die daraus abgeleitete Anforderungsliste `docs/pifos/anforderungen.md`.
 
 ## 1. Maßstab und Lesart
 
-Das Urteil je Baustein ist **ja**, **ja, wenn [Bedingung]** oder **nein**. Ein „ja, wenn" benennt die Voraussetzung, unter der die Umsetzung gelingt; die Bedingungen sind in Kapitel 11 (Gesamturteil) gesammelt. Belegt wird die Machbarkeit durch Verweis auf einen technischen Standardweg, ohne dessen Ausgestaltung. Wo das Zielsystem als Linux-Server vorausgesetzt ist, stützt sich das Urteil auf POSIX-Prozess- und Signalmechanismen.
-
-Nicht behandelt sind Auslieferung, Ablageort und Python-Mindestversion (system-engineer) sowie die Sicherheitsprüfung (sicherheits-auditor). Auffälligkeiten dazu stehen knapp in Kapitel 12 (Hinweise an andere Rollen).
+Die Machbarkeit wird in drei Stufen bewertet:
+- **ja** - uneingeschränkt machbar (Idealfall),
+- **ja, wenn [Bedingung]**,
+- **nein**, weil [Begründung]
 
 ## 2. Aktionen
 
