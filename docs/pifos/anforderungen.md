@@ -1,6 +1,6 @@
 # pifos — Anforderungen
 
-**Status:** [in Bearbeitung] · **Stand:** 2026-06-26
+**Status:** [in Bearbeitung] · **Stand:** 2026-06-27
 
 Dieses Dokument leitet die Anforderungen an den wiederverwendbaren Software-Bausatz pifos (python infrastructure for operational services) aus dem Konzept ab. Es beschreibt das WAS — was pifos leisten muss —, nicht das WIE der Umsetzung. Quelle ist `docs/pifos/konzept.md`; als Nutzungsszenario dient `docs/installer/lsb-installer.md`. Konkrete Klassennamen, Dateinamen und Bibliotheken aus dem Konzept werden nur dort genannt, wo sie selbst Festlegung sind.
 
@@ -18,6 +18,7 @@ Dieses Dokument leitet die Anforderungen an den wiederverwendbaren Software-Baus
 10. Ausnahmen
 11. Standardaufrufer
 12. Bereitstellung
+13. Sicherheit
 
 ## 1. Geltung und Begriffe
 
@@ -46,6 +47,7 @@ Jede Anforderung trägt eine eindeutige ID, eine Verbindlichkeit und einen Text.
 | EXC | Ausnahmen |
 | CAL | Standardaufrufer |
 | BRS | Bereitstellung |
+| SIC | Sicherheit |
 
 Die Verbindlichkeit ist entweder MUSS (Pflicht) oder KANN (optional), entsprechend `konv-anforderungsmanagement.md` Kapitel 1 (Formulierung von Anforderungen).
 
@@ -258,11 +260,105 @@ pifos wird mit den nötigen Bibliotheken ausgeliefert, damit auf dem Zielserver 
 | BRS-01 | MUSS | Für die Bedienoberfläche werden die Bibliotheken Rich und questionary mitgeliefert. |
 | BRS-02 | MUSS | Auf dem Zielserver muss für den Betrieb von pifos keine zusätzliche Komponente installiert werden. |
 
+## 13. Sicherheit
+
+pifos läuft auf einem gehärteten Linux-Server, führt Systembefehle aus und startet getrennte Prozesse über IPC. Die folgenden Anforderungen sichern Architektur und Bausteine ab. Grundlage ist `konv-scripting.md` mit der Python-Konkretisierung `konv-scripting-python.md`; der BSI IT-Grundschutz gilt als Mindeststandard.
+
+### 13.1 Eingabevalidierung an der Verwendungsstelle
+
+Das Config-Objekt prüft Inhalte bewusst nicht (KFG-08). Werte, die sicherheitskritisch verwendet werden — als Argument eines Systembefehls oder als Dateipfad —, werden daher dort geprüft, wo sie so verwendet werden.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-01 | MUSS | Werte aus Konfiguration oder anderen externen Quellen, die als Argument eines Systembefehls oder als Dateipfad verwendet werden, werden vor dieser Verwendung gegen Typ, Format und Wertebereich (Positivliste) geprüft. |
+| SIC-02 | MUSS | Die Prüfung liegt beim verwendenden Modul oder Aufrufer, da der Konfigurationsbaustein keine inhaltliche Prüfung vornimmt (KFG-08). |
+
+### 13.2 Systembefehl-Aktion
+
+Die generische Aktion für Systembefehle (AKT-08) ist die am stärksten exponierte Stelle.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-03 | MUSS | Die Systembefehl-Aktion führt Befehle ohne Shell aus. |
+| SIC-04 | MUSS | Befehl und Argumente werden als Liste einzelner Elemente übergeben, nicht als zusammengesetzte Befehlszeichenkette. |
+| SIC-05 | MUSS | Jede Befehlsausführung hat eine explizite Zeitgrenze. |
+| SIC-06 | MUSS | Bei sicherheitsrelevanten Programmen wird der Programmpfad kontrolliert (absoluter Pfad oder kontrollierte Umgebung). |
+
+### 13.3 IPC und Serialisierung
+
+`multiprocessing` serialisiert mit `pickle`. Eine Deserialisierung, die Code ausführen kann, ist nur aus vertrauenswürdiger lokaler Quelle zulässig.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-07 | MUSS | Die IPC zwischen Aufrufer und Modulprozess erfolgt ausschließlich lokal, nicht über Netz. |
+| SIC-08 | MUSS | Über IPC werden nur Daten innerhalb der Vertrauensdomäne des Aufrufers ausgetauscht; aus nicht vertrauenswürdiger Quelle wird nichts deserialisiert. |
+| SIC-09 | KANN | Über IPC und als Config-Objekt übertragene Nutzdaten beschränken sich auf einfache Datentypen; ausführbare oder zustandsbehaftete Objekte werden nicht übertragen. |
+
+### 13.4 Rechtekontext systemverändernder Module
+
+Systemverändernde Module greifen mit erhöhten Rechten ein. Geringste Rechte sind Mindeststandard.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-10 | MUSS | pifos-Kern, Module und Aktionen laufen mit den geringsten zur Aufgabe nötigen Rechten. |
+| SIC-11 | MUSS | Erhöhte Rechte werden nur dort und nur so lange wie nötig genutzt. |
+| SIC-12 | MUSS | Der pifos-Kern liegt als nur lesbarer Code-Baum vor (Eigentümer root, für Dienstkonten nicht schreibbar). |
+
+### 13.5 safe-mode und Sicherungsort
+
+Der safe-mode legt vor dateiverändernden Aktionen eine Sicherung an (AKT-06/07); deren Pfad und Rechte sind sicherheitsrelevant.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-13 | MUSS | Eine im safe-mode angelegte Sicherung weitet die Zugriffsrechte gegenüber der Originaldatei nicht aus. |
+| SIC-14 | MUSS | Der einstellbare Sicherungsort wird vor der Nutzung als Pfad geprüft und auf das vorgesehene Verzeichnis begrenzt. |
+| SIC-15 | KANN | Prüfung und Schreiben der Sicherung erfolgen so, dass Manipulation über symbolische Verweise oder zeitliche Wettläufe zwischen Prüfung und Nutzung vermieden wird. |
+
+### 13.6 Laden von Konfigurationsquellen
+
+Beim Einlesen von Konfigurationsdateien sind Pfad, Format und Größe zu kontrollieren.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-16 | MUSS | Pfade zu Konfigurationsquellen werden vor dem Laden geprüft und auf den vorgesehenen Bereich begrenzt. |
+| SIC-17 | MUSS | Konfigurationsdateien werden mit einem Parser eingelesen, der nur Daten verarbeitet; eine Deserialisierung, die Code ausführen kann, wird nicht verwendet. |
+| SIC-18 | KANN | Beim Einlesen von Konfigurationsquellen gelten Größengrenzen. |
+
+### 13.7 Sicheres Protokollieren
+
+Der Aufrufer führt das Logfile (LOG-01) und protokolliert dabei Fremddaten, insbesondere stdout und stderr aufgerufener Befehle (AKT-02).
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-19 | MUSS | Fremddaten, die der Aufrufer protokolliert, werden vor dem Schreiben ins Logfile von Steuerzeichen, insbesondere Zeilenumbrüchen, befreit. |
+| SIC-20 | MUSS | In Logmeldungen, Ausnahme-Texten und IPC-Meldungen erscheinen keine Geheimnisse im Klartext. |
+
+### 13.8 Sicherer Zustand bei Fehlern und Abbruch
+
+Bei Abbruch darf kein unsicherer Zustand verbleiben. Die erzwungene Beendigung bis SIGKILL kann einen Eingriff unvollständig hinterlassen.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-21 | MUSS | Bricht eine Aktion oder ein Modul ab, verbleibt kein undefinierter unsicherer Zustand; belegte Ressourcen werden freigegeben. |
+| SIC-22 | MUSS | Nach einer erzwungenen Beendigung (SIGKILL) eines systemverändernden Moduls ist über den Überprüfungsmodus (MOD-12) erkennbar, ob der Eingriff vollständig, teilweise oder nicht erfolgte. |
+| SIC-23 | MUSS | Fehlermeldungen nach außen sind allgemein gehalten; interne Pfade und Details gehen nur ins Log. |
+
+### 13.9 Mitgelieferte Bibliotheken und Importpfad
+
+pifos liefert Rich, questionary und deren Abhängigkeiten mit (BRS-01). Herkunft und Ladeweg sind abzusichern.
+
+| ID | Verb. | Anforderung |
+|----|-------|-------------|
+| SIC-24 | MUSS | Die mitgelieferten Fremdbibliotheken stammen aus vertrauenswürdiger Quelle und sind über Prüfsummen (Hash-Pinning der `requirements.txt`) gegen Manipulation gesichert. |
+| SIC-25 | MUSS | Die mitgelieferten Bibliotheken werden auf bekannte Schwachstellen geprüft und aktuell gehalten. |
+| SIC-26 | MUSS | Der Importpfad wird so gesetzt, dass die mitgelieferten Bibliotheken eindeutig geladen werden und kein gleichnamiger Fremdcode untergeschoben werden kann. |
+
 ## Versionshistorie
 
 | Version | Datum | Wer | Änderung |
 |---------|-------|-----|----------|
 | 0.01 | 2026-06-26 | macodix | Erstanlage: Anforderungen aus `docs/pifos/konzept.md` abgeleitet, gegliedert nach den pifos-Bausteinen, mit IDs und Verbindlichkeit (MUSS/KANN). |
 | 0.02 | 2026-06-26 | macodix | Klärungen eingearbeitet: CAL-02 um Fortsetzen ergänzt; neu STR-05 (Abschluss über Returncode), STR-06 (sequenziell/parallel), CAL-07 (Reaktion auf Modulausgang), MOD-14 (Idempotenz modulabhängig). |
+| 0.03 | 2026-06-27 | macodix | Kapitel 13 Sicherheit ergänzt (SIC-01 bis SIC-26, 23 MUSS / 3 KANN), Bereichskürzel SIC: Eingabevalidierung an der Verwendungsstelle, Systembefehl-Aktion, IPC/Serialisierung, Rechtekontext, safe-mode, Konfig-Laden, Protokollierung, Fehlerzustand, mitgelieferte Bibliotheken. |
 </content>
 </invoke>
