@@ -162,7 +162,7 @@ Die Basisklasse `PifosCaller` enthält überschreibbare Leer- oder Standardmetho
 
 # 4. LSB Installer
 
-Siehe Dokument linux-secure-base/docks/installer
+Siehe Dokument linux-secure-base/docs/installer
 
 
 # 5. Bereitstellung und Bedienung
