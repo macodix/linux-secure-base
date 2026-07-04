@@ -59,7 +59,9 @@ dist:
 	cp -r "$$tmpdir/pifos/usr/lib/pifos" "$$pkgdir/usr/lib/pifos"; \
 	pip install --require-hashes --no-deps \
 		--target "$$pkgdir/usr/lib/lsb/_vendor" -r requirements.txt; \
-	tar czf "dist/$(DIST_NAME).tar.gz" -C "$$tmpdir" "$(DIST_NAME)"; \
+	tar czf "dist/$(DIST_NAME).tar.gz" \
+		--owner=0 --group=0 --numeric-owner --mode='go-w' \
+		-C "$$tmpdir" "$(DIST_NAME)"; \
 	gpg --detach-sign --armor --local-user $(SIGNING_KEY) \
 		-o "dist/$(DIST_NAME).tar.gz.asc" "dist/$(DIST_NAME).tar.gz"
 	@echo "Erzeugt: dist/$(DIST_NAME).tar.gz und dist/$(DIST_NAME).tar.gz.asc"
