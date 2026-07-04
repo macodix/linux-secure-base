@@ -8,6 +8,7 @@ from typing import cast
 
 from pifos.caller import ModuleHandle, PifosCaller
 from pifos.config.config import Config
+from pifos.errors import ConfigError
 from pifos.ipc import LogLevel, MessageKind
 
 from lsb.config_setup import ensure_config, module_config
@@ -116,26 +117,31 @@ def main(args: argparse.Namespace) -> int:
 
     Returns:
         0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einem Aufruf ohne
-        Systemrechte oder mit fehlerhafter Auswahl.
+        Systemrechte, mit fehlerhafter Auswahl oder ungültiger
+        Konfiguration.
     """
     if os.geteuid() != 0:
         logger.error("lsb-installer benötigt Systemrechte (sudo).")
         return 2
 
     conf_path = Path(args.conf) if args.conf else DEFAULT_CONF
-    config = ensure_config(conf_path)
-    if config is None:
-        return 2
+    try:
+        config = ensure_config(conf_path)
+        if config is None:
+            return 2
 
-    specs = select_modules(args.modules, args.optional, config)
-    if not specs:
-        logger.error("Keine Module ausgewählt.")
-        return 2
+        specs = select_modules(args.modules, args.optional, config)
+        if not specs:
+            logger.error("Keine Module ausgewählt.")
+            return 2
 
-    view = StatusView(specs)
-    caller = LsbInstaller(view)
-    caller.load_config(str(conf_path), "ini")
-    caller.configure_logging()
+        view = StatusView(specs)
+        caller = LsbInstaller(view)
+        caller.load_config(str(conf_path), "ini")
+        caller.configure_logging()
+    except ConfigError as exc:
+        logger.error("Konfiguration ungültig: %s", exc)
+        return 2
 
     with view.live():
         for spec in specs:

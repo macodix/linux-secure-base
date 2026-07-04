@@ -14,6 +14,7 @@ from lsb.installer import LsbInstaller, main
 from lsb.module_spec import ModuleSpec
 from lsb.ui import StatusView
 from pifos.config.config import Config
+from pifos.errors import ConfigError
 from pifos.ipc import IpcMessage, LogLevel, MessageKind
 
 
@@ -246,3 +247,53 @@ def test_main_returns_1_when_a_module_fails(monkeypatch: pytest.MonkeyPatch) -> 
     result = main(_base_args())
 
     assert result == 1
+
+
+def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ConfigError aus ensure_config endet als knappe Meldung, nicht als Traceback.
+
+    Reproduziert den Servertest-Befund auf main()-Ebene: Ein Fehler, der aus
+    der Konfigurationsklärung kommt, darf nie als roher Traceback enden.
+    """
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+
+    def _raise(path: Path) -> Config | None:
+        raise ConfigError("Vorlage kann nicht kopiert werden: kaputt")
+
+    monkeypatch.setattr(installer_module, "ensure_config", _raise)
+
+    with caplog.at_level(logging.ERROR, logger="lsb.installer"):
+        result = main(_base_args())
+
+    assert result == 2
+    assert "Konfiguration ungültig" in caplog.text
+
+
+def test_main_returns_2_and_logs_when_configure_logging_raises_configerror(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ConfigError aus configure_logging (fehlender Abschnitt) endet sauber.
+
+    Genau der gemeldete Ablauf: Die Konfiguration wurde geladen, aber
+    configure_logging scheitert am fehlenden Abschnitt [installer].
+    """
+    spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: [spec]
+    )
+
+    class _FailingConfigureInstaller(_StubInstaller):
+        def configure_logging(self) -> None:
+            raise ConfigError("Konfigurationswert 'installer' nicht gefunden")
+
+    monkeypatch.setattr(installer_module, "LsbInstaller", _FailingConfigureInstaller)
+
+    with caplog.at_level(logging.ERROR, logger="lsb.installer"):
+        result = main(_base_args())
+
+    assert result == 2
+    assert "Konfiguration ungültig" in caplog.text
