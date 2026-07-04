@@ -38,6 +38,7 @@ install-hooks:
 # Entwicklungsrechner unter einem unprivilegierten Konto ausführen
 # (konv-system.md Abschnitt 3.7 b) — kein Schritt hier braucht Systemrechte.
 dist:
+	test $$(id -u) -ne 0 || { echo "dist nicht als root bauen (konv-system.md 3.7 b)"; exit 1; }
 	rm -rf dist
 	mkdir -p dist
 	set -e; \
