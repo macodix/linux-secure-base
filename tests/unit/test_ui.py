@@ -64,6 +64,48 @@ def test_set_result_ok_and_failed() -> None:
     assert view._state["ssh"] is State.FAILED
 
 
+def test_failed_module_shows_first_error_line() -> None:
+    """Bei Fehlschlag zeigt die Statuszeile die erste Fehlermeldung.
+
+    Spätere INFO-Meldungen (etwa OK-Zeilen nachfolgender Prüfungen eines
+    Soll-Ist-Abgleichs) verdrängen die Fehlerursache nicht.
+    """
+    view = _silent_view()
+    view.set_status_line(
+        "base", "NTP-Synchronisation: ist no, soll yes", LogLevel.ERROR
+    )
+    view.set_status_line(
+        "base", "sysctl kernel.yama.ptrace_scope: 1 — OK", LogLevel.INFO
+    )
+
+    view.set_result("base", False)
+
+    assert view._line["base"] == "NTP-Synchronisation: ist no, soll yes"
+
+
+def test_failed_module_keeps_first_of_several_errors() -> None:
+    """Bei mehreren Fehlermeldungen bleibt die erste erhalten."""
+    view = _silent_view()
+    view.set_status_line(
+        "base", "NTP-Synchronisation: ist no, soll yes", LogLevel.ERROR
+    )
+    view.set_status_line(
+        "base", "sysctl kernel.kptr_restrict: ist 1, soll 2", LogLevel.ERROR
+    )
+
+    view.set_result("base", False)
+
+    assert view._line["base"] == "NTP-Synchronisation: ist no, soll yes"
+
+
+def test_successful_module_keeps_last_line() -> None:
+    """Bei Erfolg bleibt die zuletzt gemeldete Zeile stehen."""
+    view = _silent_view()
+    view.set_status_line("base", "Rechnername setzen", LogLevel.INFO)
+    view.set_result("base", True)
+    assert view._line["base"] == "Rechnername setzen"
+
+
 def test_summary_reports_success_when_nothing_failed() -> None:
     """summary meldet Erfolg, wenn kein Modul fehlgeschlagen ist."""
     view = _silent_view()

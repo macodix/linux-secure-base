@@ -34,6 +34,7 @@ class StatusView:
         self._specs = specs
         self._state = {s.name: State.WAITING for s in specs}
         self._line = {s.name: "" for s in specs}
+        self._error_line = {s.name: "" for s in specs}
         self._live: Live | None = None
 
     @contextlib.contextmanager
@@ -52,13 +53,27 @@ class StatusView:
         self._refresh()
 
     def set_status_line(self, name: str, text: str, level: LogLevel) -> None:
-        """Übernimmt die zuletzt gemeldete Statuszeile eines Moduls."""
+        """Übernimmt die zuletzt gemeldete Statuszeile eines Moduls.
+
+        Die erste Meldung der Stufe ERROR oder CRITICAL wird zusätzlich
+        festgehalten: Schlägt das Modul fehl, zeigt die Meldungsspalte
+        sonst nur die zuletzt gemeldete Zeile — bei einem Soll-Ist-Abgleich
+        eine OK-Meldung einer späteren Prüfung statt der Fehlerursache.
+        """
         self._line[name] = text
+        if level in (LogLevel.ERROR, LogLevel.CRITICAL) and not self._error_line[name]:
+            self._error_line[name] = text
         self._refresh()
 
     def set_result(self, name: str, ok: bool) -> None:
-        """Setzt das Endergebnis eines Moduls."""
+        """Setzt das Endergebnis eines Moduls.
+
+        Bei Fehlschlag tritt die festgehaltene erste Fehlermeldung an die
+        Stelle der zuletzt gemeldeten Zeile.
+        """
         self._state[name] = State.OK if ok else State.FAILED
+        if not ok and self._error_line[name]:
+            self._line[name] = self._error_line[name]
         self._refresh()
 
     def summary(self) -> None:
