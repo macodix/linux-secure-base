@@ -47,6 +47,29 @@ Den Fingerabdruck zusätzlich über einen unabhängigen Kanal bestätigen — ei
 
 Eine gültige Signatur bestätigt **ausschließlich Herkunft und Unverändertheit**. Sie ist **keine** Aussage über Reife, Qualität oder Eignung für den Produktivbetrieb; es gelten unverändert „Grenzen & Warnung" und der Projektstatus *In Aufbau*.
 
+Dasselbe Verfahren gilt für das Auslieferungspaket des Python-Installers (`lsb-installer-<version>.tar.gz`): Es liegt eine abgesetzte Signatur `lsb-installer-<version>.tar.gz.asc` bei, mit demselben Schlüssel und demselben Fingerabdruck-Abgleich zu prüfen, bevor das Archiv entpackt wird:
+
+```sh
+gpg --import SIGNING-KEY.asc
+gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
+gpg --verify lsb-installer-<version>.tar.gz.asc lsb-installer-<version>.tar.gz
+```
+
+
+## Installation in einem Schritt
+
+Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es enthält den Installer, den Bausatz pifos und die benötigten Fremdbibliotheken bereits fertig zusammengestellt — kein `pip`, kein Netzzugang und keine vorherige pifos-Einrichtung auf dem Zielsystem nötig:
+
+```sh
+gpg --import SIGNING-KEY.asc
+gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
+gpg --verify lsb-installer-<version>.tar.gz.asc lsb-installer-<version>.tar.gz
+tar xzf lsb-installer-<version>.tar.gz
+sudo lsb-installer-<version>/bin/lsb-installer install
+```
+
+Details zur Bedienung: [`installer/README.md`](installer/README.md).
+
 
 ## Lizenz
 
