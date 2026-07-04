@@ -31,5 +31,15 @@ python_version = "3.13"
 files = ["usr/lib", "tests"]
 strict = true
 
+# pifos ist im Entwicklungs-venv eine installierte Abhängigkeit (pip -e) ohne
+# py.typed-Marker; pifos selbst wird für diesen Plan nicht geändert. Statt
+# ignore_missing_imports (das pifos-Symbole auf Any abbildet und z. B. beim
+# Erben von Module einen eigenen Folgefehler erzeugt) prüft mypy die echten
+# Inline-Annotationen von pifos mit (konv-scripting-python.md Abschnitt 5.4,
+# selektiver Override statt global).
+[[tool.mypy.overrides]]
+module = "pifos.*"
+follow_untyped_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
