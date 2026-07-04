@@ -94,6 +94,9 @@ class LsbInstaller(PifosCaller):
         if self.config is None:
             raise RuntimeError("Keine Konfiguration geladen.")
         section = cast(dict[str, object], self.config.get_section("installer"))
+        # Verzeichnis der Logdatei anlegen, bevor die Basisklasse die Datei
+        # öffnet; sonst scheitert os.open an einem fehlenden /var/log/lsb.
+        Path(str(section["logfile"])).parent.mkdir(parents=True, exist_ok=True)
         data = self.config.to_dict()
         data["logfile"] = section["logfile"]
         data["loglevel"] = section["loglevel"]
@@ -141,6 +144,9 @@ def main(args: argparse.Namespace) -> int:
         caller.configure_logging()
     except ConfigError as exc:
         logger.error("Konfiguration ungültig: %s", exc)
+        return 2
+    except OSError as exc:
+        logger.error("Konfiguration nicht nutzbar: %s", exc)
         return 2
 
     with view.live():

@@ -145,6 +145,32 @@ def test_configure_logging_raises_without_config() -> None:
         caller.configure_logging()
 
 
+def test_configure_logging_creates_missing_log_directory(tmp_path: Path) -> None:
+    """Fehlt das Verzeichnis der Logdatei, legt configure_logging es an.
+
+    Reproduziert den Servertest-Befund: /var/log/lsb existierte auf dem
+    Zielsystem nicht, os.open in der Basisklasse scheiterte deshalb mit
+    FileNotFoundError. configure_logging legt das Verzeichnis jetzt vorher an.
+    """
+    caller = LsbInstaller(MagicMock())
+    logfile = tmp_path / "noch" / "nicht" / "vorhanden" / "installer.log"
+    assert not logfile.parent.exists()
+    cfg = Config()
+    cfg.load_dict(
+        {
+            "installer": {"logfile": str(logfile), "loglevel": "INFO"},
+            "general": {"fqdn": "server.example.com"},
+        }
+    )
+    caller.config = cfg
+
+    caller.configure_logging()
+
+    assert logfile.parent.is_dir()
+    assert logfile.exists()
+    assert stat.S_IMODE(logfile.stat().st_mode) == 0o600
+
+
 def test_configure_logging_hoists_installer_section(tmp_path: Path) -> None:
     """logfile/loglevel aus [installer] werden auf die oberste Ebene gehoben."""
     caller = LsbInstaller(MagicMock())
