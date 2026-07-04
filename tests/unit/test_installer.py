@@ -36,6 +36,20 @@ def _reset_shared_logger() -> Iterator[None]:
     logger.propagate = saved[2]
 
 
+# --- DEFAULT_CONF ---
+
+
+def test_default_conf_is_anchored_at_package_root() -> None:
+    """DEFAULT_CONF liegt am Paket-Root, unabhängig vom Arbeitsverzeichnis.
+
+    installer.py liegt unter usr/lib/lsb/; der Paket-Root ist drei
+    Verzeichnisebenen darüber (analog _ROOT in bin/lsb-installer).
+    """
+    package_root = Path(installer_module.__file__).resolve().parents[3]
+    assert package_root / "etc" / "lsb" / "lsb.conf" == installer_module.DEFAULT_CONF
+    assert installer_module.DEFAULT_CONF.is_absolute()
+
+
 class _DummyModuleCls:
     """Platzhalter für eine Modulklasse; in diesen Tests nie instanziiert."""
 

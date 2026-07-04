@@ -17,7 +17,13 @@ from lsb.ui import StatusView
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONF = Path("etc/lsb/lsb.conf")
+# Paket-Root, drei Verzeichnisebenen über dieser Datei
+# (usr/lib/lsb/installer.py -> usr/lib/lsb -> usr/lib -> usr -> Root),
+# analog zu _ROOT im Einstiegspunkt bin/lsb-installer. Verankert
+# DEFAULT_CONF am Paket, unabhängig vom Arbeitsverzeichnis, aus dem
+# lsb-installer aufgerufen wird.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CONF = _PACKAGE_ROOT / "etc" / "lsb" / "lsb.conf"
 
 
 class LsbInstaller(PifosCaller):
