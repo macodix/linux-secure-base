@@ -1,0 +1,31 @@
+# lsb.conf.example — Vorlage für etc/lsb/lsb.conf (Zwei-Datei-Muster).
+#
+# Auf dem Zielsystem nach etc/lsb/lsb.conf kopieren und die leeren
+# Pflichtwerte setzen. Die echte lsb.conf wird nie eingecheckt.
+# Herkunft des Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
+
+[installer]
+# Logdatei des Installers; enge Rechte (0600) setzt der Aufrufer.
+logfile = /var/log/lsb/lsb-installer.log
+
+# Logstufe: INFO, WARN, ERROR oder CRITICAL.
+loglevel = INFO
+
+# Aktive Pflichtmodule, kommagetrennt. Feste Ausführungsreihenfolge;
+# diese Liste legt nur fest, welche Module mitlaufen.
+modules_enabled = base
+
+# Aktive optionale Module, kommagetrennt; nur mit dem Schalter -o
+# verarbeitet. Leer lassen, wenn keine.
+optional_enabled =
+
+[general]
+# Pflicht — vollständiger Rechnername des Servers.
+fqdn =
+
+# Pflicht — administrative E-Mail-Adresse für Benachrichtigungen.
+admin_mail =
+
+[base]
+# Zeitzone des Systems (tzdata-Schreibweise).
+timezone = Europe/Berlin
