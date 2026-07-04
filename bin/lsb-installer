@@ -6,36 +6,20 @@ Aufruf: lsb-installer [OPTIONEN] {install|check} [MODUL ...]
 
 import argparse
 import os
-import stat
 import sys
 from pathlib import Path
 
+# Keine Bytecode-Ablagen (__pycache__) im Paketbaum — der Baum bleibt so,
+# wie er entpackt wurde. Umgebungsvariable zusätzlich, damit auch
+# Modul-Kindprozesse keine schreiben.
+sys.dont_write_bytecode = True
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+
 _ROOT = Path(__file__).resolve().parent.parent
 
-
-def _ensure_safe_tree(root: Path) -> None:
-    """Bricht ab, wenn der Baum nicht root gehört oder fremd schreibbar ist.
-
-    Als root wird Code aus dem entpackten Baum geladen. Gehört der Baum
-    einem anderen Konto oder ist er für Gruppe oder andere schreibbar,
-    könnte fremder Code mit Systemrechten laufen. Diese Prüfung läuft vor
-    jeder Suchpfad-Erweiterung und jedem Import aus dem Baum.
-
-    Args:
-        root: Wurzel des entpackten Pakets.
-    """
-    for path in [root, *root.rglob("*")]:
-        info = path.lstat()
-        if info.st_uid != 0:
-            sys.exit(f"Abbruch: {path} gehört nicht root (uid {info.st_uid}).")
-        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            sys.exit(f"Abbruch: {path} ist für Gruppe oder andere schreibbar.")
-
-
-# Vor dem Root-Lauf den Entpackbaum prüfen (Plan 2.9). Nur dann relevant,
-# wenn tatsächlich mit Systemrechten gestartet wird.
-if os.geteuid() == 0:
-    _ensure_safe_tree(_ROOT)
+# Die frühere Prüfung des Entpackbaums (root-Eigentum, keine Fremd-
+# Schreibrechte) ist auf Entscheidung des Betreibers entfernt (2026-07-04):
+# Auf einem Einzeladmin-System behindert sie mehr, als sie schützt.
 
 # Suchpfad des mitgelieferten Baums setzen, bevor Installer-Code geladen wird.
 # Dokumentierte Ausnahme von konv-scripting-python.md 5.6 (Plan 2.3).
