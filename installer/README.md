@@ -6,7 +6,6 @@ Der Installer richtet ein gehärtetes Ubuntu-Grundsystem ein. Er ist von Bash au
 
 Der Installer liegt als einzelnes, signiertes Ein-Schritt-Paket vor (Installer, pifos und Fremdbibliotheken bereits enthalten). Bezug, Echtheitsprüfung und Entpacken: siehe [`../README.md`](../README.md), Abschnitte „Echtheit prüfen (Signatur)" und „Installation in einem Schritt".
 
-Das Archiv mit `sudo tar xzf ...` entpacken, nicht als normaler Nutzer: Der Installer führt den entpackten Baum als root aus und verlangt deshalb, dass der Baum root gehört — ein anders entpackter Baum wird beim Start abgelehnt.
 
 ## Aufruf
 

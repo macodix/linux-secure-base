@@ -74,11 +74,9 @@ Danach prüfen, entpacken, starten:
 gpg --import SIGNING-KEY.asc
 gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
 gpg --verify lsb-installer-<version>.tar.gz.asc lsb-installer-<version>.tar.gz
-sudo tar xzf lsb-installer-<version>.tar.gz
+tar xzf lsb-installer-<version>.tar.gz
 sudo lsb-installer-<version>/bin/lsb-installer install
 ```
-
-Das Entpacken läuft bereits mit `sudo`: Der Installer führt den entpackten Baum als root aus und verlangt deshalb, dass der Baum root gehört — ein als normaler Nutzer entpackter Baum würde diese Prüfung beim Start ablehnen.
 
 Details zur Bedienung: [`installer/README.md`](installer/README.md).
 
