@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Einstiegspunkt des LSB-Installers.
+
+Aufruf: lsb-installer [OPTIONEN] {install|check} [MODUL ...]
+"""
+
+import argparse
+import os
+import stat
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _ensure_safe_tree(root: Path) -> None:
+    """Bricht ab, wenn der Baum nicht root gehört oder fremd schreibbar ist.
+
+    Als root wird Code aus dem entpackten Baum geladen. Gehört der Baum
+    einem anderen Konto oder ist er für Gruppe oder andere schreibbar,
+    könnte fremder Code mit Systemrechten laufen. Diese Prüfung läuft vor
+    jeder Suchpfad-Erweiterung und jedem Import aus dem Baum.
+
+    Args:
+        root: Wurzel des entpackten Pakets.
+    """
+    for path in [root, *root.rglob("*")]:
+        info = path.lstat()
+        if info.st_uid != 0:
+            sys.exit(f"Abbruch: {path} gehört nicht root (uid {info.st_uid}).")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            sys.exit(f"Abbruch: {path} ist für Gruppe oder andere schreibbar.")
+
+
+# Vor dem Root-Lauf den Entpackbaum prüfen (Plan 2.9). Nur dann relevant,
+# wenn tatsächlich mit Systemrechten gestartet wird.
+if os.geteuid() == 0:
+    _ensure_safe_tree(_ROOT)
+
+# Suchpfad des mitgelieferten Baums setzen, bevor Installer-Code geladen wird.
+# Dokumentierte Ausnahme von konv-scripting-python.md 5.6 (Plan 2.3).
+sys.path.insert(0, str(_ROOT / "usr" / "lib"))
+sys.path.insert(0, str(_ROOT / "usr" / "lib" / "lsb" / "_vendor"))
+
+from lsb.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Baut den Argumentparser des Kommandos."""
+    parser = argparse.ArgumentParser(
+        description="Installer für ein gehärtetes Linux-Grundsystem."
+    )
+    parser.add_argument(
+        "command",
+        choices=("install", "check"),
+        help="install: Module einrichten. check: Soll-Ist-Abgleich.",
+    )
+    parser.add_argument(
+        "modules",
+        nargs="*",
+        metavar="MODUL",
+        help="Nur die genannten Module verarbeiten; ohne Angabe alle aktiven.",
+    )
+    parser.add_argument(
+        "-c",
+        "--conf",
+        metavar="PFAD",
+        help="Konfigurationsdatei; ohne Angabe etc/lsb/lsb.conf.",
+    )
+    parser.add_argument(
+        "-o",
+        "--optional",
+        action="store_true",
+        help="Zusätzlich die aktivierten optionalen Module verarbeiten.",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    sys.exit(main(build_parser().parse_args()))
