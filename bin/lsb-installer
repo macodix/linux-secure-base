@@ -24,26 +24,12 @@ def _ensure_safe_tree(root: Path) -> None:
     Args:
         root: Wurzel des entpackten Pakets.
     """
-    hint = (
-        "Der Installer läuft mit Systemrechten und lädt Programmcode aus dem\n"
-        "entpackten Verzeichnis. Deshalb muss das gesamte Verzeichnis root\n"
-        "gehören und darf nur für root schreibbar sein.\n"
-        f"So beheben:  sudo chown -R root:root {root} && sudo chmod -R go-w {root}"
-    )
     for path in [root, *root.rglob("*")]:
         info = path.lstat()
         if info.st_uid != 0:
-            sys.exit(
-                f"Abbruch: {path}\n"
-                f"gehört nicht root, sondern dem Konto mit der Nummer {info.st_uid}.\n"
-                f"{hint}"
-            )
+            sys.exit(f"Abbruch: {path} gehört nicht root (uid {info.st_uid}).")
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            sys.exit(
-                f"Abbruch: {path}\n"
-                f"ist für Gruppe oder andere Konten schreibbar.\n"
-                f"{hint}"
-            )
+            sys.exit(f"Abbruch: {path} ist für Gruppe oder andere schreibbar.")
 
 
 # Vor dem Root-Lauf den Entpackbaum prüfen (Plan 2.9). Nur dann relevant,
