@@ -1,17 +1,26 @@
 """Konfiguration laden, fehlende Werte klären, Modulkonfiguration bauen."""
 
+import contextlib
 import logging
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from pifos.config.config import Config
-from pifos.configurator import Configurator, QuestionaryPrompter, write_config_data
+from pifos.configurator import QuestionaryPrompter, write_config_data
 from pifos.errors import ConfigError
 
 from lsb.module_spec import ModuleSpec
 from lsb.modules import REGISTRY
 
 logger = logging.getLogger(__name__)
+
+# Paket-Root, drei Verzeichnisebenen über dieser Datei (analog installer.py),
+# und die mitgelieferte Vorlage als Rückfall, wenn keine Beispieldatei neben
+# der Zieldatei liegt.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[3]
+_DEFAULT_EXAMPLE = _PACKAGE_ROOT / "etc" / "lsb" / "lsb.conf.example"
 
 
 def _flatten(data: dict[str, object]) -> dict[str, object]:
@@ -69,30 +78,67 @@ def _set_in_section(data: dict[str, object], key: str, value: str) -> None:
     raise ConfigError(f"Schlüssel {key!r} in keinem Abschnitt der Vorlage gefunden")
 
 
-def _build_with_configurator(path: Path) -> bool:
-    """Baut eine neue Konfiguration aus den Moduldeklarationen der Registratur.
+def _example_path(path: Path) -> Path:
+    """Bestimmt die als Vorlage zu verwendende Beispieldatei.
 
-    Fragt für jedes Modul dessen CONFIG-Werte ab und schreibt das Ergebnis
-    nach path im ini-Format mit Rechten 0600, da die Datei später
-    Geheimnisse aufnehmen kann. operation wird nicht abgefragt (kein
-    persistenter Wert): als Platzhalter vorbelegt, damit build_for_modules
-    nicht danach fragt, und vor dem Schreiben wieder entfernt.
+    Bevorzugt eine Beispieldatei neben dem Zielpfad (<name>.example, z. B.
+    lsb.conf.example neben lsb.conf); fehlt sie, wird die mitgelieferte
+    Vorlage aus dem Paket verwendet.
+
+    Args:
+        path: Zielpfad der echten Konfigurationsdatei.
+
+    Returns:
+        Pfad der zu verwendenden Beispieldatei.
+    """
+    sibling = path.with_name(path.name + ".example")
+    return sibling if sibling.exists() else _DEFAULT_EXAMPLE
+
+
+def _seed_from_example(path: Path) -> bool:
+    """Kopiert die Beispielvorlage atomar an den Zielpfad, mit Rechten 0600.
+
+    Die Vorlage behält ihre Abschnitte ([installer], [general], [base],
+    ...), Vorgabewerte (z. B. timezone) und Kommentare unangetastet;
+    _fill_missing fragt danach nur die tatsächlich leeren Pflichtwerte ab.
+    Der frühere Aufbau aus den Modul-CONFIG-Listen (Configurator.
+    build_for_modules) erzeugte dagegen nur Modul-Abschnitte und ließ
+    [installer]/[general] nie entstehen — configure_logging scheiterte
+    danach an dem fehlenden Abschnitt [installer].
 
     Args:
         path: Zielpfad der neuen Konfigurationsdatei.
 
     Returns:
-        True, wenn die Konfiguration angelegt wurde.
+        True, wenn die Vorlage kopiert wurde; False, wenn keine
+        Beispieldatei gefunden wurde.
+
+    Raises:
+        ConfigError: Bei einem Dateisystemfehler beim Kopieren.
     """
-    configurator = Configurator()
-    modules = {spec.name: spec.module_cls for spec in REGISTRY}
-    placeholder: dict[str, object] = {spec.name: {"operation": ""} for spec in REGISTRY}
-    data = configurator.build_for_modules(modules, placeholder)
-    for section in data.values():
-        if isinstance(section, dict):
-            section.pop("operation", None)
-    write_config_data(data, "ini", str(path))
-    os.chmod(str(path), 0o600)
+    example = _example_path(path)
+    if not example.exists():
+        logger.error("Keine Beispielvorlage gefunden: %s", example)
+        return False
+
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent))
+    except OSError as exc:
+        raise ConfigError(f"Vorlage kann nicht angelegt werden: {exc}") from exc
+    os.close(fd)
+    tmp_path = Path(tmp)
+    success = False
+    try:
+        shutil.copyfile(str(example), tmp)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+        success = True
+    except OSError as exc:
+        raise ConfigError(f"Vorlage kann nicht kopiert werden: {exc}") from exc
+    finally:
+        if not success:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
     return True
 
 
@@ -125,8 +171,10 @@ def _fill_missing(config: Config, path: Path) -> None:
 def ensure_config(path: Path) -> Config | None:
     """Lädt die Konfiguration und klärt fehlende Pflichtwerte.
 
-    Fehlt die Datei, wird der Konfigurator geführt. Sind Pflichtwerte leer,
-    werden sie dialogisch abgefragt und zurückgeschrieben.
+    Fehlt die Datei, wird die mitgelieferte Beispielvorlage als
+    Ausgangspunkt kopiert (Abschnitte, Vorgabewerte und Kommentare bleiben
+    erhalten). Sind Pflichtwerte leer, werden sie dialogisch abgefragt und
+    zurückgeschrieben.
 
     Args:
         path: Pfad der Konfigurationsdatei.
@@ -136,7 +184,7 @@ def ensure_config(path: Path) -> Config | None:
     """
     if not path.exists():
         logger.warning("Konfiguration fehlt: %s", path)
-        if not _build_with_configurator(path):
+        if not _seed_from_example(path):
             return None
     config = Config()
     config.load_file(str(path), "ini")

@@ -28,6 +28,21 @@ class _FakeModuleCls:
 _FAKE_SPEC = ModuleSpec("base", "Grundkonfiguration", _FakeModuleCls, optional=False)  # type: ignore[arg-type]
 _FAKE_REGISTRY = [_FAKE_SPEC]
 
+_EXAMPLE_CONTENT = (
+    "[installer]\n"
+    "logfile = /var/log/lsb/lsb-installer.log\n"
+    "loglevel = INFO\n"
+    "modules_enabled = base\n"
+    "optional_enabled =\n"
+    "\n"
+    "[general]\n"
+    "fqdn =\n"
+    "admin_mail =\n"
+    "\n"
+    "[base]\n"
+    "timezone = Europe/Berlin\n"
+)
+
 
 class _StubPrompter:
     """Ersetzt QuestionaryPrompter mit festen Antworten je Schlüssel."""
@@ -40,31 +55,6 @@ class _StubPrompter:
             if message.endswith(key):
                 return value
         raise AssertionError(f"unerwartete Frage: {message!r}")
-
-
-class _StubConfigurator:
-    """Ersetzt Configurator: keine echten Dialoge, feste Rückgabewerte."""
-
-    last_modules: ClassVar[dict[str, type] | None] = None
-    last_existing: ClassVar[dict[str, object] | None] = None
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    def build_for_modules(
-        self,
-        modules: dict[str, type],
-        existing: dict[str, object] | None = None,
-    ) -> dict[str, object]:
-        _StubConfigurator.last_modules = modules
-        _StubConfigurator.last_existing = existing
-        result: dict[str, object] = {}
-        for name, prev in (existing or {}).items():
-            section = dict(prev) if isinstance(prev, dict) else {}
-            section["fqdn"] = "server.example.com"
-            section["timezone"] = "Europe/Berlin"
-            result[name] = section
-        return result
 
 
 # --- _flatten ---
@@ -182,40 +172,67 @@ def test_fill_missing_nothing_missing_skips_write(
     assert not path.exists()
 
 
-# --- _build_with_configurator ---
+# --- _example_path ---
 
 
-def test_build_with_configurator_writes_file_without_operation_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Die Datei entsteht mit Rechten 0600 und ohne den operation-Schlüssel."""
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
-    monkeypatch.setattr(config_setup, "Configurator", _StubConfigurator)
+def test_example_path_prefers_sibling_example(tmp_path: Path) -> None:
+    """Eine Beispieldatei neben dem Zielpfad hat Vorrang vor der Paket-Vorlage."""
+    path = tmp_path / "lsb.conf"
+    sibling = tmp_path / "lsb.conf.example"
+    sibling.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
+
+    assert config_setup._example_path(path) == sibling
+
+
+def test_example_path_falls_back_to_package_example(tmp_path: Path) -> None:
+    """Ohne Geschwister-Beispiel wird die mitgelieferte Paket-Vorlage verwendet."""
     path = tmp_path / "lsb.conf"
 
-    result = config_setup._build_with_configurator(path)
+    assert config_setup._example_path(path) == config_setup._DEFAULT_EXAMPLE
+
+
+# --- _seed_from_example ---
+
+
+def test_seed_from_example_copies_template_with_mode_0600(tmp_path: Path) -> None:
+    """Die Vorlage wird unverändert mit Rechten 0600 an den Zielpfad kopiert."""
+    example = tmp_path / "lsb.conf.example"
+    example.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
+    path = tmp_path / "lsb.conf"
+
+    result = config_setup._seed_from_example(path)
 
     assert result is True
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    content = path.read_text(encoding="utf-8")
-    assert "operation" not in content
-    assert "fqdn = server.example.com" in content
-    assert _StubConfigurator.last_existing == {"base": {"operation": ""}}
+    assert path.read_text(encoding="utf-8") == _EXAMPLE_CONTENT
+
+
+def test_seed_from_example_returns_false_without_any_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlen Geschwister- und Paket-Beispiel, liefert die Funktion False."""
+    monkeypatch.setattr(
+        config_setup, "_DEFAULT_EXAMPLE", tmp_path / "nirgendwo.example"
+    )
+    path = tmp_path / "lsb.conf"
+
+    assert config_setup._seed_from_example(path) is False
+    assert not path.exists()
 
 
 # --- ensure_config ---
 
 
-def test_ensure_config_loads_existing_file_without_building(
+def test_ensure_config_loads_existing_file_without_seeding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Existiert die Datei, wird sie geladen; der Konfigurator läuft nicht."""
+    """Existiert die Datei, wird sie geladen; die Vorlage wird nicht kopiert."""
     monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
 
     def _fail_if_called(path: Path) -> bool:
         raise AssertionError("sollte nicht aufgerufen werden")
 
-    monkeypatch.setattr(config_setup, "_build_with_configurator", _fail_if_called)
+    monkeypatch.setattr(config_setup, "_seed_from_example", _fail_if_called)
     path = tmp_path / "lsb.conf"
     path.write_text(
         "[general]\nfqdn = server.example.com\n\n[base]\ntimezone = Europe/Berlin\n",
@@ -228,36 +245,64 @@ def test_ensure_config_loads_existing_file_without_building(
     assert config.get_section("general") == {"fqdn": "server.example.com"}
 
 
-def test_ensure_config_builds_when_missing(
+def test_ensure_config_seeds_from_example_and_fills_only_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Fehlt die Datei, wird sie über den Konfigurator angelegt."""
+    """Fehlt die Konfiguration, wird die Vorlage kopiert; nur Leeres wird gefragt.
+
+    Reproduziert den Servertest-Befund: [installer] muss danach vorhanden
+    sein (sonst scheitert configure_logging), timezone hat bereits einen
+    Vorgabewert und darf nicht erneut abgefragt werden.
+    """
     monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
+    example = tmp_path / "vorlage.example"
+    example.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
+    monkeypatch.setattr(config_setup, "_DEFAULT_EXAMPLE", example)
+    monkeypatch.setattr(
+        config_setup,
+        "QuestionaryPrompter",
+        lambda: _StubPrompter({"fqdn": "server.example.com"}),
+    )
     path = tmp_path / "lsb.conf"
-
-    def _fake_build(target: Path) -> bool:
-        target.write_text(
-            "[base]\nfqdn = server.example.com\ntimezone = Europe/Berlin\n",
-            encoding="utf-8",
-        )
-        return True
-
-    monkeypatch.setattr(config_setup, "_build_with_configurator", _fake_build)
 
     config = ensure_config(path)
 
     assert config is not None
-    assert config.get_section("base") == {
-        "fqdn": "server.example.com",
-        "timezone": "Europe/Berlin",
+    assert path.exists()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert config.get_section("installer") == {
+        "logfile": "/var/log/lsb/lsb-installer.log",
+        "loglevel": "INFO",
+        "modules_enabled": "base",
+        "optional_enabled": "",
     }
+    assert config.get_section("general") == {
+        "fqdn": "server.example.com",
+        "admin_mail": "",
+    }
+    assert config.get_section("base") == {"timezone": "Europe/Berlin"}
 
 
-def test_ensure_config_returns_none_if_build_fails(
+def test_ensure_config_returns_none_if_seeding_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Scheitert der Aufbau, liefert ensure_config None."""
-    monkeypatch.setattr(config_setup, "_build_with_configurator", lambda path: False)
+    """Kann keine Vorlage gefunden werden, liefert ensure_config None."""
+    monkeypatch.setattr(config_setup, "_seed_from_example", lambda path: False)
     path = tmp_path / "lsb.conf"
 
     assert ensure_config(path) is None
+
+
+def test_ensure_config_propagates_configerror_from_seeding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein Fehler beim Kopieren der Vorlage wird als ConfigError durchgereicht."""
+
+    def _raise(path: Path) -> bool:
+        raise ConfigError("Vorlage kann nicht kopiert werden: kaputt")
+
+    monkeypatch.setattr(config_setup, "_seed_from_example", _raise)
+    path = tmp_path / "lsb.conf"
+
+    with pytest.raises(ConfigError):
+        ensure_config(path)
