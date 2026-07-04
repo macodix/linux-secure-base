@@ -23,7 +23,9 @@ optional_enabled =
 # Pflicht — vollständiger Rechnername des Servers.
 fqdn =
 
-# Pflicht — administrative E-Mail-Adresse für Benachrichtigungen.
+# Pflicht, sobald Mail-/Backup-Module aktiv sind — administrative
+# E-Mail-Adresse für Benachrichtigungen. Vom Grundgerüst (Modul base)
+# noch nicht geprüft.
 admin_mail =
 
 [base]
