@@ -12,26 +12,24 @@ Rückgabewert von Base. Die Aktionen selbst sind bereits in pifos getestet.
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import lsb.modules.base as base_module
 import pytest
 from lsb.modules.base import Base
+from pifos.actions.apt_action import AptAction
+from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 
 
-class _StubAction:
-    """Ersetzt AptAction/SystemdServiceAction: läuft immer erfolgreich durch.
+class _NoOpAptAction(AptAction):
+    """Ersetzt AptAction für Tests: läuft immer erfolgreich durch, ohne apt-get."""
 
-    apt-get und systemctl (enable/start) haben keinen über eine
-    Modulkonstante austauschbaren Programmpfad; deshalb wird hier die
-    ganze Aktionsklasse ersetzt statt nur ein Binärpfad.
-    """
+    def run(self) -> str:
+        self.status = "finished"
+        return self.status
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self.status = "not_runned"
-        self.stdout = ""
-        self.stderr = ""
-        self.returncode = 0
+
+class _NoOpSystemdAction(SystemdServiceAction):
+    """Ersetzt SystemdServiceAction für Tests: läuft immer erfolgreich durch."""
 
     def run(self) -> str:
         self.status = "finished"
@@ -42,15 +40,15 @@ def _make_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Base, MagicMock]:
     """Baut ein Base-Modul mit harmlosen Platzhaltern für alle Systembefehle."""
-    monkeypatch.setattr(base_module, "HOSTNAMECTL", "/usr/bin/true")
-    monkeypatch.setattr(base_module, "HOSTNAME_BIN", "/usr/bin/true")
-    monkeypatch.setattr(base_module, "TIMEDATECTL", "/usr/bin/true")
-    monkeypatch.setattr(base_module, "SYSTEMCTL_BIN", "/usr/bin/true")
-    monkeypatch.setattr(base_module, "SYSCTL_BIN", "/usr/bin/true")
-    monkeypatch.setattr(base_module, "SYSCTL_CONF", str(tmp_path / "sysctl.conf"))
-    monkeypatch.setattr(base_module, "MODPROBE_CONF", str(tmp_path / "modprobe.conf"))
-    monkeypatch.setattr(base_module, "AptAction", _StubAction)
-    monkeypatch.setattr(base_module, "SystemdServiceAction", _StubAction)
+    monkeypatch.setattr(Base, "HOSTNAMECTL", "/usr/bin/true")
+    monkeypatch.setattr(Base, "HOSTNAME_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Base, "TIMEDATECTL", "/usr/bin/true")
+    monkeypatch.setattr(Base, "SYSTEMCTL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Base, "SYSCTL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Base, "SYSCTL_CONF", str(tmp_path / "sysctl.conf"))
+    monkeypatch.setattr(Base, "MODPROBE_CONF", str(tmp_path / "modprobe.conf"))
+    monkeypatch.setattr(Base, "APT_ACTION_CLS", _NoOpAptAction)
+    monkeypatch.setattr(Base, "SYSTEMD_ACTION_CLS", _NoOpSystemdAction)
 
     conn = MagicMock()
     mod = Base(conn=conn, loglevel=LogLevel.INFO)
@@ -86,7 +84,7 @@ def test_install_stops_at_first_failed_step(
 ) -> None:
     """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
     mod, conn = _make_module(tmp_path, monkeypatch)
-    monkeypatch.setattr(base_module, "SYSTEMCTL_BIN", "/usr/bin/false")
+    monkeypatch.setattr(Base, "SYSTEMCTL_BIN", "/usr/bin/false")
 
     result = mod.start()
 

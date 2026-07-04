@@ -17,18 +17,6 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
-SYSCTL_CONF = "/etc/sysctl.d/60-secure-base.conf"
-MODPROBE_CONF = "/etc/modprobe.d/secure-base-blacklist.conf"
-
-# Programmpfade als Konstanten (statt Literale in den Schritten), damit
-# Tests die Systembefehle durch harmlose Platzhalter ersetzen können
-# (Plan Abschnitt 2.12), ohne echte Systembefehle auszuführen.
-HOSTNAMECTL = "/usr/bin/hostnamectl"
-HOSTNAME_BIN = "/usr/bin/hostname"
-TIMEDATECTL = "/usr/bin/timedatectl"
-SYSCTL_BIN = "/usr/sbin/sysctl"
-SYSTEMCTL_BIN = "/usr/bin/systemctl"
-
 # Rechnername nach RFC 1123: Labels aus a-z, 0-9 und Bindestrich, nicht am
 # Rand; Gesamtlänge höchstens 253 Zeichen.
 _HOSTNAME_RE = re.compile(
@@ -70,6 +58,28 @@ class Base(Module):
     """Grundkonfiguration des Systems über pifos-Aktionen."""
 
     CONFIG: ClassVar[list[str]] = ["operation", "fqdn", "timezone"]
+
+    # Programmpfade und Schreibziele als Klassenattribute statt Literale in
+    # den Schritten: feste, sichere Vorgaben, die im Auslieferungsbaum nie
+    # von außen (Umgebung, Konfiguration) überschrieben werden. Eine
+    # Testunterklasse außerhalb dieses Moduls kann sie überschreiben, um
+    # Systembefehle in einem echten Modul-Subprozess durch harmlose
+    # Platzhalter zu ersetzen (Plan Abschnitt 2.12) — ohne dieses Modul
+    # anzufassen und ohne jeden Laufzeit-Schalter in Produktionscode.
+    HOSTNAMECTL: ClassVar[str] = "/usr/bin/hostnamectl"
+    HOSTNAME_BIN: ClassVar[str] = "/usr/bin/hostname"
+    TIMEDATECTL: ClassVar[str] = "/usr/bin/timedatectl"
+    SYSCTL_BIN: ClassVar[str] = "/usr/sbin/sysctl"
+    SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
+    SYSCTL_CONF: ClassVar[str] = "/etc/sysctl.d/60-secure-base.conf"
+    MODPROBE_CONF: ClassVar[str] = "/etc/modprobe.d/secure-base-blacklist.conf"
+
+    # AppArmor-Aktionsklassen ebenso als Klassenattribute; Vorgabe sind
+    # immer die echten, härtenden Aktionen. Kein Laufzeit-Schalter kann sie
+    # abschalten — eine Testunterklasse müsste sie im Testbaum gezielt auf
+    # eine eigene Unterklasse von AptAction/SystemdServiceAction setzen.
+    APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
+    SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
 
     # Von check_config per setattr gesetzt (siehe Module.check_config);
     # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
@@ -117,23 +127,24 @@ class Base(Module):
             (
                 "Rechnername setzen",
                 SysCmdAction(
-                    command=[HOSTNAMECTL, "set-hostname", self.fqdn], timeout=30
+                    command=[self.HOSTNAMECTL, "set-hostname", self.fqdn], timeout=30
                 ),
             ),
             (
                 "Zeitzone setzen",
                 SysCmdAction(
-                    command=[TIMEDATECTL, "set-timezone", self.timezone], timeout=30
+                    command=[self.TIMEDATECTL, "set-timezone", self.timezone],
+                    timeout=30,
                 ),
             ),
             (
                 "NTP aktivieren",
-                SysCmdAction(command=[TIMEDATECTL, "set-ntp", "true"], timeout=30),
+                SysCmdAction(command=[self.TIMEDATECTL, "set-ntp", "true"], timeout=30),
             ),
             (
                 "sysctl schreiben",
                 WriteFileAction(
-                    dst=SYSCTL_CONF,
+                    dst=self.SYSCTL_CONF,
                     content=_sysctl_content(),
                     mode=0o644,
                     overwrite=True,
@@ -141,12 +152,14 @@ class Base(Module):
             ),
             (
                 "sysctl anwenden",
-                SysCmdAction(command=[SYSCTL_BIN, "-p", SYSCTL_CONF], timeout=30),
+                SysCmdAction(
+                    command=[self.SYSCTL_BIN, "-p", self.SYSCTL_CONF], timeout=30
+                ),
             ),
             (
                 "Modul-Sperrliste schreiben",
                 WriteFileAction(
-                    dst=MODPROBE_CONF,
+                    dst=self.MODPROBE_CONF,
                     content=_modprobe_content(),
                     mode=0o644,
                     overwrite=True,
@@ -154,19 +167,23 @@ class Base(Module):
             ),
             (
                 "autofs maskieren",
-                SysCmdAction(command=[SYSTEMCTL_BIN, "mask", "autofs"], timeout=30),
+                SysCmdAction(
+                    command=[self.SYSTEMCTL_BIN, "mask", "autofs"], timeout=30
+                ),
             ),
             (
                 "AppArmor installieren",
-                AptAction(packages=["apparmor", "apparmor-utils"]),
+                self.APT_ACTION_CLS(packages=["apparmor", "apparmor-utils"]),
             ),
             (
                 "AppArmor aktivieren",
-                SystemdServiceAction(operation="enable", unit="apparmor", timeout=60),
+                self.SYSTEMD_ACTION_CLS(
+                    operation="enable", unit="apparmor", timeout=60
+                ),
             ),
             (
                 "AppArmor starten",
-                SystemdServiceAction(operation="start", unit="apparmor", timeout=60),
+                self.SYSTEMD_ACTION_CLS(operation="start", unit="apparmor", timeout=60),
             ),
         ]
         for label, action in steps:
@@ -183,19 +200,21 @@ class Base(Module):
             0 bei vollständiger Übereinstimmung, sonst 1.
         """
         ok = True
-        ok &= self._check_value([HOSTNAME_BIN], self.fqdn, "Rechnername")
+        ok &= self._check_value([self.HOSTNAME_BIN], self.fqdn, "Rechnername")
         ok &= self._check_value(
-            [TIMEDATECTL, "show", "-p", "Timezone", "--value"],
+            [self.TIMEDATECTL, "show", "-p", "Timezone", "--value"],
             self.timezone,
             "Zeitzone",
         )
         ok &= self._check_value(
-            [TIMEDATECTL, "show", "-p", "NTPSynchronized", "--value"],
+            [self.TIMEDATECTL, "show", "-p", "NTPSynchronized", "--value"],
             "yes",
             "NTP-Synchronisation",
         )
         for key, value in SYSCTL_PARAMS:
-            ok &= self._check_value([SYSCTL_BIN, "-n", key], value, f"sysctl {key}")
+            ok &= self._check_value(
+                [self.SYSCTL_BIN, "-n", key], value, f"sysctl {key}"
+            )
         return 0 if ok else 1
 
     def _check_value(self, command: list[str], expected: str, label: str) -> bool:
