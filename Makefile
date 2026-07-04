@@ -59,6 +59,7 @@ dist:
 	cp -r "$$tmpdir/pifos/usr/lib/pifos" "$$pkgdir/usr/lib/pifos"; \
 	pip install --require-hashes --no-deps \
 		--target "$$pkgdir/usr/lib/lsb/_vendor" -r requirements.txt; \
+	find "$$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +; \
 	tar czf "dist/$(DIST_NAME).tar.gz" \
 		--owner=0 --group=0 --numeric-owner --mode='go-w' \
 		-C "$$tmpdir" "$(DIST_NAME)"; \
