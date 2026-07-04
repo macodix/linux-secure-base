@@ -1,5 +1,8 @@
-"""Registratur aller Module in fester Ausführungsreihenfolge.
+"""Registratur aller Module in fester Ausführungsreihenfolge."""
 
-REGISTRY wird ergänzt, sobald der zirkuläre Import mit lsb.selection
-(siehe Plan-Rückmeldung) aufgelöst ist.
-"""
+from lsb.module_spec import ModuleSpec
+from lsb.modules.base import Base
+
+REGISTRY = [
+    ModuleSpec("base", "Grundkonfiguration", Base, optional=False),
+]
