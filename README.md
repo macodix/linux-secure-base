@@ -63,8 +63,8 @@ Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es e
 **Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts. Für den aktuellen Vorabstand:
 
 ```sh
-curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc8/lsb-installer-0.1.0.tar.gz
-curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc8/lsb-installer-0.1.0.tar.gz.asc
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc9/lsb-installer-0.1.0.tar.gz
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc9/lsb-installer-0.1.0.tar.gz.asc
 curl -LO https://raw.githubusercontent.com/macodix/linux-secure-base/python-umstellung/SIGNING-KEY.asc
 ```
 
