@@ -7,11 +7,11 @@ from typing import ClassVar
 import lsb.config_setup as config_setup
 import pytest
 from lsb.config_setup import (
-    _fill_missing,
     _flatten,
     _required_keys,
     _set_in_section,
     ensure_config,
+    fill_missing,
     module_config,
 )
 from lsb.module_spec import ModuleSpec
@@ -99,10 +99,26 @@ def test_module_config_contains_only_declared_keys_and_operation() -> None:
 # --- _required_keys ---
 
 
-def test_required_keys_excludes_operation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_required_keys sammelt CONFIG-Schlüssel aller Module ohne operation."""
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
-    assert _required_keys() == {"fqdn", "timezone"}
+def test_required_keys_excludes_operation() -> None:
+    """_required_keys sammelt CONFIG-Schlüssel der Auswahl ohne operation."""
+    assert _required_keys(_FAKE_REGISTRY) == {"fqdn", "timezone"}
+
+
+def test_required_keys_excludes_optional_keys() -> None:
+    """Als optional_keys erklärte Schlüssel erzwingen keine Abfrage."""
+    spec = ModuleSpec(
+        "base",
+        "Grundkonfiguration",
+        _FakeModuleCls,  # type: ignore[arg-type]
+        optional=False,
+        optional_keys=("timezone",),
+    )
+    assert _required_keys([spec]) == {"fqdn"}
+
+
+def test_required_keys_ignores_unselected_modules() -> None:
+    """Nicht ausgewählte Module erzwingen keine Abfrage ihrer Werte."""
+    assert _required_keys([]) == set()
 
 
 # --- _set_in_section ---
@@ -121,14 +137,13 @@ def test_set_in_section_missing_key_raises() -> None:
         _set_in_section({"general": {}}, "unbekannt", "wert")
 
 
-# --- _fill_missing ---
+# --- fill_missing ---
 
 
 def test_fill_missing_prompts_only_empty_required_and_writes_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Nur leere Pflichtwerte werden abgefragt und in die Datei zurückgeschrieben."""
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
     monkeypatch.setattr(
         config_setup,
         "QuestionaryPrompter",
@@ -143,7 +158,7 @@ def test_fill_missing_prompts_only_empty_required_and_writes_back(
         }
     )
 
-    _fill_missing(config, path)
+    fill_missing(config, path, _FAKE_REGISTRY)
 
     assert path.exists()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -153,11 +168,8 @@ def test_fill_missing_prompts_only_empty_required_and_writes_back(
     }
 
 
-def test_fill_missing_nothing_missing_skips_write(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fill_missing_nothing_missing_skips_write(tmp_path: Path) -> None:
     """Sind alle Pflichtwerte gesetzt, entfällt das Zurückschreiben."""
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
     path = tmp_path / "lsb.conf"
     config = Config()
     config.load_dict(
@@ -167,7 +179,7 @@ def test_fill_missing_nothing_missing_skips_write(
         }
     )
 
-    _fill_missing(config, path)
+    fill_missing(config, path, _FAKE_REGISTRY)
 
     assert not path.exists()
 
@@ -227,7 +239,6 @@ def test_ensure_config_loads_existing_file_without_seeding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Existiert die Datei, wird sie geladen; die Vorlage wird nicht kopiert."""
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
 
     def _fail_if_called(path: Path) -> bool:
         raise AssertionError("sollte nicht aufgerufen werden")
@@ -252,9 +263,10 @@ def test_ensure_config_seeds_from_example_and_fills_only_missing(
 
     Reproduziert den Servertest-Befund: [installer] muss danach vorhanden
     sein (sonst scheitert configure_logging), timezone hat bereits einen
-    Vorgabewert und darf nicht erneut abgefragt werden.
+    Vorgabewert und darf nicht erneut abgefragt werden. Die Abfrage läuft
+    seit der Modulauswahl-Kopplung als eigener Schritt fill_missing nach
+    ensure_config (wie in installer.main).
     """
-    monkeypatch.setattr(config_setup, "REGISTRY", _FAKE_REGISTRY)
     example = tmp_path / "vorlage.example"
     example.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
     monkeypatch.setattr(config_setup, "_DEFAULT_EXAMPLE", example)
@@ -266,6 +278,8 @@ def test_ensure_config_seeds_from_example_and_fills_only_missing(
     path = tmp_path / "lsb.conf"
 
     config = ensure_config(path)
+    assert config is not None
+    fill_missing(config, path, _FAKE_REGISTRY)
 
     assert config is not None
     assert path.exists()

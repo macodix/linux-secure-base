@@ -12,7 +12,6 @@ from pifos.configurator import QuestionaryPrompter, write_config_data
 from pifos.errors import ConfigError
 
 from lsb.module_spec import ModuleSpec
-from lsb.modules import REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -44,19 +43,26 @@ def _flatten(data: dict[str, object]) -> dict[str, object]:
     return flat
 
 
-def _required_keys() -> set[str]:
-    """Sammelt die Pflichtschlüssel aller Module der Registratur.
+def _required_keys(specs: list[ModuleSpec]) -> set[str]:
+    """Sammelt die Pflichtschlüssel der ausgewählten Module.
 
     Pflicht ist jeder in einer Modul-CONFIG genannte Schlüssel außer
-    operation; operation ist kein persistenter Wert, sondern wird vom
-    Aufrufer je Lauf gesetzt (Plan Abschnitt 2.8).
+    operation und den je Registratureintrag als optional_keys erklärten
+    Schlüsseln; operation ist kein persistenter Wert, sondern wird vom
+    Aufrufer je Lauf gesetzt (Plan Abschnitt 2.8). Nicht ausgewählte
+    Module (etwa ein deaktiviertes optionales Modul) erzwingen keine
+    Abfrage ihrer Werte.
+
+    Args:
+        specs: Für diesen Lauf ausgewählte Registratureinträge.
 
     Returns:
-        Vereinigung der Pflichtschlüssel über alle Registratureinträge.
+        Vereinigung der Pflichtschlüssel über die ausgewählten Einträge.
     """
     required: set[str] = set()
-    for spec in REGISTRY:
-        required.update(k for k in spec.module_cls.CONFIG if k != "operation")
+    for spec in specs:
+        skip = {"operation", *spec.optional_keys}
+        required.update(k for k in spec.module_cls.CONFIG if k not in skip)
     return required
 
 
@@ -142,18 +148,22 @@ def _seed_from_example(path: Path) -> bool:
     return True
 
 
-def _fill_missing(config: Config, path: Path) -> None:
-    """Fragt leere Pflichtwerte ab und schreibt sie in path zurück.
+def fill_missing(config: Config, path: Path, specs: list[ModuleSpec]) -> None:
+    """Fragt leere Pflichtwerte der ausgewählten Module ab.
 
-    Eingaben laufen als Freitext ohne Maskierung (Plan Abschnitt 1.2);
-    base kennt keine Geheimnisse. Ist nichts leer, entfällt das Schreiben.
+    Eingaben laufen als Freitext ohne Maskierung (Plan Abschnitt 1.2).
+    Ist nichts leer, entfällt das Schreiben; sonst wird die Datei mit
+    Rechten 0600 zurückgeschrieben.
 
     Args:
         config: Bereits geladene Konfiguration.
         path: Pfad der echten Konfigurationsdatei (Rückschreibeziel).
+        specs: Für diesen Lauf ausgewählte Registratureinträge.
     """
     flat = _flatten(config.to_dict())
-    missing = sorted(k for k in _required_keys() if not str(flat.get(k, "")).strip())
+    missing = sorted(
+        k for k in _required_keys(specs) if not str(flat.get(k, "")).strip()
+    )
     if not missing:
         return
 
@@ -169,12 +179,13 @@ def _fill_missing(config: Config, path: Path) -> None:
 
 
 def ensure_config(path: Path) -> Config | None:
-    """Lädt die Konfiguration und klärt fehlende Pflichtwerte.
+    """Lädt die Konfiguration, bei Bedarf aus der Beispielvorlage.
 
     Fehlt die Datei, wird die mitgelieferte Beispielvorlage als
     Ausgangspunkt kopiert (Abschnitte, Vorgabewerte und Kommentare bleiben
-    erhalten). Sind Pflichtwerte leer, werden sie dialogisch abgefragt und
-    zurückgeschrieben.
+    erhalten). Die Abfrage leerer Pflichtwerte übernimmt fill_missing,
+    nachdem die Modulauswahl feststeht — nur ausgewählte Module erzwingen
+    ihre Werte.
 
     Args:
         path: Pfad der Konfigurationsdatei.
@@ -188,7 +199,6 @@ def ensure_config(path: Path) -> Config | None:
             return None
     config = Config()
     config.load_file(str(path), "ini")
-    _fill_missing(config, path)
     return config
 
 

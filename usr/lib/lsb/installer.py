@@ -11,7 +11,7 @@ from pifos.config.config import Config
 from pifos.errors import ConfigError
 from pifos.ipc import LogLevel, MessageKind
 
-from lsb.config_setup import ensure_config, module_config
+from lsb.config_setup import ensure_config, fill_missing, module_config
 from lsb.module_spec import ModuleSpec
 from lsb.selection import select_modules
 from lsb.ui import StatusView
@@ -137,6 +137,8 @@ def main(args: argparse.Namespace) -> int:
         if not specs:
             logger.error("Keine Module ausgewählt.")
             return 2
+
+        fill_missing(config, conf_path, specs)
 
         view = StatusView(specs)
         caller = LsbInstaller(view)

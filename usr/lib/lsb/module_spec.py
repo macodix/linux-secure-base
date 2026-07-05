@@ -14,9 +14,12 @@ class ModuleSpec:
         label: Anzeige-Beschreibung für die Statusliste.
         module_cls: pifos-Modulklasse.
         optional: True für optionale Module (Schalter -o).
+        optional_keys: CONFIG-Schlüssel, die leer bleiben dürfen; sie
+            werden vom Konfigurationsdialog nicht abgefragt.
     """
 
     name: str
     label: str
     module_cls: type[Module]
     optional: bool
+    optional_keys: tuple[str, ...] = ()

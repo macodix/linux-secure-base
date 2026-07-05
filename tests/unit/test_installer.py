@@ -54,6 +54,8 @@ def test_default_conf_is_anchored_at_package_root() -> None:
 class _DummyModuleCls:
     """Platzhalter für eine Modulklasse; in diesen Tests nie instanziiert."""
 
+    CONFIG: ClassVar[list[str]] = ["operation"]
+
 
 class _StubInstaller:
     """Ersetzt LsbInstaller in main()-Tests; keine echten Subprozesse."""
