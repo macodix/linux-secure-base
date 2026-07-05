@@ -187,7 +187,12 @@ def main(args: argparse.Namespace) -> int:
 
         fill_missing(config, conf_path, specs)
 
-        view = StatusView(specs)
+        try:
+            general = cast(dict[str, object], config.get_section("general"))
+            host = str(general.get("fqdn", "") or "")
+        except (ConfigError, KeyError):
+            host = ""
+        view = StatusView(specs, args.command, host)
         caller = LsbInstaller(view)
         caller.load_config(str(conf_path), "ini")
         caller.configure_logging()

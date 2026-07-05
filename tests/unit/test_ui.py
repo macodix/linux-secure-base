@@ -19,10 +19,10 @@ def _specs() -> list[ModuleSpec]:
     ]
 
 
-def _silent_view() -> StatusView:
+def _silent_view(operation: str = "install", host: str = "") -> StatusView:
     """Baut eine StatusView mit einer stummen Konsole (kein echtes Terminal)."""
-    view = StatusView(_specs())
-    view._console = Console(file=io.StringIO())
+    view = StatusView(_specs(), operation, host)
+    view._console = Console(file=io.StringIO(), width=100)
     return view
 
 
@@ -31,6 +31,15 @@ def _output(view: StatusView) -> str:
     buf = view._console.file
     assert isinstance(buf, io.StringIO)
     return buf.getvalue()
+
+
+def _render_text(view: StatusView) -> str:
+    """Rendert die Live-Anzeige in Text (ohne Farben)."""
+    console = Console(file=io.StringIO(), width=100)
+    console.print(view._render())
+    out = console.file
+    assert isinstance(out, io.StringIO)
+    return out.getvalue()
 
 
 def test_initial_state_is_waiting() -> None:
@@ -117,15 +126,16 @@ def test_summary_reports_success_when_nothing_failed() -> None:
     assert "Alle Module erfolgreich." in _output(view)
 
 
-def test_summary_reports_failed_modules() -> None:
-    """summary listet fehlgeschlagene Module namentlich auf."""
+def test_summary_reports_failed_and_skipped_modules() -> None:
+    """summary nennt fehlgeschlagene und nicht ausgeführte Module."""
     view = _silent_view()
-    view.set_result("base", True)
-    view.set_result("ssh", False)
+    view.set_result("base", False)
 
     view.summary()
 
-    assert "Fehlgeschlagen: ssh" in _output(view)
+    out = _output(view)
+    assert "Fehlgeschlagen: Grundkonfiguration" in out
+    assert "Nicht ausgeführt: SSH-Härtung" in out
 
 
 def test_live_sets_and_clears_live_attribute() -> None:
@@ -135,3 +145,47 @@ def test_live_sets_and_clears_live_attribute() -> None:
     with view.live():
         assert view._live is not None
     assert view._live is None
+
+
+def test_render_shows_header_modules_and_progress() -> None:
+    """Die Anzeige enthält Kopfzeile, Modulliste und Modulzähler."""
+    view = _silent_view(host="server.example.com")
+    view.set_result("base", True)
+
+    out = _render_text(view)
+
+    assert "Linux Secure Base" in out
+    assert "Installation" in out
+    assert "server.example.com" in out
+    assert "Grundkonfiguration" in out
+    assert "SSH-Härtung" in out
+    assert "1/2 Module" in out
+    assert "✓" in out
+
+
+def test_render_title_names_operation() -> None:
+    """Die Kopfzeile nennt die Betriebsart des Laufs."""
+    assert "Soll-Ist-Abgleich" in _render_text(_silent_view(operation="check"))
+    assert "Installation" in _render_text(_silent_view(operation="install"))
+
+
+def test_render_log_window_shows_recent_messages_with_module_name() -> None:
+    """Das Meldungsfenster zeigt die letzten Meldungen mit Modulname."""
+    view = _silent_view()
+    view.set_status_line("base", "Rechnername setzen", LogLevel.INFO)
+    view.set_status_line("ssh", "sshd_config härten", LogLevel.INFO)
+
+    out = _render_text(view)
+
+    assert "Meldungen" in out
+    assert "Rechnername setzen" in out
+    assert "sshd_config härten" in out
+
+
+def test_render_geometry_is_stable_under_long_messages() -> None:
+    """Lange Meldungen ändern die Zeilenzahl der Anzeige nicht."""
+    view = _silent_view()
+    before = _render_text(view).count("\n")
+    view.set_status_line("base", "x" * 500, LogLevel.INFO)
+    after = _render_text(view).count("\n")
+    assert before == after
