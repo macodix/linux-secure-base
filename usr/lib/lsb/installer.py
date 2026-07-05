@@ -154,6 +154,13 @@ def main(args: argparse.Namespace) -> int:
     with view.live():
         for spec in specs:
             module_cfg = module_config(config, spec, args.command)
-            caller.run_module(spec, module_cfg, args.command)
+            ok = caller.run_module(spec, module_cfg, args.command)
+            # install baut aufeinander auf: nach einem Modul-Fehlschlag
+            # keine weiteren Systemänderungen, Gesamtabbruch (wie der
+            # Bash-Vorgänger). check ist rein lesend und läuft alles
+            # durch, damit die Abweichungsliste vollständig ist.
+            if not ok and args.command == "install":
+                caller.write_log(f"install abgebrochen bei {spec.name}", LogLevel.ERROR)
+                break
     view.summary()
     return 1 if caller.failures else 0

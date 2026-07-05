@@ -82,6 +82,9 @@ class _StubInstaller:
             self.failures += 1
         return ok
 
+    def write_log(self, message: str, level: object) -> None:
+        pass
+
 
 def _base_args(**overrides: object) -> argparse.Namespace:
     """Baut ein argparse.Namespace mit den von main() erwarteten Feldern."""
@@ -275,6 +278,61 @@ def test_main_returns_1_when_a_module_fails(monkeypatch: pytest.MonkeyPatch) -> 
     result = main(_base_args())
 
     assert result == 1
+
+
+def test_main_install_aborts_after_first_failed_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install stoppt nach dem ersten fehlgeschlagenen Modul den Gesamtlauf."""
+    _StubInstaller.fail_names = {"base"}
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    result = main(_base_args())
+
+    assert result == 1
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == [("base", "install")]
+
+
+def test_main_check_continues_after_failed_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """check läuft nach einem fehlgeschlagenen Modul weiter (Abweichungsliste)."""
+    _StubInstaller.fail_names = {"base"}
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    result = main(_base_args(command="check"))
+
+    assert result == 1
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == [
+        ("base", "check"),
+        ("ssh", "check"),
+    ]
 
 
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
