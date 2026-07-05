@@ -5,7 +5,9 @@ Modul-Subprozess (spawn) — Begründung siehe test_base_module.py. Die
 Systembefehle werden durch harmlose Platzhalter ersetzt; für postmap
 übernimmt ein winziges Fake-Skript zusätzlich dessen Nebenwirkung (Anlegen
 der .db-Datei), da der folgende Schritt (Rechte auf sasl_passwd.db setzen)
-davon abhängt.
+davon abhängt. Für den abschließenden Zustellungsnachweis liefert
+/usr/bin/true standardmäßig eine leere Postfix-Queue (Erfolgsfall); die
+Fehlschlag-Tests setzen dafür eigene Fake-Skripte ein.
 """
 
 from pathlib import Path
@@ -60,6 +62,12 @@ def _make_module(
     monkeypatch.setattr(Postfix, "POSTMAP_BIN", _make_fake_postmap(tmp_path))
     monkeypatch.setattr(Postfix, "NEWALIASES_BIN", "/usr/bin/true")
     monkeypatch.setattr(Postfix, "SYSTEMCTL_BIN", "/usr/bin/true")
+    # /usr/bin/true ignoriert stdin/Argumente und liefert Returncode 0 bzw.
+    # (als postqueue-Platzhalter) eine leere Ausgabe — entspricht einer
+    # zugestellten Testmail bzw. einer leeren Queue.
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
     monkeypatch.setattr(Postfix, "MAIN_CF", str(tmp_path / "main.cf"))
     monkeypatch.setattr(Postfix, "SASL_PASSWD", str(tmp_path / "sasl_passwd"))
     monkeypatch.setattr(
@@ -100,6 +108,8 @@ def test_install_all_steps_succeed(
     assert result == 0
     messages = _sent_messages(conn)
     assert "postfix neu laden" in messages
+    assert "Zustellung prüfen" in messages
+    assert "Testmail zugestellt — Queue leer" in messages
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
     assert (tmp_path / "sasl_passwd").exists()
     assert (tmp_path / "recipient_canonical").exists()
@@ -144,6 +154,52 @@ def test_install_stops_at_first_failed_step(
     messages = _sent_messages(conn)
     assert "fehlgeschlagen: aliases-Datenbank aktualisieren" in messages
     assert "postfix aktivieren" not in messages
+
+
+def _make_fake_postqueue_deferred(tmp_path: Path) -> str:
+    """Baut ein Fake-postqueue: meldet dauerhaft eine deferred Testmail."""
+    script = tmp_path / "fake-postqueue-deferred"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        'print(json.dumps({"recipients": [{"address": "admin@example.com",'
+        ' "delay_reason": "relay access denied"}]}))\n'
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_install_fails_when_test_mail_stays_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bleibt die Testmail deferred, liefert install 1 mit dem Queue-Grund."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Postfix, "POSTQUEUE_BIN", _make_fake_postqueue_deferred(tmp_path)
+    )
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_ATTEMPTS", 2)
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Zustellung prüfen" in messages
+    assert any("relay access denied" in str(m) for m in messages)
+
+
+def test_install_fails_when_sendmail_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt sendmail fehl, liefert install 1 ohne Queue-Abfrage."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Zustellung prüfen" in messages
+    assert any("sendmail fehlgeschlagen" in str(m) for m in messages)
 
 
 def test_install_rejects_invalid_relay_host_before_any_step(

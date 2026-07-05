@@ -3,14 +3,21 @@
 Richtet Postfix als Satellite-System ein: main.cf-Direktiven für einen
 authentifizierten SMTP-Relay, sasl_passwd-Zugangsdaten, Umschreiben aller
 Empfänger auf eine Admin-Adresse (recipient_canonical) und Weiterleitung von
-root-Mail über /etc/aliases. Betriebsart über den Schlüssel operation.
+root-Mail über /etc/aliases. Betriebsart über den Schlüssel operation. Der
+install-Schritt weist abschließend die Zustellfähigkeit über eine Testmail
+nach — eine formal gültige main.cf liefert sonst keine Garantie, dass Mail
+das System tatsächlich verlässt.
 """
 
+import json
 import os
 import re
+import secrets
+import subprocess
 import tempfile
+import time
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pifos.action import Action
 from pifos.actions.apt_action import AptAction
@@ -20,7 +27,7 @@ from pifos.actions.permissions_action import PermissionsAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.actions.write_file_action import WriteFileAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
@@ -74,6 +81,92 @@ def _aliases_block_content(admin_mail: str) -> str:
     return f"postmaster: root\nroot:       {admin_mail}\n"
 
 
+def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> str:
+    """Baut Kopf und Rumpf der Testmail für den Zustellungsnachweis.
+
+    token identifiziert den Lauf in der Mail selbst (kein Geheimnis, dient
+    nur der Nachvollziehbarkeit beim Admin).
+    """
+    return (
+        f"Subject: lsb postfix: Zustellungsnachweis {fqdn}\n"
+        f"To: {admin_mail}\n"
+        "\n"
+        f"Zustellungsnachweis des lsb-Moduls postfix. Referenz: {token}.\n"
+    )
+
+
+class _SendMailAction(Action):
+    """Sendet eine Mail über ein sendmail-kompatibles Programm.
+
+    Modul-lokale Aktion: SysCmdAction unterstützt keine stdin-Eingabe, die
+    sendmail zum Lesen von Kopf und Rumpf jedoch benötigt.
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        command: Sendmail-Aufruf als Liste einzelner Elemente.
+        content: Mailkopf und -rumpf, wird über stdin übergeben.
+        timeout: Zeitgrenze in Sekunden.
+        stderr: Fehlerausgabe des Befehls nach run().
+        returncode: Rückgabewert des Befehls nach run(); -1 vor der Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["command", "content", "timeout"]
+
+    def __init__(self, command: list[str], content: str, timeout: float) -> None:
+        """Initialisiert die Sendmail-Aktion.
+
+        Args:
+            command: Programmpfad und Argumente (SIC-04); die Empfänger stehen
+                als Argument, nicht im Mailinhalt allein.
+            content: Kopf und Rumpf der Mail (RFC-822-artig), über stdin.
+            timeout: Zeitgrenze in Sekunden (SIC-05).
+        """
+        super().__init__()
+        self.command = command
+        self.content = content
+        self.timeout = timeout
+        self.stderr: str = ""
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt den Sendmail-Aufruf aus und liefert den Ausführungsstatus.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler.
+        """
+        self.status = "running"
+        try:
+            result = subprocess.run(
+                self.command,
+                input=self.content.encode("utf-8"),
+                shell=False,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            self.status = "failed"
+            raise ActionError(
+                f"Zeitgrenze ({self.timeout}s) überschritten: {self.command[0]!r}"
+            ) from exc
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"Befehl konnte nicht gestartet werden: {exc}") from exc
+        self.stderr = result.stderr.decode("utf-8", errors="replace")
+        self.returncode = result.returncode
+        if self.returncode != 0:
+            self.status = "failed"
+            raise ActionError(
+                f"Befehl {self.command[0]!r} endete mit Code {self.returncode};"
+                f" stderr: {self.stderr.strip()!r}"
+            )
+        self.status = "finished"
+        return self.status
+
+
 class Postfix(Module):
     """Postfix als Satellite gegen einen externen SMTP-Smarthost."""
 
@@ -102,6 +195,8 @@ class Postfix(Module):
     POSTMAP_BIN: ClassVar[str] = "/usr/sbin/postmap"
     NEWALIASES_BIN: ClassVar[str] = "/usr/bin/newaliases"
     SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
+    SENDMAIL_BIN: ClassVar[str] = "/usr/sbin/sendmail"
+    POSTQUEUE_BIN: ClassVar[str] = "/usr/sbin/postqueue"
     MAIN_CF: ClassVar[str] = "/etc/postfix/main.cf"
     SASL_PASSWD: ClassVar[str] = "/etc/postfix/sasl_passwd"  # noqa: S105 — Dateipfad, kein Geheimnis
     RECIPIENT_CANONICAL: ClassVar[str] = "/etc/postfix/recipient_canonical"
@@ -110,6 +205,13 @@ class Postfix(Module):
 
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
     SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
+    SEND_MAIL_ACTION_CLS: ClassVar[type[_SendMailAction]] = _SendMailAction
+
+    # Zustellungsnachweis: Anzahl Versuche und Wartezeit je Versuch, bis die
+    # Testmail die Queue verlassen haben muss. Als Klassenattribute testbar
+    # (Tests setzen DELIVERY_CHECK_INTERVAL auf 0, keine echten Wartezeiten).
+    DELIVERY_CHECK_ATTEMPTS: ClassVar[int] = 6
+    DELIVERY_CHECK_INTERVAL: ClassVar[float] = 5.0
 
     # Von check_config per setattr gesetzt (siehe Module.check_config);
     # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
@@ -295,9 +397,121 @@ class Postfix(Module):
                         LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}"
                     )
                     return 1
+            label = "Zustellung prüfen"
+            self.send_message(LogLevel.INFO, "postfix", label)
+            if self._check_delivery() != 0:
+                self.send_message(LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}")
+                return 1
             return 0
         finally:
             Path(debconf_path).unlink(missing_ok=True)
+
+    def _check_delivery(self) -> int:
+        """Weist die Zustellfähigkeit über eine Testmail nach.
+
+        Sendet eine Testmail an admin_mail und fragt danach die Postfix-Queue
+        ab, bis die Mail die Queue verlassen hat (Erfolg), ein Zustellfehler
+        vermerkt ist (Fehlschlag) oder die Versuche ausgeschöpft sind
+        (Fehlschlag). Eine formal gültige main.cf liefert sonst keine
+        Garantie, dass Mail das System tatsächlich verlässt.
+
+        Returns:
+            0 bei nachgewiesener Zustellung, sonst 1.
+        """
+        token = secrets.token_hex(8)
+        if not self._send_test_mail(token):
+            return 1
+        for attempt in range(1, self.DELIVERY_CHECK_ATTEMPTS + 1):
+            entries = self._queue_entries()
+            if entries is None:
+                return 1
+            if not entries:
+                self.send_message(
+                    LogLevel.INFO, "postfix", "Testmail zugestellt — Queue leer"
+                )
+                return 0
+            reasons = self._deferred_reasons(entries)
+            if reasons:
+                self.send_message(
+                    LogLevel.ERROR,
+                    "postfix",
+                    f"Testmail unzustellbar: {'; '.join(reasons)}",
+                )
+                return 1
+            if attempt < self.DELIVERY_CHECK_ATTEMPTS:
+                time.sleep(self.DELIVERY_CHECK_INTERVAL)
+        self.send_message(
+            LogLevel.ERROR, "postfix", "Testmail nach Wartezeit weiter in der Queue"
+        )
+        return 1
+
+    def _send_test_mail(self, token: str) -> bool:
+        """Sendet die Testmail über SENDMAIL_BIN.
+
+        Args:
+            token: Referenz in der Mail selbst (kein Geheimnis).
+
+        Returns:
+            True, wenn sendmail mit Returncode 0 endete, sonst False.
+        """
+        action = self.SEND_MAIL_ACTION_CLS(
+            command=[self.SENDMAIL_BIN, self.admin_mail],
+            content=_test_mail_content(self.fqdn, self.admin_mail, token),
+            timeout=30,
+        )
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "postfix",
+                f"Testmail: sendmail fehlgeschlagen: {action.stderr.strip()}",
+            )
+            return False
+        return True
+
+    def _queue_entries(self) -> list[dict[str, Any]] | None:
+        """Liest die Postfix-Queue strukturiert über POSTQUEUE_BIN -j.
+
+        Any: JSON-Struktur von "postqueue -j" (variable Tiefe, kein festes
+        Schema); nur einzelne Felder (recipients, delay_reason) werden gelesen.
+
+        Returns:
+            Liste der Queue-Einträge (leer, wenn die Queue leer ist), oder
+            None, wenn die Abfrage selbst fehlschlug.
+        """
+        action = SysCmdAction(command=[self.POSTQUEUE_BIN, "-j"], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "postfix", "Postfix-Queue: nicht lesbar")
+            return None
+        entries: list[dict[str, Any]] = []
+        for line in action.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                self.send_message(
+                    LogLevel.ERROR, "postfix", "Postfix-Queue: Antwort nicht lesbar"
+                )
+                return None
+        return entries
+
+    def _deferred_reasons(self, entries: list[dict[str, Any]]) -> list[str]:
+        """Sammelt die Zustellfehler-Gründe aller Empfänger in der Queue.
+
+        Args:
+            entries: Queue-Einträge aus _queue_entries.
+
+        Returns:
+            Liste der Zustellfehler-Gründe (leer, wenn keiner deferred ist).
+        """
+        reasons: list[str] = []
+        for entry in entries:
+            for recipient in entry.get("recipients", []):
+                reason = recipient.get("delay_reason")
+                if reason:
+                    reasons.append(str(reason))
+        return reasons
 
     def _verify(self) -> int:
         """Gleicht den Ist-Zustand mit dem Soll der eigenen Installation ab.

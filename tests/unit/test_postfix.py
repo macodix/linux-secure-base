@@ -1,6 +1,7 @@
 """Unit-Tests für lsb.modules.postfix."""
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,8 +11,10 @@ from lsb.modules.postfix import (
     _debconf_content,
     _recipient_canonical_content,
     _sasl_passwd_content,
+    _SendMailAction,
+    _test_mail_content,
 )
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 
 
@@ -33,6 +36,12 @@ def _make_postfix(
     mod.relay_user = relay_user
     mod.relay_password = relay_password
     return mod
+
+
+def _sent_payloads(mod: Postfix) -> list[object]:
+    """Sammelt die per send_message gesendeten payload-Texte."""
+    conn = cast(MagicMock, mod._conn)
+    return [call.args[0].payload for call in conn.send.call_args_list]
 
 
 # --- CONFIG ---
@@ -247,3 +256,241 @@ def test_check_aliases_block_false_when_markers_missing(
     aliases.write_text("postmaster: root\n")
     monkeypatch.setattr(Postfix, "ALIASES", str(aliases))
     assert mod._check_aliases_block() is False
+
+
+# --- _test_mail_content ---
+
+
+def test_test_mail_content_includes_fqdn_admin_mail_and_token() -> None:
+    """Die Testmail enthält fqdn im Betreff, admin_mail als Empfänger und token."""
+    content = _test_mail_content("server.example.com", "admin@example.com", "abc123")
+    assert "Subject: lsb postfix: Zustellungsnachweis server.example.com" in content
+    assert "To: admin@example.com" in content
+    assert "abc123" in content
+
+
+# --- _SendMailAction ---
+
+
+def _write_script(tmp_path: Path, name: str, body: str) -> str:
+    """Legt ein ausführbares Fake-Programm unter tmp_path an und liefert den Pfad."""
+    script = tmp_path / name
+    script.write_text(f"#!/usr/bin/env python3\n{body}")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_send_mail_action_success_reads_stdin(tmp_path: Path) -> None:
+    """Ein erfolgreiches Programm liefert Status finished und Returncode 0."""
+    script = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    action = _SendMailAction(
+        command=[script, "admin@example.com"], content="Subject: x\n\nbody\n", timeout=5
+    )
+    assert action.run() == "finished"
+    assert action.returncode == 0
+
+
+def test_send_mail_action_failure_raises_with_stderr(tmp_path: Path) -> None:
+    """Ein fehlschlagendes Programm erzeugt ActionError; stderr bleibt lesbar."""
+    script = _write_script(
+        tmp_path,
+        "fake-sendmail-fail",
+        "import sys\nsys.stdin.read()\n"
+        "sys.stderr.write('relay refused\\n')\nsys.exit(1)\n",
+    )
+    action = _SendMailAction(command=[script], content="x", timeout=5)
+    with pytest.raises(ActionError, match="endete mit Code 1"):
+        action.run()
+    assert action.status == "failed"
+    assert "relay refused" in action.stderr
+
+
+def test_send_mail_action_timeout_raises(tmp_path: Path) -> None:
+    """Überschreitet das Programm die Zeitgrenze, erzeugt run() ActionError."""
+    script = _write_script(
+        tmp_path, "fake-sendmail-slow", "import time\ntime.sleep(5)\n"
+    )
+    action = _SendMailAction(command=[script], content="x", timeout=0.2)
+    with pytest.raises(ActionError, match="Zeitgrenze"):
+        action.run()
+    assert action.status == "failed"
+
+
+def test_send_mail_action_missing_program_raises() -> None:
+    """Ein nicht startbares Programm erzeugt ActionError."""
+    action = _SendMailAction(
+        command=["/no/such/sendmail-binary"], content="x", timeout=5
+    )
+    with pytest.raises(ActionError, match="nicht gestartet werden"):
+        action.run()
+    assert action.status == "failed"
+
+
+# --- Zustellungsnachweis: _send_test_mail, _queue_entries, _deferred_reasons ---
+
+
+def test_send_test_mail_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Läuft sendmail erfolgreich durch, liefert _send_test_mail True."""
+    mod = _make_postfix()
+    script = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", script)
+    assert mod._send_test_mail("token123") is True
+
+
+def test_send_test_mail_failure_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt sendmail fehl, liefert _send_test_mail False und meldet den Grund."""
+    mod = _make_postfix()
+    script = _write_script(
+        tmp_path,
+        "fake-sendmail-fail",
+        "import sys\nsys.stdin.read()\n"
+        "sys.stderr.write('relay refused\\n')\nsys.exit(1)\n",
+    )
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", script)
+    assert mod._send_test_mail("token123") is False
+    payloads = _sent_payloads(mod)
+    assert any(
+        "sendmail fehlgeschlagen" in str(p) and "relay refused" in str(p)
+        for p in payloads
+    )
+
+
+def test_queue_entries_empty_when_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine leere postqueue-Ausgabe liefert eine leere Liste."""
+    mod = _make_postfix()
+    script = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", script)
+    assert mod._queue_entries() == []
+
+
+def test_queue_entries_parses_json_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jede JSON-Zeile der postqueue-Ausgabe wird zu einem Eintrag."""
+    mod = _make_postfix()
+    script = _write_script(
+        tmp_path,
+        "fake-postqueue",
+        'print(\'{"recipients": [{"address": "admin@example.com"}]}\')\n',
+    )
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", script)
+    assert mod._queue_entries() == [{"recipients": [{"address": "admin@example.com"}]}]
+
+
+def test_queue_entries_command_failure_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schlägt der postqueue-Aufruf fehl, liefert _queue_entries None."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", "/bin/false")
+    assert mod._queue_entries() is None
+
+
+def test_queue_entries_invalid_json_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine nicht als JSON lesbare Zeile liefert _queue_entries None."""
+    mod = _make_postfix()
+    script = _write_script(tmp_path, "fake-postqueue-bad", "print('not json')\n")
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", script)
+    assert mod._queue_entries() is None
+
+
+def test_deferred_reasons_collects_present_reasons() -> None:
+    """Nur Empfänger mit gesetztem delay_reason liefern einen Eintrag."""
+    mod = _make_postfix()
+    entries = [
+        {"recipients": [{"address": "a@x", "delay_reason": "connection timed out"}]},
+        {"recipients": [{"address": "b@x"}]},
+    ]
+    assert mod._deferred_reasons(entries) == ["connection timed out"]
+
+
+def test_deferred_reasons_empty_when_no_reason_present() -> None:
+    """Ohne delay_reason liefert _deferred_reasons eine leere Liste."""
+    mod = _make_postfix()
+    entries = [{"recipients": [{"address": "a@x"}]}]
+    assert mod._deferred_reasons(entries) == []
+
+
+# --- _check_delivery ---
+
+
+def test_check_delivery_succeeds_when_queue_empties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verlässt die Testmail die Queue, liefert _check_delivery 0."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    assert mod._check_delivery() == 0
+
+
+def test_check_delivery_fails_when_sendmail_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schlägt bereits sendmail fehl, liefert _check_delivery 1 ohne Queue-Abfrage."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/bin/false")
+    assert mod._check_delivery() == 1
+
+
+def test_check_delivery_fails_when_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bleibt die Testmail deferred, liefert _check_delivery 1 mit Queue-Grund."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(
+        tmp_path,
+        "fake-postqueue-deferred",
+        "import json\n"
+        'print(json.dumps({"recipients": [{"address": "admin@example.com",'
+        ' "delay_reason": "relay access denied"}]}))\n',
+    )
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_ATTEMPTS", 2)
+    assert mod._check_delivery() == 1
+    payloads = _sent_payloads(mod)
+    assert any("relay access denied" in str(p) for p in payloads)
+
+
+def test_check_delivery_fails_after_attempts_exhausted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bleibt die Queue non-leer ohne Grund, liefert _check_delivery nach den
+    Versuchen 1."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(
+        tmp_path,
+        "fake-postqueue-stuck",
+        "import json\n"
+        'print(json.dumps({"recipients": [{"address": "admin@example.com"}]}))\n',
+    )
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_ATTEMPTS", 2)
+    assert mod._check_delivery() == 1
