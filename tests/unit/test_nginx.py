@@ -157,7 +157,27 @@ def test_parse_vhosts_rejects_single_label_domain() -> None:
 def test_parse_vhosts_rejects_relative_docroot() -> None:
     """Ein nicht absoluter docroot erzeugt ModuleError."""
     mod = _make_nginx(nginx_vhosts="example.com|relative/pfad")
-    with pytest.raises(ModuleError, match="docroot muss absolut sein"):
+    with pytest.raises(ModuleError, match="ungültiger docroot"):
+        mod._validate()
+
+
+def test_parse_vhosts_rejects_docroot_with_config_characters() -> None:
+    """Zeichen außerhalb der Allowlist (etwa ; } Leerzeichen) werden abgelehnt.
+
+    docroot geht als root-Direktive in den nginx-Server-Block; ein
+    Semikolon o. Ä. könnte dort weitere Direktiven einschleusen
+    (Audit-Befund 2026-07-05).
+    """
+    for docroot in ("/srv/www;autoindex on", "/srv/www}", "/srv/w w"):
+        mod = _make_nginx(nginx_vhosts=f"example.com|{docroot}")
+        with pytest.raises(ModuleError, match="ungültiger docroot"):
+            mod._validate()
+
+
+def test_parse_vhosts_rejects_docroot_with_parent_traversal() -> None:
+    """Ein docroot mit /../ wird abgelehnt."""
+    mod = _make_nginx(nginx_vhosts="example.com|/srv/../etc/nginx")
+    with pytest.raises(ModuleError, match="ungültiger docroot"):
         mod._validate()
 
 

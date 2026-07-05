@@ -39,6 +39,12 @@ _DOMAIN_RE = re.compile(
 # Formale E-Mail-Prüfung, wie in pifos.config.config.Config verwendet.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# docroot geht in den nginx-Server-Block (root <pfad>;) und in eine
+# Eigentümer-Änderung auf www-data — strenge Allowlist statt bloßer
+# Absolut-Prüfung (konv-scripting-python.md Abschnitt 4.2; Audit-Befund
+# 2026-07-05, Schweregrad mittel).
+_DOCROOT_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
+
 
 def _http_block_content(domain: str, docroot: str) -> str:
     """Baut den Port-80-Server-Block für den Zertifikatsbezug.
@@ -195,7 +201,8 @@ class Nginx(Module):
 
         Raises:
             ModuleError: Wenn kein Eintrag vorhanden ist, ein Domainname
-                ungültig ist oder ein docroot nicht absolut ist.
+                ungültig ist oder ein docroot nicht dem Muster _DOCROOT_RE
+                entspricht.
         """
         entries = [e.strip() for e in raw.split(",") if e.strip()]
         if not entries:
@@ -209,9 +216,9 @@ class Nginx(Module):
             self._validate_domain(domain)
             if not docroot:
                 docroot = f"{self.DOCROOT_BASE}/{domain}"
-            if not docroot.startswith("/"):
+            if not _DOCROOT_RE.match(docroot) or "/../" in docroot:
                 raise ModuleError(
-                    f"nginx: docroot muss absolut sein: {docroot!r} (vhost {domain})"
+                    f"nginx: ungültiger docroot: {docroot!r} (vhost {domain})"
                 )
             vhosts.append((domain, docroot))
         return sorted(vhosts, key=lambda item: item[0])
