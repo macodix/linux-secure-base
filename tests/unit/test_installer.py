@@ -335,6 +335,58 @@ def test_main_check_continues_after_failed_module(
     ]
 
 
+def test_main_install_offers_ufw_enable_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nach erfolgreichem install-Lauf mit ufw wird die Aktivierung angeboten."""
+    _StubInstaller.fail_names = set()
+    spec = ModuleSpec("ufw", "Firewall", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    offered: list[bool] = []
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: [spec]
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module, "_offer_ufw_enable", lambda: offered.append(True)
+    )
+
+    result = main(_base_args())
+
+    assert result == 0
+    assert offered == [True]
+
+
+def test_main_check_never_offers_ufw_enable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Im check-Lauf wird die Firewall-Aktivierung nie angeboten."""
+    _StubInstaller.fail_names = set()
+    spec = ModuleSpec("ufw", "Firewall", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    offered: list[bool] = []
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: [spec]
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module, "_offer_ufw_enable", lambda: offered.append(True)
+    )
+
+    result = main(_base_args(command="check"))
+
+    assert result == 0
+    assert offered == []
+
+
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

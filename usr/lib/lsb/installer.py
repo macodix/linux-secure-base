@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -13,6 +14,7 @@ from pifos.ipc import LogLevel, MessageKind
 
 from lsb.config_setup import ensure_config, fill_missing, module_config
 from lsb.module_spec import ModuleSpec
+from lsb.modules.ufw import Ufw
 from lsb.selection import select_modules
 from lsb.ui import StatusView
 
@@ -112,6 +114,51 @@ class LsbInstaller(PifosCaller):
         self.failures += 1
 
 
+def _offer_ufw_enable() -> None:
+    """Bietet nach erfolgreichem ufw-Modul die Aktivierung der Firewall an.
+
+    Wie im Bash-Vorgänger bleibt die Firewall nach dem Regelsetzen inaktiv;
+    die Aktivierung erfolgt erst hier, am Ende des Installationslaufs, nach
+    ausdrücklicher Zustimmung. Die Abfrage läuft über /dev/tty, damit sie
+    auch bei umgeleiteter Standardein-/-ausgabe den Bediener erreicht; ohne
+    interaktives Terminal unterbleibt die Aktivierung.
+    """
+    try:
+        # Ausnahme SIM115: Das Öffnen muss außerhalb des with stehen, weil
+        # ein fehlendes /dev/tty (kein Terminal) ein regulärer, getrennt
+        # behandelter Fall ist; das with unten schließt die Datei sicher.
+        tty_cm = open("/dev/tty", "r+", encoding="utf-8", errors="replace")  # noqa: SIM115
+    except OSError:
+        logger.info(
+            "ufw: Firewall nicht aktiviert (kein interaktives Terminal) — "
+            "manuell mit 'ufw enable' aktivieren."
+        )
+        return
+    with tty_cm as tty:
+        tty.write(
+            "\nDie Firewall (ufw) ist konfiguriert, aber noch nicht aktiv.\n"
+            "Das Aktivieren kann die laufende SSH-Verbindung unterbrechen —\n"
+            "danach den Login in einer zweiten Sitzung prüfen; bei "
+            "Problemen: ufw disable\n\n"
+            "Firewall jetzt aktivieren? [j/N] "
+        )
+        tty.flush()
+        answer = tty.readline().strip().lower()
+        if answer in ("j", "ja", "y", "yes"):
+            result = subprocess.run(
+                [Ufw.UFW_BIN, "--force", "enable"], check=False, timeout=60
+            )
+            if result.returncode == 0:
+                tty.write("Firewall aktiviert — Login in zweiter Sitzung prüfen.\n")
+                logger.info("ufw: Firewall auf Anfrage aktiviert.")
+            else:
+                tty.write("Aktivierung fehlgeschlagen — Log prüfen.\n")
+                logger.error("ufw: 'ufw --force enable' fehlgeschlagen.")
+        else:
+            tty.write("Firewall nicht aktiviert — später manuell: ufw enable\n")
+            logger.info("ufw: Firewall nicht aktiviert (Entscheidung Bediener).")
+
+
 def main(args: argparse.Namespace) -> int:
     """Führt den Installer nach den Argumenten aus.
 
@@ -151,10 +198,13 @@ def main(args: argparse.Namespace) -> int:
         logger.error("Konfiguration nicht nutzbar: %s", exc)
         return 2
 
+    ufw_ok = False
     with view.live():
         for spec in specs:
             module_cfg = module_config(config, spec, args.command)
             ok = caller.run_module(spec, module_cfg, args.command)
+            if spec.name == "ufw" and ok:
+                ufw_ok = True
             # install baut aufeinander auf: nach einem Modul-Fehlschlag
             # keine weiteren Systemänderungen, Gesamtabbruch (wie der
             # Bash-Vorgänger). check ist rein lesend und läuft alles
@@ -163,4 +213,8 @@ def main(args: argparse.Namespace) -> int:
                 caller.write_log(f"install abgebrochen bei {spec.name}", LogLevel.ERROR)
                 break
     view.summary()
+    # Aktivierung nur nach vollständig erfolgreichem Installationslauf:
+    # nach einem Abbruch wird erst behoben und neu gelaufen.
+    if args.command == "install" and ufw_ok and not caller.failures:
+        _offer_ufw_enable()
     return 1 if caller.failures else 0
