@@ -7,12 +7,14 @@ der Upgrade-Lauf vor dem Reboot greift. Betriebsart über den Schlüssel
 operation.
 """
 
+import contextlib
 import re
 from pathlib import Path
 from typing import ClassVar
 
 from pifos.action import Action
 from pifos.actions.apt_action import AptAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
@@ -92,6 +94,8 @@ class Unattended(Module):
     # Testunterklasse kann sie außerhalb dieses Moduls umlenken.
     APT_GET_BIN: ClassVar[str] = "/usr/bin/apt-get"
     DPKG_BIN: ClassVar[str] = "/usr/bin/dpkg"
+    SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
+    UNATTENDED_UPGRADE_BIN: ClassVar[str] = "/usr/bin/unattended-upgrade"
     UU_CONF: ClassVar[str] = "/etc/apt/apt.conf.d/50unattended-upgrades"
     PERIODIC_CONF: ClassVar[str] = "/etc/apt/apt.conf.d/20auto-upgrades"
     DAILY_DROPIN: ClassVar[str] = (
@@ -102,6 +106,11 @@ class Unattended(Module):
     )
     REBOOT_REQUIRED_FILE: ClassVar[str] = "/var/run/reboot-required"
     REBOOT_REQUIRED_PKGS_FILE: ClassVar[str] = "/var/run/reboot-required.pkgs"
+
+    # Zeitgrenzen für die Betriebsart test (SIC-05); als Klassenattribute
+    # testbar wie die Programmpfade oben.
+    DRY_RUN_TIMEOUT: ClassVar[float] = 300.0
+    LIST_TIMERS_TIMEOUT: ClassVar[float] = 15.0
 
     # apt-/systemd-Aktionsklassen ebenso als Klassenattribute; Vorgabe sind
     # immer die echten Aktionen (siehe base.py).
@@ -130,6 +139,10 @@ class Unattended(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -311,6 +324,192 @@ class Unattended(Module):
                         LogLevel.INFO, "unattended", f"neustartpflichtig: {line}"
                     )
         return 1
+
+    def _uninstall(self) -> int:
+        """Baut die Einrichtung zurück: eigene Dateien, Timer-Overrides, Paket.
+
+        apt-daily.timer und apt-daily-upgrade.timer selbst gehören zum
+        Distro-Standard und werden nicht deaktiviert — nur die eigenen
+        Drop-in-Overrides. 50unattended-upgrades und 20auto-upgrades werden
+        von _install vollständig geschrieben (kein zeilenweises Patchen wie
+        im Bash-Original), deshalb entfernt der Rückbau hier die ganze
+        Datei statt einzelner Einstellungen. Läuft idempotent: bereits
+        entfernte Dateien werden ohne Fehler übersprungen.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, Action]] = []
+        any_dropin = False
+        for label, path in (
+            ("apt-daily-Override entfernen", self.DAILY_DROPIN),
+            ("apt-daily-upgrade-Override entfernen", self.UPGRADE_DROPIN),
+        ):
+            if Path(path).exists():
+                steps.append((label, DeleteFileAction(path=path, safe_mode=False)))
+                any_dropin = True
+        if any_dropin:
+            steps += [
+                (
+                    "systemd neu laden",
+                    self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60),
+                ),
+                (
+                    "apt-daily.timer neu starten",
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="restart", unit="apt-daily.timer", timeout=60
+                    ),
+                ),
+                (
+                    "apt-daily-upgrade.timer neu starten",
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="restart", unit="apt-daily-upgrade.timer", timeout=60
+                    ),
+                ),
+            ]
+        for label, path in (
+            ("50unattended-upgrades entfernen", self.UU_CONF),
+            ("20auto-upgrades entfernen", self.PERIODIC_CONF),
+        ):
+            if Path(path).exists():
+                steps.append((label, DeleteFileAction(path=path, safe_mode=False)))
+        if self._package_installed():
+            steps.append(
+                (
+                    "Paket unattended-upgrades entfernen",
+                    self.APT_ACTION_CLS(
+                        packages=["unattended-upgrades"], state="absent"
+                    ),
+                )
+            )
+        else:
+            self.send_message(
+                LogLevel.INFO,
+                "unattended",
+                "Paket unattended-upgrades nicht installiert — nichts zu entfernen",
+            )
+        for label, action in steps:
+            self.send_message(LogLevel.INFO, "unattended", label)
+            if self.run_action(action) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "unattended", f"fehlgeschlagen: {label}"
+                )
+                return 1
+        self._cleanup_empty_dropin_dirs()
+        return 0
+
+    def _cleanup_empty_dropin_dirs(self) -> None:
+        """Entfernt die Timer-Override-Verzeichnisse, wenn sie jetzt leer sind.
+
+        Best-effort wie im Bash-Original (rmdir auf einem nicht-leeren oder
+        nicht vorhandenen Verzeichnis schlägt fehl und wird ignoriert) —
+        kein Abbruchkriterium für _uninstall.
+        """
+        for path in (self.DAILY_DROPIN, self.UPGRADE_DROPIN):
+            with contextlib.suppress(OSError):
+                Path(path).parent.rmdir()
+
+    def _package_installed(self) -> bool:
+        """Prüft per dpkg, ob unattended-upgrades installiert ist.
+
+        Returns:
+            True, wenn das Paket installiert ist, sonst False.
+        """
+        action = SysCmdAction(
+            command=[self.DPKG_BIN, "-s", "unattended-upgrades"], timeout=15
+        )
+        return self.run_action(action) == 0
+
+    def _test(self) -> int:
+        """Weist die Funktionsfähigkeit nach, ohne das System zu ändern.
+
+        Führt einen Trockenlauf von unattended-upgrade aus (simuliert nur;
+        installiert nichts, rebootet nicht) und protokolliert nachrichtlich
+        die nächsten geplanten Timer-Auslösungen. Sammelt beide Ergebnisse,
+        ohne beim ersten Fehler abzubrechen; die Timer-Auflistung ist rein
+        informativ und beeinflusst den Rückgabewert nicht (wie im
+        Bash-Original).
+
+        Returns:
+            0, wenn der Trockenlauf erfolgreich war, sonst 1.
+        """
+        ok = self._test_dry_run()
+        self._log_timers()
+        return 0 if ok else 1
+
+    def _test_dry_run(self) -> bool:
+        """Weist per Trockenlauf nach, dass unattended-upgrade das Soll annimmt.
+
+        Returns:
+            True, wenn das Paket installiert ist und der Trockenlauf mit
+            Returncode 0 endet, sonst False.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.ERROR,
+                "unattended",
+                "test: Paket unattended-upgrades nicht installiert — kein"
+                " Funktionstest möglich",
+            )
+            return False
+        self.send_message(
+            LogLevel.INFO,
+            "unattended",
+            "test: unattended-upgrade --dry-run --debug (simuliert,"
+            " installiert nichts, rebootet nicht)",
+        )
+        action = SysCmdAction(
+            command=[self.UNATTENDED_UPGRADE_BIN, "--dry-run", "--debug"],
+            timeout=self.DRY_RUN_TIMEOUT,
+        )
+        ok = self.run_action(action) == 0
+        for line in (action.stdout + action.stderr).splitlines():
+            if line:
+                self.send_message(
+                    LogLevel.INFO, "unattended", f"unattended-upgrade: {line}"
+                )
+        if ok:
+            self.send_message(
+                LogLevel.INFO,
+                "unattended",
+                "test: Trockenlauf erfolgreich — Konfiguration wird von"
+                " unattended-upgrade akzeptiert",
+            )
+        else:
+            self.send_message(
+                LogLevel.ERROR,
+                "unattended",
+                "test: unattended-upgrade --dry-run fehlgeschlagen",
+            )
+        return ok
+
+    def _log_timers(self) -> None:
+        """Protokolliert die nächsten geplanten Auslösungen beider Timer.
+
+        Rein informativ (wie im Bash-Original) — ein Fehler hier
+        beeinflusst das Testergebnis nicht.
+        """
+        self.send_message(
+            LogLevel.INFO, "unattended", "test: nächste geplante Timer-Auslösungen:"
+        )
+        action = SysCmdAction(
+            command=[
+                self.SYSTEMCTL_BIN,
+                "list-timers",
+                "apt-daily.timer",
+                "apt-daily-upgrade.timer",
+                "--no-pager",
+            ],
+            timeout=self.LIST_TIMERS_TIMEOUT,
+        )
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR, "unattended", "test: list-timers nicht lesbar"
+            )
+            return
+        for line in action.stdout.splitlines():
+            if line:
+                self.send_message(LogLevel.INFO, "unattended", f"list-timers: {line}")
 
     def _verify(self) -> int:
         """Gleicht den Ist-Zustand mit dem Soll ab.

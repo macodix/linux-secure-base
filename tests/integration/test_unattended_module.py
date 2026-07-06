@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.unattended import Unattended
 
@@ -34,12 +34,22 @@ class _NoOpSystemdAction(SystemdServiceAction):
         return self.status
 
 
+class _FailingSystemdAction(SystemdServiceAction):
+    """Ersetzt SystemdServiceAction für Tests: scheitert immer, ohne systemctl."""
+
+    def run(self) -> str:
+        self.status = "failed"
+        raise ActionError("erzwungener Testfehler")
+
+
 def _make_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Unattended, MagicMock]:
     """Baut ein Unattended-Modul mit harmlosen Platzhaltern für alle Systembefehle."""
     monkeypatch.setattr(Unattended, "APT_GET_BIN", "/usr/bin/true")
     monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Unattended, "SYSTEMCTL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Unattended, "UNATTENDED_UPGRADE_BIN", "/usr/bin/true")
     monkeypatch.setattr(Unattended, "UU_CONF", str(tmp_path / "50unattended-upgrades"))
     monkeypatch.setattr(Unattended, "PERIODIC_CONF", str(tmp_path / "20auto-upgrades"))
     monkeypatch.setattr(
@@ -173,3 +183,128 @@ def test_check_succeeds_after_install(
     result = mod.start()
 
     assert result == 0
+
+
+# --- Betriebsart uninstall ---
+
+
+def test_uninstall_removes_all_created_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt nach einem install alle eigenen Dateien und Overrides."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Paket unattended-upgrades entfernen" in messages
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert not Path(tmp_path / "50unattended-upgrades").exists()
+    assert not Path(tmp_path / "20auto-upgrades").exists()
+    assert not Path(tmp_path / "apt-daily.timer.d" / "secure-base.conf").exists()
+    assert not Path(
+        tmp_path / "apt-daily-upgrade.timer.d" / "secure-base.conf"
+    ).exists()
+    assert not Path(tmp_path / "apt-daily.timer.d").exists()
+    assert not Path(tmp_path / "apt-daily-upgrade.timer.d").exists()
+
+
+def test_uninstall_is_idempotent_without_prior_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall ohne vorherigen install läuft ohne Fehler durch (keine Dateien)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in _sent_messages(conn))
+
+
+def test_uninstall_skips_package_removal_when_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist das Paket nicht installiert, wird der Entfernen-Schritt übersprungen."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/false")
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert (
+        "Paket unattended-upgrades nicht installiert — nichts zu entfernen" in messages
+    )
+    assert "Paket unattended-upgrades entfernen" not in messages
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    monkeypatch.setattr(Unattended, "SYSTEMD_ACTION_CLS", _FailingSystemdAction)
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: systemd neu laden" in messages
+    assert "50unattended-upgrades entfernen" not in messages
+    assert not Path(tmp_path / "apt-daily.timer.d" / "secure-base.conf").exists()
+    assert Path(tmp_path / "50unattended-upgrades").exists()
+
+
+# --- Betriebsart test ---
+
+
+def test_test_returns_0_when_package_installed_and_dry_run_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test meldet Erfolg, wenn Paket und Trockenlauf in Ordnung sind."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+
+    mod.operation = "test"
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("Trockenlauf erfolgreich" in str(m) for m in messages)
+    assert any("nächste geplante Timer-Auslösungen" in str(m) for m in messages)
+
+
+def test_test_returns_1_when_package_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test meldet Fehlschlag, wenn das Paket nicht installiert ist."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/false")
+
+    mod.operation = "test"
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("kein Funktionstest möglich" in str(m) for m in messages)
+
+
+def test_test_ignores_timer_listing_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein Fehler bei der Timer-Auflistung bleibt ohne Wirkung auf den Rückgabewert."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Unattended, "SYSTEMCTL_BIN", "/usr/bin/false")
+
+    mod.operation = "test"
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("list-timers nicht lesbar" in str(m) for m in messages)

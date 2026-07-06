@@ -158,3 +158,143 @@ def test_check_file_content_missing_file_returns_false(tmp_path: Path) -> None:
     mod = _make_unattended()
     target = tmp_path / "fehlt.conf"
     assert mod._check_file_content(str(target), "soll-inhalt\n", "Testwert") is False
+
+
+# --- start-Verzweigung (uninstall/test) ---
+
+
+def test_start_dispatches_to_uninstall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation 'uninstall' ruft _uninstall auf."""
+    mod = _make_unattended()
+    mod.operation = "uninstall"
+    monkeypatch.setattr(mod, "_uninstall", lambda: 42)
+    assert mod.start() == 42
+
+
+def test_start_dispatches_to_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation 'test' ruft _test auf."""
+    mod = _make_unattended()
+    mod.operation = "test"
+    monkeypatch.setattr(mod, "_test", lambda: 43)
+    assert mod.start() == 43
+
+
+# --- _package_installed ---
+
+
+def test_package_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """dpkg -s meldet Erfolg, wenn das Paket installiert ist."""
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/true")
+    mod = _make_unattended()
+    assert mod._package_installed() is True
+
+
+def test_package_installed_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """dpkg -s meldet Fehlschlag, wenn das Paket nicht installiert ist."""
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/false")
+    mod = _make_unattended()
+    assert mod._package_installed() is False
+
+
+# --- _cleanup_empty_dropin_dirs ---
+
+
+def test_cleanup_empty_dropin_dirs_removes_empty_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leere Timer-Override-Verzeichnisse werden entfernt."""
+    daily_dir = tmp_path / "apt-daily.timer.d"
+    upgrade_dir = tmp_path / "apt-daily-upgrade.timer.d"
+    daily_dir.mkdir()
+    upgrade_dir.mkdir()
+    monkeypatch.setattr(Unattended, "DAILY_DROPIN", str(daily_dir / "secure-base.conf"))
+    monkeypatch.setattr(
+        Unattended, "UPGRADE_DROPIN", str(upgrade_dir / "secure-base.conf")
+    )
+    mod = _make_unattended()
+
+    mod._cleanup_empty_dropin_dirs()
+
+    assert not daily_dir.exists()
+    assert not upgrade_dir.exists()
+
+
+def test_cleanup_empty_dropin_dirs_keeps_nonempty_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein nicht-leeres Timer-Override-Verzeichnis bleibt bestehen (best effort)."""
+    daily_dir = tmp_path / "apt-daily.timer.d"
+    daily_dir.mkdir()
+    (daily_dir / "andere-datei.conf").write_text("bleibt\n")
+    monkeypatch.setattr(Unattended, "DAILY_DROPIN", str(daily_dir / "secure-base.conf"))
+    monkeypatch.setattr(
+        Unattended, "UPGRADE_DROPIN", str(tmp_path / "fehlt" / "secure-base.conf")
+    )
+    mod = _make_unattended()
+
+    mod._cleanup_empty_dropin_dirs()
+
+    assert daily_dir.exists()
+
+
+# --- _test_dry_run ---
+
+
+def test_test_dry_run_reports_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fehlt das Paket, liefert der Trockenlauf False, ohne ihn auszuführen."""
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/false")
+    mod = _make_unattended()
+    conn = mod._conn
+    assert mod._test_dry_run() is False
+    assert isinstance(conn, MagicMock)
+    messages = [call.args[0].payload for call in conn.send.call_args_list]
+    assert any("kein Funktionstest möglich" in str(m) for m in messages)
+
+
+def test_test_dry_run_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installiertes Paket und erfolgreicher Trockenlauf liefern True."""
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Unattended, "UNATTENDED_UPGRADE_BIN", "/usr/bin/true")
+    mod = _make_unattended()
+    assert mod._test_dry_run() is True
+
+
+def test_test_dry_run_fails_when_dry_run_command_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ein scheiternder Trockenlauf liefert False."""
+    monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Unattended, "UNATTENDED_UPGRADE_BIN", "/usr/bin/false")
+    mod = _make_unattended()
+    assert mod._test_dry_run() is False
+
+
+# --- _log_timers ---
+
+
+def test_log_timers_logs_output_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Jede Ausgabezeile von list-timers wird protokolliert."""
+    monkeypatch.setattr(Unattended, "SYSTEMCTL_BIN", "/bin/echo")
+    mod = _make_unattended()
+    conn = mod._conn
+
+    mod._log_timers()
+
+    assert isinstance(conn, MagicMock)
+    messages = [call.args[0].payload for call in conn.send.call_args_list]
+    assert any(str(m).startswith("list-timers: list-timers") for m in messages)
+
+
+def test_log_timers_reports_error_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schlägt list-timers fehl, wird das nur protokolliert, keine Ausnahme."""
+    monkeypatch.setattr(Unattended, "SYSTEMCTL_BIN", "/usr/bin/false")
+    mod = _make_unattended()
+    conn = mod._conn
+
+    mod._log_timers()
+
+    assert isinstance(conn, MagicMock)
+    messages = [call.args[0].payload for call in conn.send.call_args_list]
+    assert any("list-timers nicht lesbar" in str(m) for m in messages)
