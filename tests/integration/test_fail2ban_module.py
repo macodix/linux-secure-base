@@ -37,6 +37,22 @@ class _NoOpSystemdAction(SystemdServiceAction):
         return self.status
 
 
+class _FailingSystemdAction(SystemdServiceAction):
+    """Ersetzt SystemdServiceAction für Tests: schlägt immer fehl."""
+
+    def run(self) -> str:
+        self.status = "failed"
+        return self.status
+
+
+def _make_executable(tmp_path: Path, content: str, name: str = "cmd.sh") -> str:
+    """Legt ein ausführbares Shell-Script an und liefert dessen Pfad."""
+    script = tmp_path / name
+    script.write_text(f"#!/bin/sh\n{content}\n", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script)
+
+
 def _make_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ignoreip: str = ""
 ) -> tuple[Fail2ban, MagicMock]:
@@ -151,3 +167,174 @@ def test_check_reports_missing_jail_local(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("fehlt" in str(m) for m in messages)
+
+
+# --- Betriebsart uninstall ---
+
+
+def test_uninstall_noop_when_package_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne installiertes Paket ist uninstall idempotent ohne weitere Schritte."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    # /usr/bin/true liefert keine Ausgabe — dpkg-query meldet damit "nicht installiert".
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("nichts zu tun" in str(m) for m in messages)
+    assert "Dienst stoppen" not in messages
+
+
+def test_uninstall_all_steps_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist das Paket installiert, laufen alle Rückbau-Schritte durch."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'", "dpkg.sh"),
+    )
+    Path(mod.JAIL_LOCAL).write_text(
+        "[sshd]\nignoreip = 127.0.0.1/8 ::1 203.0.113.7\nenabled = true\n",
+        encoding="utf-8",
+    )
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Dienst stoppen" in messages
+    assert "Dienst deaktivieren" in messages
+    assert "ignoreip-Eingriff zurücknehmen" in messages
+    assert "Paket entfernen" in messages
+    content = Path(mod.JAIL_LOCAL).read_text(encoding="utf-8")
+    assert "ignoreip" not in content
+    assert "[sshd]" in content
+
+
+def test_uninstall_skips_ignoreip_step_when_jail_local_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt jail.local, entfällt der ignoreip-Rückbauschritt."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'", "dpkg.sh"),
+    )
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "ignoreip-Eingriff zurücknehmen" not in messages
+    assert "Paket entfernen" in messages
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'", "dpkg.sh"),
+    )
+    monkeypatch.setattr(Fail2ban, "SYSTEMD_ACTION_CLS", _FailingSystemdAction)
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Dienst stoppen" in messages
+    assert "Dienst deaktivieren" not in messages
+
+
+# --- Betriebsart test ---
+
+
+def test_test_operation_all_checks_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Antwortet der Daemon und ist der sshd-Jail abfragbar, liefert test 0."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'", "dpkg.sh"),
+    )
+    monkeypatch.setattr(
+        Fail2ban,
+        "FAIL2BAN_CLIENT",
+        _make_executable(
+            tmp_path,
+            'case "$1" in\n'
+            "  ping) echo pong ;;\n"
+            "  status) echo 'Status for the jail: sshd' ;;\n"
+            "esac",
+            "fail2ban-client.sh",
+        ),
+    )
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Daemon-Ping: pong" in messages
+    assert any("sshd-Jail: " in str(m) for m in messages)
+
+
+def test_test_operation_fails_when_package_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne installiertes Paket liefert test 1, ohne Ping oder Jail-Abfrage."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    # /usr/bin/true liefert keine Ausgabe — dpkg-query meldet "nicht installiert".
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("kein Funktionstest möglich" in str(m) for m in messages)
+
+
+def test_test_operation_collects_both_checks_without_aborting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlgeschlagener Ping bricht den Jail-Status-Check nicht ab (sammelnd)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'", "dpkg.sh"),
+    )
+    monkeypatch.setattr(
+        Fail2ban,
+        "FAIL2BAN_CLIENT",
+        _make_executable(
+            tmp_path,
+            'case "$1" in\n'
+            "  ping) echo nope ;;\n"
+            "  status) echo 'Status for the jail: sshd' ;;\n"
+            "esac",
+            "fail2ban-client.sh",
+        ),
+    )
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("keine Antwort" in str(m) for m in messages)
+    assert any("sshd-Jail: " in str(m) for m in messages)

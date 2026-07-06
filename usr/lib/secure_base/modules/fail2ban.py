@@ -82,6 +82,10 @@ class Fail2ban(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -184,6 +188,89 @@ class Fail2ban(Module):
             )
         return 0
 
+    def _uninstall(self) -> int:
+        """Nimmt die install-Eingriffe zurück und entfernt das Paket.
+
+        Nach do_uninstall des Originals: ist das Paket nicht installiert,
+        ist idempotent nichts zu tun. Sonst Dienst stoppen und deaktivieren,
+        den ignoreip-Eingriff in jail.local zurücknehmen (die Datei selbst
+        bleibt erhalten) und das Paket ohne --purge entfernen (Datenbank
+        und Restkonfiguration bleiben liegen).
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.INFO,
+                "fail2ban",
+                "Paket fail2ban nicht installiert — nichts zu tun",
+            )
+            return 0
+
+        steps: list[tuple[str, Action]] = [
+            (
+                "Dienst stoppen",
+                self.SYSTEMD_ACTION_CLS(operation="stop", unit="fail2ban", timeout=60),
+            ),
+            (
+                "Dienst deaktivieren",
+                self.SYSTEMD_ACTION_CLS(
+                    operation="disable", unit="fail2ban", timeout=60
+                ),
+            ),
+        ]
+        if Path(self.JAIL_LOCAL).exists():
+            steps.append(
+                (
+                    "ignoreip-Eingriff zurücknehmen",
+                    LineInFileAction(
+                        path=self.JAIL_LOCAL,
+                        line="",
+                        match=r"^ignoreip\s*=",
+                        state="absent",
+                    ),
+                )
+            )
+        steps.append(
+            (
+                "Paket entfernen",
+                self.APT_ACTION_CLS(packages=["fail2ban"], state="absent"),
+            )
+        )
+
+        for label, action in steps:
+            self.send_message(LogLevel.INFO, "fail2ban", label)
+            if self.run_action(action) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "fail2ban", f"fehlgeschlagen: {label}"
+                )
+                return 1
+        return 0
+
+    def _test(self) -> int:
+        """Funktionstest ohne Systemänderung nach do_test des Originals.
+
+        Prüft den Daemon per Ping und den sshd-Jail-Status; sammelt beide
+        Ergebnisse, ohne beim ersten Fehler abzubrechen. Ohne installiertes
+        Paket ist kein Test möglich.
+
+        Returns:
+            0 bei bestandenem Test, sonst 1.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.ERROR,
+                "fail2ban",
+                "Paket fail2ban nicht installiert — kein Funktionstest möglich",
+            )
+            return 1
+
+        ok = True
+        ok &= self._check_daemon_ping()
+        ok &= self._check_jail_status_lines()
+        return 0 if ok else 1
+
     def _verify(self) -> int:
         """Gleicht den Ist-Zustand mit den eigenen install-Aktionen ab.
 
@@ -253,8 +340,11 @@ class Fail2ban(Module):
         self.send_message(LogLevel.INFO, "fail2ban", f"{label}: OK")
         return True
 
-    def _check_package_installed(self) -> bool:
+    def _package_installed(self) -> bool:
         """Prüft per dpkg-query, ob das Paket fail2ban installiert ist.
+
+        Ohne eigene Meldung — für uninstall/test, die den Fall je nach
+        Kontext unterschiedlich vermelden (idempotenter Abbruch bzw. Fehler).
 
         Returns:
             True, wenn dpkg-query den Status "install ok installed" meldet.
@@ -262,13 +352,52 @@ class Fail2ban(Module):
         action = SysCmdAction(
             command=[self.DPKG_QUERY, "-W", "-f=${Status}", "fail2ban"], timeout=15
         )
-        if self.run_action(action) == 0 and "install ok installed" in action.stdout:
+        return self.run_action(action) == 0 and "install ok installed" in action.stdout
+
+    def _check_package_installed(self) -> bool:
+        """Prüft per dpkg-query, ob das Paket fail2ban installiert ist.
+
+        Returns:
+            True, wenn dpkg-query den Status "install ok installed" meldet.
+        """
+        if self._package_installed():
             self.send_message(LogLevel.INFO, "fail2ban", "Paket fail2ban: installiert")
             return True
         self.send_message(
             LogLevel.ERROR, "fail2ban", "Paket fail2ban: nicht installiert"
         )
         return False
+
+    def _check_daemon_ping(self) -> bool:
+        """Prüft per fail2ban-client ping, ob der Daemon antwortet.
+
+        Returns:
+            True, wenn die Antwort "pong" enthält, sonst False.
+        """
+        action = SysCmdAction(command=[self.FAIL2BAN_CLIENT, "ping"], timeout=15)
+        if self.run_action(action) == 0 and "pong" in action.stdout:
+            self.send_message(LogLevel.INFO, "fail2ban", "Daemon-Ping: pong")
+            return True
+        self.send_message(
+            LogLevel.ERROR, "fail2ban", "Daemon-Ping: keine Antwort (pong erwartet)"
+        )
+        return False
+
+    def _check_jail_status_lines(self) -> bool:
+        """Fragt den sshd-Jail-Status ab und protokolliert ihn zeilenweise.
+
+        Returns:
+            True, wenn der Status abfragbar ist, sonst False.
+        """
+        action = SysCmdAction(
+            command=[self.FAIL2BAN_CLIENT, "status", "sshd"], timeout=15
+        )
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "fail2ban", "sshd-Jail: nicht abfragbar")
+            return False
+        for line in action.stdout.splitlines():
+            self.send_message(LogLevel.INFO, "fail2ban", f"sshd-Jail: {line}")
+        return True
 
     def _check_jail_local_exists(self) -> bool:
         """Prüft, ob jail.local vorhanden ist.

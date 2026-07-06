@@ -260,3 +260,95 @@ def test_check_ignoreip_loaded_command_failure(
         Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "exit 1")
     )
     assert mod._check_ignoreip_loaded(["203.0.113.7"]) is False
+
+
+# --- _package_installed ---
+
+
+def test_package_installed_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Meldet dpkg-query 'install ok installed', liefert die Prüfung True."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'install ok installed'"),
+    )
+    assert mod._package_installed() is True
+
+
+def test_package_installed_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein anderer Paketstatus liefert False."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban,
+        "DPKG_QUERY",
+        _make_executable(tmp_path, "echo 'deinstall ok config-files'"),
+    )
+    assert mod._package_installed() is False
+
+
+# --- _check_daemon_ping ---
+
+
+def test_check_daemon_ping_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Antwortet der Daemon mit pong, liefert die Prüfung True."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "echo pong")
+    )
+    assert mod._check_daemon_ping() is True
+
+
+def test_check_daemon_ping_false_on_missing_pong(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt 'pong' in der Antwort, liefert die Prüfung False."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "echo egal")
+    )
+    assert mod._check_daemon_ping() is False
+
+
+def test_check_daemon_ping_false_on_command_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheitert der Befehl, liefert die Prüfung False."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "exit 1")
+    )
+    assert mod._check_daemon_ping() is False
+
+
+# --- _check_jail_status_lines ---
+
+
+def test_check_jail_status_lines_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist der Jail-Status abfragbar, liefert die Prüfung True."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban,
+        "FAIL2BAN_CLIENT",
+        _make_executable(tmp_path, "echo 'Status for the jail: sshd'"),
+    )
+    assert mod._check_jail_status_lines() is True
+
+
+def test_check_jail_status_lines_false_on_command_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheitert der Abruf, liefert die Prüfung False."""
+    mod = _make_fail2ban()
+    monkeypatch.setattr(
+        Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "exit 1")
+    )
+    assert mod._check_jail_status_lines() is False
