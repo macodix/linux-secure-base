@@ -77,6 +77,23 @@ def _timer_override_content(hhmm: str) -> str:
     )
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich die vier Reboot-/Zeitplan-Schlüssel ab
+    (auto_reboot, auto_reboot_time, apt_daily_time, apt_daily_upgrade_time)
+    — admin_mail und jedes Geheimnis werden nie über diesen Weg gelesen.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 class Unattended(Module):
     """Automatisierte Sicherheitsupdates über pifos-Aktionen."""
 
@@ -144,6 +161,47 @@ class Unattended(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: liest ausschließlich die fünf unkritischen Schlüssel
+        unten aus values; Geheimnisse erscheinen hier nie, auch wenn sie
+        in values stünden.
+
+        Args:
+            values: Konfigurationswerte des Moduls (admin_mail,
+                auto_reboot, auto_reboot_time, apt_daily_time,
+                apt_daily_upgrade_time, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit
+            "## Automatische Sicherheitsupdates".
+        """
+        admin_mail = _doc_value(values, "admin_mail")
+        auto_reboot = _doc_value(values, "auto_reboot")
+        auto_reboot_time = _doc_value(values, "auto_reboot_time")
+        apt_daily_time = _doc_value(values, "apt_daily_time")
+        apt_daily_upgrade_time = _doc_value(values, "apt_daily_upgrade_time")
+        return (
+            "\n## Automatische Sicherheitsupdates\n\n"
+            "**Pakete:** unattended-upgrades\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.UU_CONF}`:\n"
+            f"  - `Automatic-Reboot = {auto_reboot}`\n"
+            f"  - `Automatic-Reboot-Time = {auto_reboot_time}`\n"
+            f"  - `Mail = {admin_mail} (only-on-error)`\n"
+            f"- `{cls.PERIODIC_CONF}`:\n"
+            "  - `APT::Periodic::Update-Package-Lists = 1`\n"
+            "  - `APT::Periodic::Unattended-Upgrade = 1`\n"
+            f"- `{cls.DAILY_DROPIN}`:\n"
+            f"  - `OnCalendar = {apt_daily_time}`\n"
+            f"- `{cls.UPGRADE_DROPIN}`:\n"
+            f"  - `OnCalendar = {apt_daily_upgrade_time}`\n"
+            "\n**Timer/Cron:** apt-daily.timer und apt-daily-upgrade.timer"
+            " (systemd) mit konfigurierten Uhrzeiten\n"
+        )
 
     def _validate(self) -> None:
         """Prüft admin_mail, auto_reboot und die drei Uhrzeiten.

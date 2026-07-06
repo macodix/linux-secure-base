@@ -47,6 +47,62 @@ def test_unattended_config_declares_all_keys() -> None:
     ]
 
 
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Dateien, Werte und Timer-Zeile."""
+    values = {
+        "auto_reboot": "yes",
+        "auto_reboot_time": "23:45",
+        "apt_daily_time": "23:15",
+        "apt_daily_upgrade_time": "23:30",
+    }
+    section = Unattended.doc(values)
+    assert section.startswith("\n## Automatische Sicherheitsupdates\n\n")
+    assert "**Pakete:** unattended-upgrades" in section
+    assert f"`{Unattended.UU_CONF}`" in section
+    assert "Automatic-Reboot = yes" in section
+    assert "Automatic-Reboot-Time = 23:45" in section
+    assert f"`{Unattended.PERIODIC_CONF}`" in section
+    assert "APT::Periodic::Update-Package-Lists = 1" in section
+    assert "APT::Periodic::Unattended-Upgrade = 1" in section
+    assert f"`{Unattended.DAILY_DROPIN}`" in section
+    assert "OnCalendar = 23:15" in section
+    assert f"`{Unattended.UPGRADE_DROPIN}`" in section
+    assert "OnCalendar = 23:30" in section
+    assert (
+        "**Timer/Cron:** apt-daily.timer und apt-daily-upgrade.timer"
+        " (systemd) mit konfigurierten Uhrzeiten" in section
+    )
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Unattended.doc({})
+    assert "Automatic-Reboot = (leer/Default)" in section
+    assert "Automatic-Reboot-Time = (leer/Default)" in section
+    assert section.count("OnCalendar = (leer/Default)") == 2
+
+
+def test_doc_never_leaks_unrelated_secret_value() -> None:
+    """Ein Kunstgeheimnis unter fremdem Schlüssel erscheint nie in doc()."""
+    values = {
+        "auto_reboot": "yes",
+        "auto_reboot_time": "23:45",
+        "apt_daily_time": "23:15",
+        "apt_daily_upgrade_time": "23:30",
+        "admin_mail": "admin@example.com",
+        "relay_password": "GEHEIM-X-KUNSTWERT",
+    }
+    section = Unattended.doc(values)
+    assert "GEHEIM-X-KUNSTWERT" not in section
+    assert "relay_password" not in section
+    # admin_mail ist kein Geheimnis: die Mail-Zeile dokumentiert sie
+    # wie das Bash-Original.
+    assert "Mail = admin@example.com (only-on-error)" in section
+
+
 # --- _validate ---
 
 
