@@ -10,13 +10,14 @@ bereits in pifos getestet.
 import grp
 import os
 import pwd
+import socket
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.nginx import Nginx
 
@@ -37,6 +38,17 @@ class _NoOpSystemdAction(SystemdServiceAction):
         return self.status
 
 
+class _FailOnStopSystemdAction(SystemdServiceAction):
+    """Wie _NoOpSystemdAction, aber operation='stop' schlägt fehl (Abbruch-Test)."""
+
+    def run(self) -> str:
+        if self.operation == "stop":
+            self.status = "failed"
+            raise ActionError("stop absichtlich fehlgeschlagen (Test)")
+        self.status = "finished"
+        return self.status
+
+
 def _make_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Nginx, MagicMock]:
@@ -49,6 +61,7 @@ def _make_module(
     monkeypatch.setattr(Nginx, "AA_STATUS_BIN", "/usr/bin/true")
     monkeypatch.setattr(Nginx, "AA_AUTODEP_BIN", "/usr/bin/true")
     monkeypatch.setattr(Nginx, "AA_COMPLAIN_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Nginx, "APPARMOR_PARSER_BIN", "/usr/bin/true")
     monkeypatch.setattr(Nginx, "APT_ACTION_CLS", _NoOpAptAction)
     monkeypatch.setattr(Nginx, "SYSTEMD_ACTION_CLS", _NoOpSystemdAction)
     # Eigentümerwechsel auf www-data verlangt Systemrechte; im Test auf den
@@ -163,3 +176,146 @@ def test_check_reports_mismatch(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("vhost example.com fehlt" in str(m) for m in messages)
+
+
+# --- Betriebsart uninstall ---
+
+
+def test_uninstall_removes_own_artifacts_but_keeps_docroot_and_certs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt vhost/Härtung/AppArmor-Profil; docroot/Zertifikate bleiben."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    docroot = tmp_path / "wwwroot"
+    (docroot / "index.html").write_text("hallo", encoding="utf-8")
+    cert_dir = Path(mod.LETSENCRYPT_LIVE) / "example.com"
+    cert_dir.mkdir(parents=True)
+    (cert_dir / "privkey.pem").write_text("geheim", encoding="utf-8")
+    Path(mod.AA_PROFILE).write_text("profil", encoding="utf-8")
+
+    fake_dpkg = tmp_path / "fake-dpkg-query"
+    fake_dpkg.write_text("#!/bin/sh\nprintf 'install ok installed'\n", encoding="utf-8")
+    fake_dpkg.chmod(0o755)
+    monkeypatch.setattr(Nginx, "DPKG_QUERY_BIN", str(fake_dpkg))
+
+    conn.reset_mock()
+    # uninstall ist konfig-unabhängig — leere Werte dürfen nicht abbrechen.
+    mod.nginx_vhosts = ""
+    mod.nginx_certbot_mail = ""
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    assert not Path(tmp_path / "sites-available" / "example.com").exists()
+    assert not Path(tmp_path / "sites-enabled" / "example.com").exists()
+    assert not Path(mod.HARDENING_DROPIN).exists()
+    assert not Path(mod.AA_PROFILE).exists()
+    assert docroot.is_dir()
+    assert (docroot / "index.html").read_text(encoding="utf-8") == "hallo"
+    assert cert_dir.is_dir()
+    assert (cert_dir / "privkey.pem").exists()
+    messages = _sent_messages(conn)
+    assert any("Zertifikate" in str(m) and "bleiben" in str(m) for m in messages)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_uninstall_stops_at_first_failed_step_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheitert ein Schritt, liefert uninstall 1 und stoppt vor den Folgeschritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    fake_dpkg = tmp_path / "fake-dpkg-query"
+    fake_dpkg.write_text("#!/bin/sh\nprintf 'install ok installed'\n", encoding="utf-8")
+    fake_dpkg.chmod(0o755)
+    monkeypatch.setattr(Nginx, "DPKG_QUERY_BIN", str(fake_dpkg))
+    monkeypatch.setattr(Nginx, "SYSTEMD_ACTION_CLS", _FailOnStopSystemdAction)
+
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: nginx stoppen" in messages
+    # Die Pakete dürfen nach dem Abbruch nicht entfernt worden sein.
+    assert "Pakete entfernen" not in messages
+    # Der vhost muss unangetastet bleiben (Abbruch vor diesem Schritt).
+    assert Path(tmp_path / "sites-available" / "example.com").exists()
+
+
+def test_uninstall_skips_when_package_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist nginx laut dpkg nicht installiert, bleiben alle Artefakte unangetastet."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    # DPKG_QUERY_BIN bleibt /usr/bin/true (fixture-Default) — liefert keine
+    # Ausgabe, gilt also als "nicht installiert".
+
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Paket nginx nicht installiert — nichts zu tun" in messages
+    assert Path(tmp_path / "sites-available" / "example.com").exists()
+    assert Path(mod.HARDENING_DROPIN).exists()
+
+
+# --- Betriebsart test ---
+
+
+def test_test_operation_all_checks_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mit erreichbarem Listener und harmlosen Platzhaltern meldet test Erfolg."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    fake_systemctl = tmp_path / "fake-systemctl-active"
+    fake_systemctl.write_text("#!/bin/sh\nprintf 'active'\n", encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+    monkeypatch.setattr(Nginx, "SYSTEMCTL_BIN", str(fake_systemctl))
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        monkeypatch.setattr(Nginx, "TEST_TCP_PORT", port)
+        monkeypatch.setattr(Nginx, "TEST_TCP_TIMEOUT", 1.0)
+        mod.operation = "test"
+
+        result = mod.start()
+
+        assert result == 0
+        messages = _sent_messages(conn)
+        assert "certbot renew --dry-run ok" in messages
+    finally:
+        server.close()
+
+
+def test_test_operation_reports_failure_without_running_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne aktiven Dienst/Listener meldet test einen Fehlschlag."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+    monkeypatch.setattr(Nginx, "SYSTEMCTL_BIN", "/usr/bin/false")
+    monkeypatch.setattr(Nginx, "TEST_TCP_PORT", free_port)
+    monkeypatch.setattr(Nginx, "TEST_TCP_TIMEOUT", 1.0)
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("TCP-Connect" in str(m) and "fehlgeschlagen" in str(m) for m in messages)

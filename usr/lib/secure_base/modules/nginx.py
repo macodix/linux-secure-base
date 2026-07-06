@@ -11,6 +11,7 @@ import contextlib
 import grp
 import pwd
 import re
+import socket
 import stat
 from collections.abc import Iterator
 from pathlib import Path
@@ -45,6 +46,12 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # 2026-07-05, Schweregrad mittel).
 _DOCROOT_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
+# Kennzeichnet von diesem Modul angelegte Dateien (erste Zeile). uninstall
+# erkennt darüber die eigenen Server-Blöcke, unabhängig von nginx_vhosts
+# (Original: do_uninstall läuft auch ohne optional-conf).
+_OWN_FILE_MARKER = "Von secure-base/nginx angelegt"
+_OWN_FILE_MARKER_LINE = f"# {_OWN_FILE_MARKER} — nicht von Hand bearbeiten.\n"
+
 
 def _http_block_content(domain: str, docroot: str) -> str:
     """Baut den Port-80-Server-Block für den Zertifikatsbezug.
@@ -59,8 +66,7 @@ def _http_block_content(domain: str, docroot: str) -> str:
         Inhalt der Server-Block-Datei.
     """
     return (
-        "# Von secure-base/nginx angelegt — nicht von Hand bearbeiten.\n"
-        "server {\n"
+        _OWN_FILE_MARKER_LINE + "server {\n"
         "    listen 80;\n"
         "    listen [::]:80;\n"
         f"    server_name {domain};\n"
@@ -73,8 +79,7 @@ def _http_block_content(domain: str, docroot: str) -> str:
 def _hardening_content() -> str:
     """Baut den Inhalt des systemd-Hardening-Drop-ins."""
     return (
-        "# Von secure-base/nginx angelegt — nicht von Hand bearbeiten.\n"
-        "[Service]\n"
+        _OWN_FILE_MARKER_LINE + "[Service]\n"
         "NoNewPrivileges=true\n"
         "ProtectSystem=strict\n"
         "ProtectHome=true\n"
@@ -105,6 +110,7 @@ class Nginx(Module):
     AA_STATUS_BIN: ClassVar[str] = "/usr/sbin/aa-status"
     AA_AUTODEP_BIN: ClassVar[str] = "/usr/sbin/aa-autodep"
     AA_COMPLAIN_BIN: ClassVar[str] = "/usr/sbin/aa-complain"
+    APPARMOR_PARSER_BIN: ClassVar[str] = "/usr/sbin/apparmor_parser"
 
     NGINX_CONF: ClassVar[str] = "/etc/nginx/nginx.conf"
     SITES_AVAILABLE: ClassVar[str] = "/etc/nginx/sites-available"
@@ -124,8 +130,17 @@ class Nginx(Module):
         "nginx",
         "python3-certbot-nginx",
     )
+    # uninstall entfernt nur die von install hinzugefügten Pakete; certbot
+    # und apparmor-utils bleiben (können von anderem genutzt werden).
+    UNINSTALL_PACKAGES: ClassVar[tuple[str, ...]] = ("nginx", "python3-certbot-nginx")
 
     CERTBOT_TIMEOUT: ClassVar[float] = 120.0
+
+    # Betriebsart test: lokaler TCP-Connect ohne TLS-Handshake, nur
+    # Erreichbarkeit (dependency-frei, sitzungs-neutral, wie im Original).
+    TEST_TCP_HOST: ClassVar[str] = "127.0.0.1"
+    TEST_TCP_PORT: ClassVar[int] = 443
+    TEST_TCP_TIMEOUT: ClassVar[float] = 2.0
 
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
     SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
@@ -144,17 +159,26 @@ class Nginx(Module):
     _certbot_mode: str
 
     def start(self) -> int:
-        """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
+        """Führt Einrichtung, Abgleich, Rückbau oder Funktionstest aus.
+
+        uninstall ist Konfig-unabhängig (wie das Original: do_uninstall
+        läuft auch ohne gültige nginx_vhosts/certbot-Werte) und ruft
+        deshalb _validate() bewusst nicht auf.
 
         Returns:
             0 bei Erfolg, ungleich 0 bei Fehler.
 
         Raises:
-            ModuleError: Bei ungültiger Konfiguration (vhosts, Mail, Modus).
+            ModuleError: Bei ungültiger Konfiguration (vhosts, Mail, Modus);
+                nicht bei operation == "uninstall".
         """
+        if self.operation == "uninstall":
+            return self._uninstall()
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     # --- Validierung -----------------------------------------------------
@@ -449,6 +473,286 @@ class Nginx(Module):
             self.send_message(LogLevel.ERROR, "nginx", f"fehlgeschlagen: {label}")
             return 1
         return 0
+
+    # --- Rückbau (uninstall) ---------------------------------------------
+
+    def _uninstall(self) -> int:
+        """Baut nginx zurück: vhosts, Härtung, Firewall-Regeln, Paket.
+
+        Konfig-unabhängig wie das Original (do_uninstall läuft auch ohne
+        gültige nginx_vhosts/certbot-Werte): die eigenen Server-Blöcke
+        werden über den Marker-Kommentar ermittelt, nicht über
+        nginx_vhosts. docroots und Let's-Encrypt-Zertifikate bleiben in
+        jedem Fall unangetastet — kein Datenverlust durch uninstall.
+
+        Returns:
+            0 bei Erfolg (auch wenn nginx nicht installiert war), 1 beim
+            ersten fehlgeschlagenen Schritt.
+        """
+        if not self._nginx_package_installed():
+            self.send_message(
+                LogLevel.INFO, "nginx", "Paket nginx nicht installiert — nichts zu tun"
+            )
+            return 0
+        for label, action in self._uninstall_steps():
+            if self._step(label, action) != 0:
+                return 1
+        return 0
+
+    def _uninstall_steps(self) -> Iterator[tuple[str, Action]]:
+        """Liefert die Rückbau-Schritte in Ausführungsreihenfolge.
+
+        Als Generator, damit die Existenzprüfungen (Hardening-Drop-in,
+        eigene vhost-Dateien, AppArmor-Profil) erst zur Laufzeit
+        ausgewertet werden, analog zu _pre_certbot_steps.
+
+        Yields:
+            (Label, Aktion)-Paare in Ausführungsreihenfolge.
+        """
+        if self._ufw_rule_present(80):
+            yield (
+                "Firewall 80/tcp zurücknehmen",
+                SysCmdAction([self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30),
+            )
+        if self._ufw_rule_present(443):
+            yield (
+                "Firewall 443/tcp zurücknehmen",
+                SysCmdAction([self.UFW_BIN, "delete", "allow", "443/tcp"], timeout=30),
+            )
+
+        yield (
+            "nginx stoppen",
+            self.SYSTEMD_ACTION_CLS(operation="stop", unit="nginx", timeout=60),
+        )
+        yield (
+            "nginx deaktivieren",
+            self.SYSTEMD_ACTION_CLS(operation="disable", unit="nginx", timeout=60),
+        )
+
+        if Path(self.HARDENING_DROPIN).exists():
+            yield (
+                "systemd-Hardening-Drop-in entfernen",
+                DeleteFileAction(path=self.HARDENING_DROPIN, safe_mode=False),
+            )
+            yield (
+                "systemd neu laden",
+                self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60),
+            )
+
+        if Path(self.NGINX_CONF).exists():
+            yield (
+                "server_tokens-Einstellung entfernen",
+                LineInFileAction(
+                    path=self.NGINX_CONF,
+                    line="    server_tokens off;",
+                    match=r"^\s*server_tokens\b",
+                    state="absent",
+                ),
+            )
+
+        for name in self._own_vhost_names():
+            enabled_link = Path(self.SITES_ENABLED) / name
+            if enabled_link.exists() or enabled_link.is_symlink():
+                yield (
+                    f"vhost-Symlink entfernen ({name})",
+                    DeleteFileAction(path=str(enabled_link), safe_mode=False),
+                )
+            yield (
+                f"Server-Block entfernen ({name})",
+                DeleteFileAction(
+                    path=str(Path(self.SITES_AVAILABLE) / name), safe_mode=False
+                ),
+            )
+
+        if Path(self.AA_PROFILE).exists():
+            if Path(self.APPARMOR_PARSER_BIN).exists():
+                yield (
+                    "AppArmor-Profil entladen",
+                    SysCmdAction(
+                        [self.APPARMOR_PARSER_BIN, "-R", self.AA_PROFILE], timeout=30
+                    ),
+                )
+            else:
+                self.send_message(
+                    LogLevel.WARN,
+                    "nginx",
+                    f"{self.APPARMOR_PARSER_BIN} nicht verfügbar — AppArmor-Profil"
+                    " wird nur als Datei entfernt, nicht aktiv entladen",
+                )
+            yield (
+                "AppArmor-Profil-Datei entfernen",
+                DeleteFileAction(path=self.AA_PROFILE, safe_mode=False),
+            )
+
+        self.send_message(
+            LogLevel.WARN,
+            "nginx",
+            f"Let's-Encrypt-Zertifikate unter {self.LETSENCRYPT_LIVE} bleiben"
+            " bestehen — bei Bedarf manuell entfernen (certbot delete)",
+        )
+        yield (
+            "Pakete entfernen",
+            self.APT_ACTION_CLS(packages=list(self.UNINSTALL_PACKAGES), state="absent"),
+        )
+
+    def _nginx_package_installed(self) -> bool:
+        """Prüft still, ob das Paket nginx aktuell installiert ist.
+
+        Kein Teil von _verify (dort meldet _check_package jedes Ergebnis);
+        hier nur ein stiller Vorab-Check für den frühen Ausstieg aus
+        _uninstall.
+
+        Returns:
+            True, wenn dpkg das Paket nginx als installiert führt.
+        """
+        action = SysCmdAction(
+            [self.DPKG_QUERY_BIN, "-W", "-f=${Status}", "nginx"], timeout=15
+        )
+        with contextlib.suppress(ActionError):
+            action.run()
+        return "install ok installed" in action.stdout
+
+    def _ufw_rule_present(self, port: int) -> bool:
+        """Prüft, ob ufw eine eingehende allow-Regel für den Port gespeichert hat.
+
+        Ein Fehlschlag des ufw-Aufrufs selbst gilt als „Regel nicht
+        gesetzt" (wie im Original: dessen grep gegen die — dann leere —
+        Ausgabe liefert ebenfalls keinen Treffer).
+
+        Args:
+            port: Zu prüfender TCP-Port.
+
+        Returns:
+            True, wenn eine passende allow-Regel gespeichert ist.
+        """
+        action = SysCmdAction([self.UFW_BIN, "show", "added"], timeout=15)
+        if self.run_action(action) != 0:
+            return False
+        return (
+            re.search(rf"^ufw allow {port}/tcp$", action.stdout, re.MULTILINE)
+            is not None
+        )
+
+    def _own_vhost_names(self) -> list[str]:
+        """Ermittelt die von diesem Modul angelegten Server-Block-Dateinamen.
+
+        Liest SITES_AVAILABLE unabhängig von nginx_vhosts — die eigenen
+        Dateien tragen den Marker-Kommentar in der ersten Zeile (siehe
+        _OWN_FILE_MARKER).
+
+        Returns:
+            Nach Dateiname sortierte Liste der eigenen Server-Blöcke.
+        """
+        directory = Path(self.SITES_AVAILABLE)
+        if not directory.is_dir():
+            return []
+        names: list[str] = []
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_file():
+                continue
+            content = self._read_text(str(entry))
+            first_line = content.splitlines()[0] if content else ""
+            if _OWN_FILE_MARKER in first_line:
+                names.append(entry.name)
+        return names
+
+    # --- Funktionstest (test) --------------------------------------------
+
+    def _test(self) -> int:
+        """Führt einen Funktionstest ohne Systemänderung durch.
+
+        Sammelnd wie _verify: alle Prüfungen laufen durch, ohne beim
+        ersten Fehlschlag abzubrechen.
+
+        Returns:
+            0, wenn alle Prüfungen erfolgreich waren, sonst 1.
+        """
+        ok = True
+        ok &= self._check_value(
+            [self.SYSTEMCTL_BIN, "is-active", "nginx"], "active", "nginx aktiv"
+        )
+        ok &= self._check_tcp_connect()
+        ok &= self._check_certbot_dry_run()
+        self.send_message(
+            LogLevel.INFO,
+            "nginx",
+            "HTTPS-Abruf der Domains von außen manuell verifizieren"
+            " (Zertifikatskette, Redirect 80→443)",
+        )
+        return 0 if ok else 1
+
+    def _check_tcp_connect(self) -> bool:
+        """Prüft einen lokalen TCP-Connect, ohne TLS-Handshake.
+
+        Dependency-frei und sitzungs-neutral, wie im Original (dort über
+        /dev/tcp statt eines echten HTTPS-Abrufs).
+
+        Returns:
+            True bei erfolgreichem Connect, sonst False.
+        """
+        target = f"{self.TEST_TCP_HOST}:{self.TEST_TCP_PORT}"
+        try:
+            with socket.create_connection(
+                (self.TEST_TCP_HOST, self.TEST_TCP_PORT), timeout=self.TEST_TCP_TIMEOUT
+            ):
+                pass
+        except OSError:
+            self.send_message(
+                LogLevel.ERROR, "nginx", f"TCP-Connect auf {target} fehlgeschlagen"
+            )
+            return False
+        self.send_message(LogLevel.INFO, "nginx", f"TCP-Connect auf {target} ok")
+        return True
+
+    def _check_certbot_dry_run(self) -> bool:
+        """Prüft die Zertifikatserneuerung als Trockenlauf.
+
+        Braucht erreichbaren Port 80 — deshalb temporär geöffnet.
+        Fail-closed (konv-scripting-python.md Abschnitt 4.7, analog zu
+        _run_certbot): der finally-Zweig schließt Port 80 in jedem Fall
+        wieder, auch wenn certbot renew scheitert.
+
+        Returns:
+            True, wenn certbot renew --dry-run erfolgreich lief und Port
+            80 danach wieder geschlossen wurde.
+        """
+        self.send_message(
+            LogLevel.INFO, "nginx", "certbot renew --dry-run (Port 80/tcp temporär)"
+        )
+        if (
+            self.run_action(SysCmdAction([self.UFW_BIN, "allow", "80/tcp"], timeout=30))
+            != 0
+        ):
+            self.send_message(
+                LogLevel.ERROR, "nginx", "Firewall 80/tcp öffnen fehlgeschlagen"
+            )
+            return False
+        try:
+            action = SysCmdAction(
+                [self.CERTBOT_BIN, "renew", "--dry-run"], timeout=self.CERTBOT_TIMEOUT
+            )
+            if self.run_action(action) == 0:
+                self.send_message(LogLevel.INFO, "nginx", "certbot renew --dry-run ok")
+                dry_run_ok = True
+            else:
+                self.send_message(
+                    LogLevel.ERROR, "nginx", "certbot renew --dry-run fehlgeschlagen"
+                )
+                dry_run_ok = False
+        finally:
+            close_ok = (
+                self.run_action(
+                    SysCmdAction(
+                        [self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30
+                    )
+                )
+                == 0
+            )
+            if not close_ok:
+                self.send_message(
+                    LogLevel.ERROR, "nginx", "Firewall 80/tcp schließen fehlgeschlagen"
+                )
+        return dry_run_ok and close_ok
 
     # --- Abgleich (check) ----------------------------------------------
 

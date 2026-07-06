@@ -1,13 +1,23 @@
 """Unit-Tests für secure_base.modules.nginx."""
 
+import socket
 import stat
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.nginx import Nginx, _hardening_content, _http_block_content
+
+
+def _write_script(tmp_path: Path, name: str, body: str) -> str:
+    """Legt ein ausführbares Fake-Programm unter tmp_path an und liefert den Pfad."""
+    script = tmp_path / name
+    script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script)
 
 
 def _make_nginx(
@@ -312,3 +322,243 @@ def test_check_file_mode_mismatch_returns_false(tmp_path: Path) -> None:
     mod = _make_nginx()
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert mod._check_file_mode(str(target), 0o644, "root", "root") is False
+
+
+# --- Marker-Konstante in generierten Dateien ---
+
+
+def test_http_block_content_contains_own_file_marker() -> None:
+    """Der Server-Block trägt den Marker, über den uninstall ihn wiederfindet."""
+    content = _http_block_content("example.com", "/var/www/example.com")
+    assert "Von secure-base/nginx angelegt" in content.splitlines()[0]
+
+
+def test_hardening_content_contains_own_file_marker() -> None:
+    """Das Hardening-Drop-in trägt denselben Marker wie die Server-Blöcke."""
+    content = _hardening_content()
+    assert "Von secure-base/nginx angelegt" in content.splitlines()[0]
+
+
+# --- _own_vhost_names ---
+
+
+def test_own_vhost_names_detects_marker_and_sorts(tmp_path: Path) -> None:
+    """Nur Dateien mit Marker in Zeile 1 werden gefunden, sortiert nach Namen."""
+    sites_available = tmp_path / "sites-available"
+    sites_available.mkdir()
+    (sites_available / "zebra.example.com").write_text(
+        _http_block_content("zebra.example.com", "/var/www/zebra.example.com"),
+        encoding="utf-8",
+    )
+    (sites_available / "alpha.example.com").write_text(
+        _http_block_content("alpha.example.com", "/var/www/alpha.example.com"),
+        encoding="utf-8",
+    )
+    (sites_available / "default").write_text(
+        "server {\n    listen 80 default_server;\n}\n", encoding="utf-8"
+    )
+    (sites_available / "subdir").mkdir()
+
+    mod = _make_nginx()
+    mod.SITES_AVAILABLE = str(sites_available)  # type: ignore[misc]
+
+    assert mod._own_vhost_names() == ["alpha.example.com", "zebra.example.com"]
+
+
+def test_own_vhost_names_missing_directory_returns_empty(tmp_path: Path) -> None:
+    """Fehlt SITES_AVAILABLE, liefert _own_vhost_names eine leere Liste."""
+    mod = _make_nginx()
+    mod.SITES_AVAILABLE = str(tmp_path / "nichts")  # type: ignore[misc]
+    assert mod._own_vhost_names() == []
+
+
+# --- _ufw_rule_present ---
+
+
+def test_ufw_rule_present_true(tmp_path: Path) -> None:
+    """Eine passende 'ufw allow PORT/tcp'-Zeile liefert True."""
+    fake_ufw = _write_script(tmp_path, "fake-ufw", "printf 'ufw allow 443/tcp\\n'")
+    mod = _make_nginx()
+    mod.UFW_BIN = fake_ufw  # type: ignore[misc]
+    assert mod._ufw_rule_present(443) is True
+
+
+def test_ufw_rule_present_false_when_absent(tmp_path: Path) -> None:
+    """Ohne passende Zeile liefert _ufw_rule_present False."""
+    fake_ufw = _write_script(tmp_path, "fake-ufw", "printf 'ufw allow 22/tcp\\n'")
+    mod = _make_nginx()
+    mod.UFW_BIN = fake_ufw  # type: ignore[misc]
+    assert mod._ufw_rule_present(443) is False
+
+
+def test_ufw_rule_present_command_failure_returns_false(tmp_path: Path) -> None:
+    """Scheitert der ufw-Aufruf selbst, gilt die Regel als nicht gesetzt."""
+    fake_ufw = _write_script(tmp_path, "fake-ufw", "exit 1")
+    mod = _make_nginx()
+    mod.UFW_BIN = fake_ufw  # type: ignore[misc]
+    assert mod._ufw_rule_present(443) is False
+
+
+# --- _nginx_package_installed ---
+
+
+def test_nginx_package_installed_true(tmp_path: Path) -> None:
+    """Meldet dpkg-query das Paket als installiert, liefert die Prüfung True."""
+    fake_dpkg = _write_script(
+        tmp_path, "fake-dpkg-query", "printf 'install ok installed'"
+    )
+    mod = _make_nginx()
+    mod.DPKG_QUERY_BIN = fake_dpkg  # type: ignore[misc]
+    assert mod._nginx_package_installed() is True
+
+
+def test_nginx_package_installed_false(tmp_path: Path) -> None:
+    """Meldet dpkg-query nichts Passendes, liefert die Prüfung False."""
+    fake_dpkg = _write_script(tmp_path, "fake-dpkg-query", "exit 1")
+    mod = _make_nginx()
+    mod.DPKG_QUERY_BIN = fake_dpkg  # type: ignore[misc]
+    assert mod._nginx_package_installed() is False
+
+
+# --- _uninstall ---
+
+
+def test_uninstall_short_circuits_when_package_not_installed(tmp_path: Path) -> None:
+    """Ist nginx nicht installiert, kehrt _uninstall ohne Schritte zurück."""
+    fake_dpkg = _write_script(tmp_path, "fake-dpkg-query", "exit 1")
+    mod = _make_nginx(operation="uninstall")
+    mod.DPKG_QUERY_BIN = fake_dpkg  # type: ignore[misc]
+
+    assert mod._uninstall() == 0
+
+
+def test_uninstall_stops_at_first_failed_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
+    conn = MagicMock()
+    mod = Nginx(conn=conn, loglevel=LogLevel.INFO)
+    mod.operation = "uninstall"
+    monkeypatch.setattr(mod, "_nginx_package_installed", lambda: True)
+    monkeypatch.setattr(
+        mod,
+        "_uninstall_steps",
+        lambda: iter(
+            [
+                ("Schritt 1 (scheitert)", SysCmdAction(["/bin/false"], timeout=5)),
+                (
+                    "Schritt 2 (darf nicht laufen)",
+                    SysCmdAction(["/bin/true"], timeout=5),
+                ),
+            ]
+        ),
+    )
+
+    assert mod._uninstall() == 1
+    messages = [call.args[0].payload for call in conn.send.call_args_list]
+    assert "fehlgeschlagen: Schritt 1 (scheitert)" in messages
+    assert "Schritt 2 (darf nicht laufen)" not in messages
+
+
+def test_uninstall_is_config_independent() -> None:
+    """start() ruft bei operation='uninstall' _validate() nicht auf.
+
+    Eine leere nginx_vhosts-Angabe würde _validate() mit ModuleError
+    abbrechen lassen (siehe test_parse_vhosts_rejects_empty_list) — bei
+    uninstall darf das nicht passieren.
+    """
+    fake_dpkg = "/bin/false"
+    mod = _make_nginx(nginx_vhosts="", nginx_certbot_mail="", operation="uninstall")
+    mod.DPKG_QUERY_BIN = fake_dpkg  # type: ignore[misc]
+
+    assert mod.start() == 0
+
+
+# --- _check_tcp_connect ---
+
+
+def test_check_tcp_connect_success() -> None:
+    """Ein erreichbarer Listener liefert True."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        mod = _make_nginx()
+        mod.TEST_TCP_PORT = port  # type: ignore[misc]
+        mod.TEST_TCP_TIMEOUT = 1.0  # type: ignore[misc]
+        assert mod._check_tcp_connect() is True
+    finally:
+        server.close()
+
+
+def test_check_tcp_connect_failure() -> None:
+    """Ohne Listener auf dem Zielport liefert die Prüfung False."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+
+    mod = _make_nginx()
+    mod.TEST_TCP_PORT = free_port  # type: ignore[misc]
+    mod.TEST_TCP_TIMEOUT = 1.0  # type: ignore[misc]
+    assert mod._check_tcp_connect() is False
+
+
+# --- _check_certbot_dry_run ---
+
+
+def test_check_certbot_dry_run_success(tmp_path: Path) -> None:
+    """Gelingen Öffnen, Trockenlauf und Schließen, liefert die Prüfung True."""
+    mod = _make_nginx()
+    mod.UFW_BIN = "/bin/true"  # type: ignore[misc]
+    mod.CERTBOT_BIN = "/bin/true"  # type: ignore[misc]
+    assert mod._check_certbot_dry_run() is True
+
+
+def test_check_certbot_dry_run_open_fails(tmp_path: Path) -> None:
+    """Scheitert das Öffnen von Port 80, liefert die Prüfung False."""
+    mod = _make_nginx()
+    mod.UFW_BIN = "/bin/false"  # type: ignore[misc]
+    mod.CERTBOT_BIN = "/bin/true"  # type: ignore[misc]
+    assert mod._check_certbot_dry_run() is False
+
+
+def test_check_certbot_dry_run_renew_fails_but_closes_port(tmp_path: Path) -> None:
+    """Scheitert certbot renew, liefert die Prüfung False; Port 80 wird geschlossen."""
+    mod = _make_nginx()
+    mod.UFW_BIN = "/bin/true"  # type: ignore[misc]
+    mod.CERTBOT_BIN = "/bin/false"  # type: ignore[misc]
+    assert mod._check_certbot_dry_run() is False
+
+
+def test_check_certbot_dry_run_close_fails_even_if_renew_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Scheitert das Schließen von Port 80, liefert die Prüfung dennoch False."""
+    fake_ufw = _write_script(
+        tmp_path,
+        "fake-ufw",
+        'if [ "$1" = "delete" ]; then exit 1; fi\nexit 0',
+    )
+    mod = _make_nginx()
+    mod.UFW_BIN = fake_ufw  # type: ignore[misc]
+    mod.CERTBOT_BIN = "/bin/true"  # type: ignore[misc]
+    assert mod._check_certbot_dry_run() is False
+
+
+# --- _test ---
+
+
+def test_test_operation_reports_all_failures_when_nothing_runs() -> None:
+    """Ohne laufenden Dienst/Listener meldet _test alle Teilprüfungen als Fehler."""
+    mod = _make_nginx(operation="test")
+    mod.SYSTEMCTL_BIN = "/bin/false"  # type: ignore[misc]
+    mod.UFW_BIN = "/bin/false"  # type: ignore[misc]
+    mod.CERTBOT_BIN = "/bin/false"  # type: ignore[misc]
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+    mod.TEST_TCP_PORT = free_port  # type: ignore[misc]
+    mod.TEST_TCP_TIMEOUT = 1.0  # type: ignore[misc]
+
+    assert mod._test() == 1
