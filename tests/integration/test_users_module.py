@@ -65,6 +65,10 @@ _FAKE_USERADD = """#!/bin/sh
 touch "${GETENT_USER_CREATED_MARKER:?}"
 """
 
+_FAKE_USERDEL = """#!/bin/sh
+touch "${USERDEL_CALLED_MARKER:?}"
+"""
+
 
 class _NoOpAptAction(AptAction):
     """Ersetzt AptAction für Tests: läuft immer erfolgreich durch, ohne apt-get."""
@@ -137,6 +141,7 @@ def _make_module(
     fake_getent = _write_stub(tmp_path / "fake_getent.sh", _FAKE_GETENT)
     fake_id = _write_stub(tmp_path / "fake_id.sh", _FAKE_ID)
     fake_useradd = _write_stub(tmp_path / "fake_useradd.sh", _FAKE_USERADD)
+    fake_userdel = _write_stub(tmp_path / "fake_userdel.sh", _FAKE_USERDEL)
 
     monkeypatch.setattr(Users, "GETENT_BIN", fake_getent)
     monkeypatch.setattr(Users, "ID_BIN", fake_id)
@@ -146,6 +151,12 @@ def _make_module(
     monkeypatch.setattr(Users, "USERMOD_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "CHPASSWD_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "RUNUSER_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Users, "GPASSWD_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Users, "GROUPDEL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Users, "USERDEL_BIN", fake_userdel)
+    monkeypatch.setattr(Users, "PKILL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Users, "PKILL_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(Users, "TEST_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "APT_ACTION_CLS", _NoOpAptAction)
 
     monkeypatch.setenv("GETENT_ROOT_HASH", "$6$roothash$xyz")
@@ -158,6 +169,7 @@ def _make_module(
     monkeypatch.setenv("GETENT_SHELL", "/bin/bash")
     monkeypatch.setenv("GETENT_GROUP_EXISTS", "1")
     monkeypatch.setenv("FAKE_ID_GROUPS", "ssh-users alice")
+    monkeypatch.setenv("USERDEL_CALLED_MARKER", str(tmp_path / "userdel_called.marker"))
 
     _patch_pwd_grp(monkeypatch, _MAIN_USER)
 
@@ -167,6 +179,7 @@ def _make_module(
     mod.main_user = _MAIN_USER
     mod.main_user_password = "s3cret"  # noqa: S105 — Testwert, kein echtes Geheimnis
     mod.main_user_pubkey = _PUBKEY
+    mod.uninstall_remove_user = "no"
     return mod, conn, home
 
 
@@ -302,3 +315,133 @@ def test_check_reports_missing_authorized_keys(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("existiert nicht" in str(m) for m in messages)
+
+
+# --- uninstall ---
+
+
+def test_uninstall_default_keeps_user_but_drops_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall_remove_user=no (Vorgabe) entfernt nur Mitgliedschaft und Gruppe."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert f"Mitgliedschaft {_MAIN_USER} in ssh-users gelöst" in messages
+    assert "Gruppe ssh-users entfernt" in messages
+    assert any("bleiben" in m and "unverändert" in m for m in messages)
+    assert "root-Passwort bleibt unverändert" in messages
+    assert not (tmp_path / "userdel_called.marker").exists()
+
+
+def test_uninstall_remove_user_yes_removes_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall_remove_user=yes entfernt den Hauptbenutzer samt Home per userdel -r."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    mod.uninstall_remove_user = "yes"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert any(
+        f"Benutzer {_MAIN_USER} mit Home-Verzeichnis entfernt" in m for m in messages
+    )
+    assert (tmp_path / "userdel_called.marker").exists()
+
+
+def test_uninstall_skips_membership_and_group_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne Mitgliedschaft/Gruppe überspringt uninstall beide Schritte (Erfolg)."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    monkeypatch.setenv("FAKE_ID_GROUPS", "alice")
+    monkeypatch.setenv("GETENT_GROUP_EXISTS", "0")
+
+    result = mod.start()
+
+    assert result == 0
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert any("nicht Mitglied" in m and "übersprungen" in m for m in messages)
+    assert any(
+        "Gruppe ssh-users existiert nicht" in m and "übersprungen" in m
+        for m in messages
+    )
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt der erste Schritt fehl, bricht uninstall ab und liefert 1."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    monkeypatch.setattr(Users, "ID_BIN", "/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert "fehlgeschlagen: Mitgliedschaft in ssh-users lösen" in messages
+    assert "Gruppe ssh-users entfernt" not in messages
+
+
+def test_uninstall_reports_userdel_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt userdel -r fehl, meldet uninstall den Fehler und liefert 1."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    mod.uninstall_remove_user = "yes"
+    monkeypatch.setattr(Users, "USERDEL_BIN", "/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert any(f"userdel -r {_MAIN_USER} fehlgeschlagen" in m for m in messages)
+
+
+# --- test ---
+
+
+def test_test_reports_ok_when_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart test meldet Erfolg, wenn beide Dateien lesbar sind."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "users test: Hauptbenutzer kann seine Login-Dateien lesen" in messages
+
+
+def test_test_warns_but_returns_zero_when_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart test ist Beobachtung: WARN bei Unlesbarkeit, aber Exit-Code 0."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.operation = "test"
+    monkeypatch.setattr(Users, "RUNUSER_BIN", "/usr/bin/false")
+
+    result = mod.start()
+
+    assert result == 0
+    messages = [str(m) for m in _sent_messages(conn)]
+    assert any(
+        f"TOTP-Secret aus Sicht von {_MAIN_USER} nicht lesbar" in m for m in messages
+    )
+    assert any(
+        f"authorized_keys aus Sicht von {_MAIN_USER} nicht lesbar" in m
+        for m in messages
+    )
+    assert "users test: Hauptbenutzer kann seine Login-Dateien lesen" not in messages

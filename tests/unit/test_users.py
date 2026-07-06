@@ -20,6 +20,7 @@ def _make_users(
     main_user: str = "alice",
     pubkey: str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test",
     password: str = "s3cret",  # noqa: S107 — Testwert, kein echtes Geheimnis
+    uninstall_remove_user: str = "no",
 ) -> Users:
     """Baut ein Users-Modul mit gesetzten Werten, ohne Prozess/IPC."""
     mod = Users(conn=MagicMock(), loglevel=LogLevel.INFO)
@@ -27,6 +28,7 @@ def _make_users(
     mod.main_user = main_user
     mod.main_user_password = password
     mod.main_user_pubkey = pubkey
+    mod.uninstall_remove_user = uninstall_remove_user
     return mod
 
 
@@ -34,12 +36,13 @@ def _make_users(
 
 
 def test_users_config_declares_expected_keys() -> None:
-    """CONFIG nennt operation, main_user, main_user_password, main_user_pubkey."""
+    """CONFIG nennt alle vier bekannten Schlüssel plus uninstall_remove_user."""
     assert Users.CONFIG == [
         "operation",
         "main_user",
         "main_user_password",
         "main_user_pubkey",
+        "uninstall_remove_user",
     ]
 
 
@@ -85,6 +88,13 @@ def test_validate_accepts_known_key_types(pubkey: str) -> None:
     """Alle drei bekannten Schlüsseltypen werden akzeptiert."""
     mod = _make_users(pubkey=pubkey)
     mod._validate()
+
+
+def test_validate_rejects_invalid_uninstall_remove_user() -> None:
+    """Ein uninstall_remove_user außerhalb von yes/no erzeugt ModuleError."""
+    mod = _make_users(uninstall_remove_user="maybe")
+    with pytest.raises(ModuleError, match="uninstall_remove_user"):
+        mod._validate()
 
 
 # --- Reine Hilfsfunktionen ---
@@ -295,3 +305,201 @@ def test_step_set_password_fails_without_configured_password(
     result = mod._step_set_password()
 
     assert result == 1
+
+
+# --- _group_exists / _readable_as_user (reine Helfer) ---
+
+
+def test_group_exists_true_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein erfolgreicher Befehl liefert True."""
+    mod = _make_users()
+    monkeypatch.setattr(Users, "GETENT_BIN", "/bin/true")
+    assert mod._group_exists("ssh-users") is True
+
+
+def test_group_exists_false_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein fehlschlagender Befehl liefert False."""
+    mod = _make_users()
+    monkeypatch.setattr(Users, "GETENT_BIN", "/bin/false")
+    assert mod._group_exists("ssh-users") is False
+
+
+def test_readable_as_user_true_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein erfolgreicher runuser-Aufruf liefert True."""
+    mod = _make_users()
+    monkeypatch.setattr(Users, "RUNUSER_BIN", "/bin/true")
+    assert mod._readable_as_user("alice", "/some/path") is True
+
+
+def test_readable_as_user_false_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein fehlschlagender runuser-Aufruf liefert False."""
+    mod = _make_users()
+    monkeypatch.setattr(Users, "RUNUSER_BIN", "/bin/false")
+    assert mod._readable_as_user("alice", "/some/path") is False
+
+
+# --- _step_drop_membership ---
+
+
+def test_step_drop_membership_skips_when_user_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existiert der Benutzer nicht, wird gpasswd nicht aufgerufen."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_user_exists", lambda user: False)
+    assert mod._step_drop_membership() == 0
+
+
+def test_step_drop_membership_skips_when_not_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist der Benutzer nicht Mitglied von ssh-users, wird gpasswd übersprungen."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    id_script = tmp_path / "id_no_group.sh"
+    id_script.write_text("#!/bin/sh\nprintf 'alice wheel\\n'\n", encoding="utf-8")
+    id_script.chmod(0o700)
+    monkeypatch.setattr(Users, "ID_BIN", str(id_script))
+    assert mod._step_drop_membership() == 0
+
+
+def test_step_drop_membership_removes_membership_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist der Benutzer Mitglied, wird gpasswd -d aufgerufen und meldet Erfolg."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    id_script = tmp_path / "id_group.sh"
+    id_script.write_text("#!/bin/sh\nprintf 'alice ssh-users\\n'\n", encoding="utf-8")
+    id_script.chmod(0o700)
+    monkeypatch.setattr(Users, "ID_BIN", str(id_script))
+    monkeypatch.setattr(Users, "GPASSWD_BIN", "/bin/true")
+    assert mod._step_drop_membership() == 0
+
+
+def test_step_drop_membership_fails_when_gpasswd_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt gpasswd fehl, liefert der Schritt 1."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    id_script = tmp_path / "id_group.sh"
+    id_script.write_text("#!/bin/sh\nprintf 'alice ssh-users\\n'\n", encoding="utf-8")
+    id_script.chmod(0o700)
+    monkeypatch.setattr(Users, "ID_BIN", str(id_script))
+    monkeypatch.setattr(Users, "GPASSWD_BIN", "/bin/false")
+    assert mod._step_drop_membership() == 1
+
+
+def test_step_drop_membership_fails_when_id_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ist die Gruppenzugehörigkeit nicht lesbar, liefert der Schritt 1."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    monkeypatch.setattr(Users, "ID_BIN", "/bin/false")
+    assert mod._step_drop_membership() == 1
+
+
+# --- _step_remove_group ---
+
+
+def test_step_remove_group_skips_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existiert die Gruppe nicht, wird groupdel nicht aufgerufen."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_group_exists", lambda group: False)
+    assert mod._step_remove_group() == 0
+
+
+def test_step_remove_group_removes_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existiert die Gruppe, wird sie entfernt."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_group_exists", lambda group: True)
+    monkeypatch.setattr(Users, "GROUPDEL_BIN", "/bin/true")
+    assert mod._step_remove_group() == 0
+
+
+def test_step_remove_group_fails_when_groupdel_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schlägt groupdel fehl, liefert der Schritt 1."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_group_exists", lambda group: True)
+    monkeypatch.setattr(Users, "GROUPDEL_BIN", "/bin/false")
+    assert mod._step_remove_group() == 1
+
+
+# --- _step_handle_main_user ---
+
+
+def test_step_handle_main_user_keeps_user_when_no() -> None:
+    """uninstall_remove_user=no liefert 0, ohne userdel aufzurufen."""
+    mod = _make_users(uninstall_remove_user="no")
+    assert mod._step_handle_main_user() == 0
+
+
+def test_step_handle_main_user_skips_userdel_when_user_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uninstall_remove_user=yes ohne vorhandenen Benutzer überspringt userdel."""
+    mod = _make_users(uninstall_remove_user="yes")
+    monkeypatch.setattr(mod, "_user_exists", lambda user: False)
+    assert mod._step_handle_main_user() == 0
+
+
+def test_step_handle_main_user_removes_user_when_yes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uninstall_remove_user=yes entfernt den vorhandenen Benutzer per userdel -r."""
+    mod = _make_users(uninstall_remove_user="yes")
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    monkeypatch.setattr(Users, "PKILL_BIN", "/bin/true")
+    monkeypatch.setattr(Users, "PKILL_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(Users, "USERDEL_BIN", "/bin/true")
+    assert mod._step_handle_main_user() == 0
+
+
+def test_step_handle_main_user_fails_when_userdel_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schlägt userdel -r fehl, liefert der Schritt 1."""
+    mod = _make_users(uninstall_remove_user="yes")
+    monkeypatch.setattr(mod, "_user_exists", lambda user: True)
+    monkeypatch.setattr(Users, "PKILL_BIN", "/bin/true")
+    monkeypatch.setattr(Users, "PKILL_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(Users, "USERDEL_BIN", "/bin/false")
+    assert mod._step_handle_main_user() == 1
+
+
+# --- _test ---
+
+
+def test_test_returns_zero_when_home_not_resolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ist das Home-Verzeichnis nicht ermittelbar, liefert _test trotzdem 0."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_home_dir", lambda user: None)
+    assert mod._test() == 0
+
+
+def test_test_reports_ok_when_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sind beide Dateien lesbar, liefert _test 0 und meldet den Erfolg."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_home_dir", lambda user: str(tmp_path))
+    monkeypatch.setattr(Users, "RUNUSER_BIN", "/bin/true")
+    assert mod._test() == 0
+
+
+def test_test_returns_zero_even_when_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test ist Beobachtung ohne Abbruch-Tor: liefert 0, auch wenn nichts lesbar ist."""
+    mod = _make_users()
+    monkeypatch.setattr(mod, "_home_dir", lambda user: str(tmp_path))
+    monkeypatch.setattr(Users, "RUNUSER_BIN", "/bin/false")
+    assert mod._test() == 0

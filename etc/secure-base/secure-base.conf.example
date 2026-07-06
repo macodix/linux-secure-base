@@ -64,6 +64,12 @@ main_user_password =
 # Beispiel: ssh-ed25519 AAAA... user@laptop
 main_user_pubkey =
 
+# Steuert die Betriebsart uninstall: no (Vorgabe) belässt Hauptbenutzer,
+# Home, Passwort, TOTP-Secret und Pubkey und nimmt nur Mitgliedschaft/
+# Gruppe ssh-users zurück; yes entfernt den Hauptbenutzer samt Home
+# (TOTP-Secret und authorized_keys gehen verloren).
+uninstall_remove_user = no
+
 [ssh]
 # Login-Mail-Benachrichtigung: yes legt ein pam_exec-Skript an, das bei
 # jedem SSH-Login eine Mail an admin_mail schickt; no lässt einen

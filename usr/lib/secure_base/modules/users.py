@@ -11,6 +11,7 @@ import pwd
 import re
 import stat
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -38,6 +39,9 @@ _PUBKEY_RE = re.compile(r"^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-nistp[0-9]+)[ \t]
 # Passwort-Hash-Werte, die "kein Passwort gesetzt" bedeuten
 # (getent shadow, Feld 2): leer, gesperrt (!) oder deaktiviert (*).
 _UNSET_HASHES = frozenset({"", "!", "*"})
+
+# Erlaubte Werte für den Ja/Nein-Schalter uninstall_remove_user.
+_YES_NO = frozenset({"yes", "no"})
 
 _Step = Callable[[], int]
 
@@ -172,6 +176,7 @@ class Users(Module):
         "main_user",
         "main_user_password",
         "main_user_pubkey",
+        "uninstall_remove_user",
     ]
 
     # Fachliche Konstanten: von außen nie überschreibbar, keine
@@ -195,6 +200,16 @@ class Users(Module):
     CHPASSWD_BIN: ClassVar[str] = "/usr/sbin/chpasswd"
     RUNUSER_BIN: ClassVar[str] = "/usr/sbin/runuser"
     GOOGLE_AUTHENTICATOR_BIN: ClassVar[str] = "/usr/bin/google-authenticator"
+    GPASSWD_BIN: ClassVar[str] = "/usr/bin/gpasswd"
+    GROUPDEL_BIN: ClassVar[str] = "/usr/sbin/groupdel"
+    USERDEL_BIN: ClassVar[str] = "/usr/sbin/userdel"
+    PKILL_BIN: ClassVar[str] = "/usr/bin/pkill"
+    TEST_BIN: ClassVar[str] = "/usr/bin/test"
+
+    # Wartezeit zwischen SIGTERM und SIGKILL beim Entfernen des
+    # Hauptbenutzers (uninstall_remove_user=yes) — als Klassenattribut
+    # testbar (Tests setzen sie auf 0, kein echtes Warten im Testlauf).
+    PKILL_WAIT_SECONDS: ClassVar[float] = 2.0
 
     # apt-Aktionsklasse als Klassenattribut wie base — für Testumlenkung
     # per Unterklasse (kein systemd-Bezug in diesem Modul).
@@ -206,6 +221,7 @@ class Users(Module):
     main_user: str
     main_user_password: str
     main_user_pubkey: str
+    uninstall_remove_user: str
 
     def start(self) -> int:
         """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
@@ -214,17 +230,22 @@ class Users(Module):
             0 bei Erfolg, ungleich 0 bei Fehler.
 
         Raises:
-            ModuleError: Bei ungültigem Benutzernamen oder Pubkey-Format.
+            ModuleError: Bei ungültigem Benutzernamen, Pubkey-Format oder
+                einem Ja/Nein-Schalter außerhalb von yes/no.
         """
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
-        """Prüft Benutzername und Pubkey-Format und lehnt ungültige Werte ab.
+        """Prüft Benutzername, Pubkey-Format und Ja/Nein-Schalter.
 
-        Beide Werte gehen in Systembefehle bzw. eine Datei. SysCmdAction hat
+        Alle Werte gehen in Systembefehle bzw. eine Datei. SysCmdAction hat
         bewusst keinen Optionsterminator, deshalb prüft das Modul die Werte
         vor der Verwendung (konv-scripting-python.md Abschnitt 4.2). Eine
         leere oder syntaktisch defekte Pubkey-Zeile darf nicht durchgehen —
@@ -233,8 +254,8 @@ class Users(Module):
 
         Raises:
             ModuleError: Wenn main_user kein gültiger Benutzername ist,
-                oder main_user_pubkey leer ist oder keinem bekannten
-                Schlüsseltyp entspricht.
+                main_user_pubkey leer ist oder keinem bekannten Schlüsseltyp
+                entspricht, oder uninstall_remove_user weder yes noch no ist.
         """
         if not _USERNAME_RE.match(self.main_user):
             raise ModuleError(f"Ungültiger Benutzername: {self.main_user!r}")
@@ -246,6 +267,11 @@ class Users(Module):
         if not _PUBKEY_RE.match(pubkey):
             raise ModuleError(
                 f"Pubkey-Format unbekannt: {pubkey[:40]!r} (Aussperr-Schutz)"
+            )
+        if self.uninstall_remove_user not in _YES_NO:
+            raise ModuleError(
+                f"uninstall_remove_user muss yes oder no sein:"
+                f" {self.uninstall_remove_user!r}"
             )
 
     # --- install ---
@@ -552,6 +578,233 @@ class Users(Module):
         )
         return 0
 
+    # --- uninstall ---
+
+    def _uninstall(self) -> int:
+        """Nimmt die vom Modul gesetzten Härtungsartefakte zurück.
+
+        Standardmäßig (uninstall_remove_user=no) bleiben Hauptbenutzer,
+        Home, Login-Passwort, TOTP-Secret und Pubkey unverändert — nur
+        Mitgliedschaft und Gruppe ssh-users werden zurückgenommen. Bei
+        uninstall_remove_user=yes wird der Hauptbenutzer zusätzlich samt
+        Home entfernt (TOTP-Secret und authorized_keys gehen damit
+        verloren). Das root-Passwort bleibt in jedem Fall unverändert,
+        ebenso das Paket libpam-google-authenticator (Bedarf des
+        ssh-Moduls).
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, _Step]] = [
+            ("Mitgliedschaft in ssh-users lösen", self._step_drop_membership),
+            ("Gruppe ssh-users entfernen", self._step_remove_group),
+            (
+                "Hauptbenutzer behandeln (uninstall_remove_user)",
+                self._step_handle_main_user,
+            ),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "users", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "users", f"fehlgeschlagen: {label}")
+                return 1
+        self.send_message(LogLevel.INFO, "users", "root-Passwort bleibt unverändert")
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Paket {self.PKG_GOOGLE_AUTHENTICATOR} bleibt installiert"
+            " (gehört zum ssh-Modul-Bedarf)",
+        )
+        return 0
+
+    def _step_drop_membership(self) -> int:
+        """Löst die Mitgliedschaft des Hauptbenutzers in ssh-users; idempotent.
+
+        Returns:
+            0 bei Erfolg oder wenn keine Mitgliedschaft (mehr) besteht,
+            1 bei Fehler.
+        """
+        if not self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Benutzer {self.main_user} existiert nicht — übersprungen",
+            )
+            return 0
+        action = SysCmdAction(command=[self.ID_BIN, "-nG", self.main_user], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Gruppenzugehörigkeit von {self.main_user}: nicht lesbar",
+            )
+            return 1
+        if self.GROUP_NAME not in action.stdout.split():
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"{self.main_user} ist nicht Mitglied von {self.GROUP_NAME}"
+                " — übersprungen",
+            )
+            return 0
+        drop_action = SysCmdAction(
+            command=[self.GPASSWD_BIN, "-d", "--", self.main_user, self.GROUP_NAME],
+            timeout=30,
+        )
+        if self.run_action(drop_action) != 0:
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Mitgliedschaft {self.main_user} in {self.GROUP_NAME} gelöst",
+        )
+        return 0
+
+    def _step_remove_group(self) -> int:
+        """Entfernt die Gruppe ssh-users, falls vorhanden; idempotent.
+
+        Returns:
+            0 bei Erfolg oder wenn die Gruppe nicht (mehr) existiert,
+            1 bei Fehler.
+        """
+        if not self._group_exists(self.GROUP_NAME):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Gruppe {self.GROUP_NAME} existiert nicht — übersprungen",
+            )
+            return 0
+        action = SysCmdAction(
+            command=[self.GROUPDEL_BIN, "--", self.GROUP_NAME], timeout=30
+        )
+        if self.run_action(action) != 0:
+            return 1
+        self.send_message(LogLevel.INFO, "users", f"Gruppe {self.GROUP_NAME} entfernt")
+        return 0
+
+    def _step_handle_main_user(self) -> int:
+        """Entfernt den Hauptbenutzer oder belässt ihn, je nach Konfigwert.
+
+        Bei uninstall_remove_user=no bleiben Benutzer, Home, Passwort,
+        TOTP-Secret und Pubkey unverändert. Bei yes werden zuerst laufende
+        Prozesse des Benutzers beendet (sonst schlägt userdel -r fehl),
+        dann Benutzer samt Home entfernt.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        if self.uninstall_remove_user != "yes":
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "Hauptbenutzer, Home, Passwörter, TOTP, Pubkey bleiben"
+                " unverändert (uninstall_remove_user=no)",
+            )
+            return 0
+        if not self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Benutzer {self.main_user} existiert nicht — userdel übersprungen",
+            )
+            return 0
+        # Aktive Prozesse des Hauptbenutzers beenden — sonst schlägt
+        # userdel -r fehl. Rückgabewert absichtlich ignoriert (Original:
+        # "pkill ... || true") — kein laufender Prozess ist kein Fehler.
+        self.run_action(
+            SysCmdAction(
+                command=[self.PKILL_BIN, "-TERM", "-u", self.main_user], timeout=15
+            )
+        )
+        time.sleep(self.PKILL_WAIT_SECONDS)
+        self.run_action(
+            SysCmdAction(
+                command=[self.PKILL_BIN, "-KILL", "-u", self.main_user], timeout=15
+            )
+        )
+        userdel_action = SysCmdAction(
+            command=[self.USERDEL_BIN, "-r", "--", self.main_user], timeout=60
+        )
+        if self.run_action(userdel_action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"userdel -r {self.main_user} fehlgeschlagen — laufende Prozesse"
+                " oder Mountpoints im Home prüfen und manuell entfernen",
+            )
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Benutzer {self.main_user} mit Home-Verzeichnis entfernt"
+            " (uninstall_remove_user=yes)",
+        )
+        return 0
+
+    # --- test ---
+
+    def _test(self) -> int:
+        """Prüft die Lesbarkeit der Login-Dateien aus Sicht des Hauptbenutzers.
+
+        Reine Beobachtung ohne Systemänderung: beide Prüfungen laufen
+        unabhängig voneinander (sammelnd, kein Abbruch beim ersten
+        Fehlschlag); ein Fehlschlag löst nur eine WARN-Meldung aus.
+        Liefert wie das Original immer 0 — test ist Beobachtung, kein
+        Abbruch-Tor.
+
+        Returns:
+            0 (immer).
+        """
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar"
+                " — Test übersprungen",
+            )
+            return 0
+        ok = True
+        ga_file = str(Path(home) / ".google_authenticator")
+        if not self._readable_as_user(self.main_user, ga_file):
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"TOTP-Secret aus Sicht von {self.main_user} nicht lesbar",
+            )
+            ok = False
+        authkeys = str(Path(home) / ".ssh" / "authorized_keys")
+        if not self._readable_as_user(self.main_user, authkeys):
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"authorized_keys aus Sicht von {self.main_user} nicht lesbar",
+            )
+            ok = False
+        if ok:
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "users test: Hauptbenutzer kann seine Login-Dateien lesen",
+            )
+        return 0
+
+    def _readable_as_user(self, user: str, path: str) -> bool:
+        """Prüft über runuser, ob path aus Sicht von user lesbar ist.
+
+        Args:
+            user: Benutzername, dessen Perspektive geprüft wird.
+            path: Zu prüfender Pfad.
+
+        Returns:
+            True, wenn der Test-Aufruf mit Returncode 0 endet.
+        """
+        action = SysCmdAction(
+            command=[self.RUNUSER_BIN, "-u", user, "--", self.TEST_BIN, "-r", path],
+            timeout=15,
+        )
+        return self.run_action(action) == 0
+
     # --- check ---
 
     def _verify(self) -> int:
@@ -619,8 +872,7 @@ class Users(Module):
         Returns:
             True, wenn die Gruppe existiert.
         """
-        action = SysCmdAction(command=[self.GETENT_BIN, "group", group], timeout=15)
-        if self.run_action(action) != 0:
+        if not self._group_exists(group):
             self.send_message(
                 LogLevel.ERROR, "users", f"Gruppe {group}: existiert nicht"
             )
@@ -849,6 +1101,18 @@ class Users(Module):
             True, wenn der Benutzer existiert.
         """
         action = SysCmdAction(command=[self.GETENT_BIN, "passwd", user], timeout=15)
+        return self.run_action(action) == 0
+
+    def _group_exists(self, group: str) -> bool:
+        """Prüft still per getent group, ob group existiert (ohne Meldung).
+
+        Args:
+            group: Gruppenname.
+
+        Returns:
+            True, wenn die Gruppe existiert.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "group", group], timeout=15)
         return self.run_action(action) == 0
 
     def _home_dir(self, user: str) -> str | None:
