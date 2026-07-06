@@ -103,6 +103,10 @@ class StatusView:
         self._label_width = max(len(s.label) for s in specs) if specs else 10
         self._name_width = max(len(s.name) for s in specs) if specs else 8
         self._state_width = max(len(state.value) for state in State)
+        # Gesamthöhe einmalig festlegen: Rahmen+Innenabstand (4), Kopf (1),
+        # Modulliste, Meldungsfenster (_LOG_LINES+2), Fortschritt (1) und
+        # drei Leerzeilen — die Anzeige kann damit nie wachsen.
+        self._height = 4 + 1 + len(specs) + (_LOG_LINES + 2) + 1 + 3
 
     @contextlib.contextmanager
     def live(self) -> Iterator[None]:
@@ -133,12 +137,16 @@ class StatusView:
         self._line[name] = text
         if level in (LogLevel.ERROR, LogLevel.CRITICAL) and not self._error_line[name]:
             self._error_line[name] = text
-        self._log.append(
-            Text.assemble(
-                (f"{name:>{self._name_width}}  ", "cyan dim"),
-                (text, _LEVEL_STYLE.get(level, "dim")),
-            )
+        # Logzeilen dürfen nie umbrechen: eine lange Meldung würde das
+        # Meldungsfenster sonst vorübergehend wachsen lassen, bis sie
+        # herausrotiert (springende Anzeige, Servertest-Befund).
+        line = Text.assemble(
+            (f"{name:>{self._name_width}}  ", "cyan dim"),
+            (text, _LEVEL_STYLE.get(level, "dim")),
         )
+        line.no_wrap = True
+        line.overflow = "ellipsis"
+        self._log.append(line)
         self._refresh()
 
     def set_result(self, name: str, ok: bool) -> None:
@@ -261,4 +269,4 @@ class StatusView:
             Text(),
             self._footer(),
         )
-        return Panel(body, border_style="grey50", padding=(1, 2))
+        return Panel(body, border_style="grey50", padding=(1, 2), height=self._height)

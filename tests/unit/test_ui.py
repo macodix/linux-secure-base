@@ -183,9 +183,15 @@ def test_render_log_window_shows_recent_messages_with_module_name() -> None:
 
 
 def test_render_geometry_is_stable_under_long_messages() -> None:
-    """Lange Meldungen ändern die Zeilenzahl der Anzeige nicht."""
+    """Lange Meldungen ändern die Zeilenzahl der Anzeige nicht.
+
+    Deckt den Servertest-Befund ab: umbrechende Logzeilen ließen das
+    Meldungsfenster vorübergehend wachsen (springende Anzeige).
+    """
     view = _silent_view()
     before = _render_text(view).count("\n")
-    view.set_status_line("base", "x" * 500, LogLevel.INFO)
+    for i in range(12):
+        view.set_status_line("base", f"Meldung {i}: " + "x" * 500, LogLevel.INFO)
     after = _render_text(view).count("\n")
     assert before == after
+    assert after == view._height
