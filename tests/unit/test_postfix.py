@@ -1,6 +1,5 @@
 """Unit-Tests für secure_base.modules.postfix."""
 
-import re
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
@@ -470,64 +469,7 @@ def test_deferred_reasons_empty_when_no_reason_present() -> None:
     assert mod._deferred_reasons(entries) == []
 
 
-# --- Zustellstatus: _log_anchor, _mail_log_lines, _check_delivery_log,
-# _evaluate_log_line ---
-
-
-def test_log_anchor_matches_since_format() -> None:
-    """_log_anchor liefert einen journalctl-kompatiblen --since-Zeitstempel."""
-    mod = _make_postfix()
-    anchor = mod._log_anchor()
-    assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", anchor)
-
-
-def test_mail_log_lines_reads_mail_log_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Ist MAIL_LOG lesbar, liest _mail_log_lines daraus, ohne journalctl."""
-    mod = _make_postfix()
-    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, _SENT_LINE))
-    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", "/bin/false")
-    assert mod._mail_log_lines("2026-01-01 00:00:00") == [_SENT_LINE]
-
-
-def test_mail_log_lines_falls_back_to_journalctl_when_file_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Fehlt MAIL_LOG, weicht _mail_log_lines auf JOURNALCTL_BIN aus."""
-    mod = _make_postfix()
-    journalctl = _write_script(tmp_path, "fake-journalctl", f"print({_SENT_LINE!r})\n")
-    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
-    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", journalctl)
-    assert mod._mail_log_lines("2026-01-01 00:00:00") == [_SENT_LINE]
-
-
-def test_mail_log_lines_returns_none_when_journalctl_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Schlägt auch journalctl fehl, liefert _mail_log_lines None."""
-    mod = _make_postfix()
-    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
-    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", "/bin/false")
-    assert mod._mail_log_lines("2026-01-01 00:00:00") is None
-
-
-def test_evaluate_log_line_sent_returns_zero_with_relay() -> None:
-    """Eine status=sent-Zeile liefert 0 und meldet den relay-Wert."""
-    mod = _make_postfix()
-    assert mod._evaluate_log_line(_SENT_LINE) == 0
-    payloads = _sent_payloads(mod)
-    assert any(
-        "status=sent" in str(p) and "smtp.example.com" in str(p) for p in payloads
-    )
-
-
-def test_evaluate_log_line_bounced_returns_one_with_reason() -> None:
-    """Eine status=bounced-Zeile liefert 1 mit dem Fehlertext aus der Zeile."""
-    mod = _make_postfix()
-    assert mod._evaluate_log_line(_BOUNCED_LINE) == 1
-    payloads = _sent_payloads(mod)
-    assert any("unknown recipient" in str(p) for p in payloads)
+# --- _check_delivery_log (Auswertung selbst: siehe tests/unit/test_mail_check.py) ---
 
 
 def test_check_delivery_log_fails_when_no_matching_line(
