@@ -320,6 +320,42 @@ def test_run_scan_start_failure_is_failure(monkeypatch: pytest.MonkeyPatch) -> N
     assert mod._run_scan() is False
 
 
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Datei und Report-Empfänger."""
+    values = {"fqdn": "server.example.com", "admin_mail": "admin@example.com"}
+    section = Rkhunter.doc(values)
+    assert section.startswith("\n## Schadsoftware-Schutz\n\n")
+    assert "**Pakete:** rkhunter" in section
+    assert f"`{Rkhunter.RK_DEFAULT}`" in section
+    assert "CRON_DAILY_RUN=true" in section
+    assert "CRON_DB_UPDATE=true" in section
+    assert "REPORT_EMAIL=admin@example.com" in section
+    assert "**Timer/Cron:**" in section
+    assert "/etc/cron.daily/rkhunter" in section
+    assert "> Hinweis:" in section
+
+
+def test_doc_marks_missing_admin_mail_as_leer_default() -> None:
+    """Fehlt admin_mail in values, erscheint der Platzhalter "(leer/Default)"."""
+    section = Rkhunter.doc({})
+    assert "REPORT_EMAIL=(leer/Default)" in section
+
+
+def test_doc_never_leaks_secrets() -> None:
+    """Ein Kunstgeheimnis in values erscheint weder als Name noch als Wert."""
+    values = {
+        "fqdn": "server.example.com",
+        "admin_mail": "admin@example.com",
+        "relay_password": "GEHEIM-X",
+    }
+    section = Rkhunter.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "relay_password" not in section
+
+
 # --- _test ---
 
 

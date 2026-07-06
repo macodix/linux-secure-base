@@ -136,6 +136,39 @@ class Rkhunter(Module):
             ' "[rkhunter] Warnings found for ${HOST_NAME}"'
         )
 
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        Deckungsgleich mit module_doc im Bash-Original (installer/lib/
+        modules/rkhunter.sh): dokumentiert nur REPORT_EMAIL aus /etc/
+        default/rkhunter — der Absender-Eintrag (MAIL_CMD) in /etc/
+        rkhunter.conf bleibt wie im Original unerwähnt.
+
+        SICHERHEIT: rkhunter kennt keine Geheimnisse; doc() liest aus
+        values ausschließlich admin_mail.
+
+        Args:
+            values: Konfigurationswerte des Moduls (fqdn, admin_mail).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Schadsoftware-Schutz".
+        """
+        admin_mail = values.get("admin_mail") or "(leer/Default)"
+        return (
+            "\n## Schadsoftware-Schutz\n\n"
+            "**Pakete:** rkhunter\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.RK_DEFAULT}`:\n"
+            "  - `CRON_DAILY_RUN=true`\n"
+            "  - `CRON_DB_UPDATE=true`\n"
+            f"  - `REPORT_EMAIL={admin_mail}`\n"
+            "\n**Timer/Cron:** täglicher Lauf via /etc/cron.daily/rkhunter;"
+            " Baseline-DB wird bei apt-Update aktualisiert\n"
+            "\n> Hinweis: Baseline-Datenbank wurde bei der Installation"
+            " initialisiert.\n"
+        )
+
     def _install(self) -> int:
         """Installiert das Paket und härtet die Konfiguration.
 
