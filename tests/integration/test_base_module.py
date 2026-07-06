@@ -120,3 +120,73 @@ def test_check_reports_mismatch(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("Rechnername" in str(m) and "soll" in str(m) for m in messages)
+
+
+def test_uninstall_removes_own_files_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart uninstall entfernt die eigenen Konfigurationsdateien."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    Path(mod.SYSCTL_CONF).write_text("kernel.dmesg_restrict = 1\n", encoding="utf-8")
+    Path(mod.MODPROBE_CONF).write_text("blacklist usb-storage\n", encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert not Path(mod.SYSCTL_CONF).exists()
+    assert not Path(mod.MODPROBE_CONF).exists()
+
+
+def test_uninstall_idempotent_when_nothing_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart uninstall bleibt erfolgreich, wenn nichts eingerichtet ist."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    # Weder sysctl.conf noch modprobe.conf existieren in tmp_path.
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("bereits entfernt" in str(m) for m in messages)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    Path(mod.SYSCTL_CONF).write_text("kernel.dmesg_restrict = 1\n", encoding="utf-8")
+    Path(mod.MODPROBE_CONF).write_text("blacklist usb-storage\n", encoding="utf-8")
+    monkeypatch.setattr(Base, "SYSCTL_BIN", "/usr/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: sysctl-Härtung entfernen" in messages
+    assert "Modul-Sperrliste entfernen" not in messages
+    assert Path(mod.MODPROBE_CONF).exists()
+
+
+def test_test_operation_reports_success_without_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart test führt keine Systemänderung aus und liefert 0."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "test"
+    Path(mod.SYSCTL_CONF).write_text("kernel.dmesg_restrict = 1\n", encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("Kein eigenständiger Funktionstest" in str(m) for m in messages)
+    # test greift nicht in Dateien ein — die sysctl-Konfiguration bleibt bestehen.
+    assert Path(mod.SYSCTL_CONF).exists()
