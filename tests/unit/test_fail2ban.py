@@ -352,3 +352,34 @@ def test_check_jail_status_lines_false_on_command_failure(
         Fail2ban, "FAIL2BAN_CLIENT", _make_executable(tmp_path, "exit 1")
     )
     assert mod._check_jail_status_lines() is False
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Datei, Dienst und ignoreip-Wert."""
+    section = Fail2ban.doc({"ignoreip": "203.0.113.7"})
+    assert section.startswith("\n## Brute-Force-Schutz\n\n")
+    assert "**Pakete:** fail2ban" in section
+    assert f"`{Fail2ban.JAIL_LOCAL}`" in section
+    assert "ignoreip = 127.0.0.1/8 ::1 203.0.113.7" in section
+    assert "**Dienste:** fail2ban (enabled, aktiv nach install)" in section
+    assert "sshd-Jail ist in der Standardkonfiguration aktiv." in section
+
+
+def test_doc_marks_missing_ignoreip_as_leer_default() -> None:
+    """Ein fehlender/leerer ignoreip-Wert erscheint als '(leer/Default)'."""
+    section = Fail2ban.doc({})
+    assert "ignoreip = 127.0.0.1/8 ::1 (leer/Default)" in section
+
+
+def test_doc_ignores_unrelated_values_kunstgeheimnis() -> None:
+    """doc() liest nur ignoreip — ein Kunstgeheimnis in values sickert nicht durch."""
+    values = {
+        "ignoreip": "203.0.113.7",
+        "kunstgeheimnis": "GEHEIM-XYZ-123",
+    }
+    section = Fail2ban.doc(values)
+    assert "GEHEIM-XYZ-123" not in section
+    assert "kunstgeheimnis" not in section

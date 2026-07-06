@@ -88,6 +88,33 @@ class Fail2ban(Module):
             return self._test()
         return self._install()
 
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: values wird ausschließlich nach dem Schlüssel ignoreip
+        abgefragt (kein Secret) — jeder andere Schlüssel in values bleibt
+        unberücksichtigt und erscheint nicht in der Ausgabe.
+
+        Args:
+            values: Konfigurationswerte des Moduls (u. a. ignoreip).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Brute-Force-Schutz".
+        """
+        ignoreip = values.get("ignoreip") or "(leer/Default)"
+        loopback = " ".join(IGNOREIP_LOOPBACK)
+        return (
+            "\n## Brute-Force-Schutz\n\n"
+            "**Pakete:** fail2ban\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.JAIL_LOCAL}`:\n"
+            "  - `Kopie von jail.conf (schützt Konfig gegen Updates)`\n"
+            f"  - `ignoreip = {loopback} {ignoreip}`\n"
+            "\n**Dienste:** fail2ban (enabled, aktiv nach install)\n"
+            "\n> Hinweis: sshd-Jail ist in der Standardkonfiguration aktiv.\n"
+        )
+
     def _validate(self) -> None:
         """Prüft jedes ignoreip-Token und lehnt ungültige Werte ab.
 
