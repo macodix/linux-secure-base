@@ -258,3 +258,132 @@ def test_check_all_ok_after_successful_install(
     assert any("recipient_canonical" in str(m) and "OK" in str(m) for m in messages)
     assert any("root-Weiterleitung" in str(m) and "OK" in str(m) for m in messages)
     assert result == 1
+
+
+# --- uninstall ---
+
+
+def test_uninstall_after_install_removes_all_own_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall nach install entfernt alle eigenen Dateien und Direktiven."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0
+    assert not (tmp_path / "sasl_passwd").exists()
+    assert not (tmp_path / "sasl_passwd.db").exists()
+    assert not (tmp_path / "recipient_canonical").exists()
+    assert not (tmp_path / "recipient_canonical.db").exists()
+    assert "relayhost" not in (tmp_path / "main.cf").read_text()
+    assert "BEGIN aliases-root" not in (tmp_path / "aliases").read_text()
+
+
+def test_uninstall_does_not_leak_relay_password_in_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Das Klartext-Passwort erscheint in keiner gesendeten uninstall-Meldung."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.start()
+    mod.operation = "uninstall"
+
+    mod.start()
+
+    messages = _sent_messages(conn)
+    assert not any("s3cret" in str(m) for m in messages)
+
+
+def test_uninstall_is_idempotent_on_second_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter uninstall-Lauf auf bereits entfernten Dateien liefert 0,
+    ohne Fehlermeldung."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.start()
+    mod.operation = "uninstall"
+    assert mod.start() == 0
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert any("sasl_passwd entfernen: bereits entfernt" in str(m) for m in messages)
+
+
+def test_uninstall_without_prior_install_skips_missing_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall ohne vorherigen install-Lauf meldet fehlende eigene Dateien
+    als bereits entfernt und liefert dennoch 0."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("sasl_passwd entfernen: bereits entfernt" in str(m) for m in messages)
+    assert any(
+        "recipient_canonical entfernen: bereits entfernt" in str(m) for m in messages
+    )
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden
+    Schritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.start()
+    mod.operation = "uninstall"
+    monkeypatch.setattr(Postfix, "NEWALIASES_BIN", "/usr/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: aliases-Datenbank aktualisieren" in messages
+    assert "Pakete entfernen" not in messages
+
+
+# --- test ---
+
+
+def test_test_all_steps_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Betriebsart test weist die Zustellung nach, ohne die Konfiguration zu
+    ändern."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Funktionstest: Zustellung prüfen" in messages
+    assert "Testmail zugestellt — Queue leer" in messages
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert (tmp_path / "main.cf").read_text() == ""
+    assert (tmp_path / "aliases").read_text() == ""
+    assert not (tmp_path / "sasl_passwd").exists()
+    assert not (tmp_path / "recipient_canonical").exists()
+
+
+def test_test_fails_when_sendmail_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt sendmail fehl, liefert test 1 mit einer fehlgeschlagen-Meldung."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.operation = "test"
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Funktionstest: Zustellung prüfen" in messages

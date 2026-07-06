@@ -5,6 +5,8 @@ from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
+from pifos.actions.apt_action import AptAction
+from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.postfix import (
@@ -16,6 +18,22 @@ from secure_base.modules.postfix import (
     _SendMailAction,
     _test_mail_content,
 )
+
+
+class _NoOpAptAction(AptAction):
+    """Ersetzt AptAction für Tests: läuft immer erfolgreich durch, ohne apt-get."""
+
+    def run(self) -> str:
+        self.status = "finished"
+        return self.status
+
+
+class _NoOpSystemdAction(SystemdServiceAction):
+    """Ersetzt SystemdServiceAction für Tests: läuft immer erfolgreich durch."""
+
+    def run(self) -> str:
+        self.status = "finished"
+        return self.status
 
 
 def _make_postfix(
@@ -497,3 +515,230 @@ def test_check_delivery_fails_after_attempts_exhausted(
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_ATTEMPTS", 2)
     assert mod._check_delivery() == 1
+
+
+# --- _test ---
+
+
+def test_test_reuses_check_delivery_and_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_test liefert 0, wenn _check_delivery die Zustellung nachweist."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    assert mod._test() == 0
+
+
+def test_test_fails_when_check_delivery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_test liefert 1 und meldet den Fehlschlag, wenn sendmail scheitert."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/bin/false")
+    assert mod._test() == 1
+    payloads = _sent_payloads(mod)
+    assert any(
+        "fehlgeschlagen: Funktionstest: Zustellung prüfen" in str(p) for p in payloads
+    )
+
+
+def test_test_does_not_change_config_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_test schreibt weder main.cf noch sasl_passwd/recipient_canonical/aliases."""
+    mod = _make_postfix()
+    main_cf = tmp_path / "main.cf"
+    sasl_passwd = tmp_path / "sasl_passwd"
+    aliases = tmp_path / "aliases"
+    monkeypatch.setattr(Postfix, "MAIN_CF", str(main_cf))
+    monkeypatch.setattr(Postfix, "SASL_PASSWD", str(sasl_passwd))
+    monkeypatch.setattr(Postfix, "ALIASES", str(aliases))
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+
+    assert mod._test() == 0
+
+    assert not main_cf.exists()
+    assert not sasl_passwd.exists()
+    assert not aliases.exists()
+
+
+# --- _delete_step ---
+
+
+def test_delete_step_returns_none_for_missing_file(tmp_path: Path) -> None:
+    """Fehlt die Datei bereits, liefert _delete_step None (Idempotenz)."""
+    mod = _make_postfix()
+    target = tmp_path / "missing"
+    assert mod._delete_step(str(target), "Testdatei entfernen", safe_mode=True) is None
+    payloads = _sent_payloads(mod)
+    assert any("Testdatei entfernen: bereits entfernt" in str(p) for p in payloads)
+
+
+def test_delete_step_returns_action_for_existing_file(tmp_path: Path) -> None:
+    """Ist die Datei vorhanden, liefert _delete_step Label und DeleteFileAction."""
+    mod = _make_postfix()
+    target = tmp_path / "present"
+    target.write_text("x")
+    step = mod._delete_step(str(target), "Testdatei entfernen", safe_mode=False)
+    assert step is not None
+    label, action = step
+    assert label == "Testdatei entfernen"
+    assert action.run() == "finished"
+    assert not target.exists()
+
+
+# --- _uninstall ---
+
+
+def _write_main_cf(tmp_path: Path, mod: Postfix) -> Path:
+    """Legt main.cf mit allen von _install gesetzten Direktiven an."""
+    main_cf = tmp_path / "main.cf"
+    content = "".join(f"{key} = {value}\n" for key, value in mod._main_cf_settings())
+    main_cf.write_text(content)
+    return main_cf
+
+
+def _write_aliases(tmp_path: Path, admin_mail: str) -> Path:
+    """Legt /etc/aliases mit gesetztem aliases-root-Block an."""
+    aliases = tmp_path / "aliases"
+    aliases.write_text(
+        f"# BEGIN aliases-root\npostmaster: root\nroot:       {admin_mail}\n"
+        "# END aliases-root\n"
+    )
+    return aliases
+
+
+def _prepare_uninstall_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Postfix:
+    """Baut ein Postfix-Modul mit vollständig „installierten“ eigenen Dateien."""
+    mod = _make_postfix()
+    mod.operation = "uninstall"
+    main_cf = _write_main_cf(tmp_path, mod)
+    aliases = _write_aliases(tmp_path, mod.admin_mail)
+    sasl_passwd = tmp_path / "sasl_passwd"
+    sasl_passwd.write_text("[smtp.example.com]:587 relayuser:s3cret\n")
+    sasl_passwd_db = tmp_path / "sasl_passwd.db"
+    sasl_passwd_db.write_text("")
+    recipient_canonical = tmp_path / "recipient_canonical"
+    recipient_canonical.write_text("/.+/   admin@example.com\n")
+    recipient_canonical_db = tmp_path / "recipient_canonical.db"
+    recipient_canonical_db.write_text("")
+
+    monkeypatch.setattr(Postfix, "MAIN_CF", str(main_cf))
+    monkeypatch.setattr(Postfix, "ALIASES", str(aliases))
+    monkeypatch.setattr(Postfix, "SASL_PASSWD", str(sasl_passwd))
+    monkeypatch.setattr(Postfix, "RECIPIENT_CANONICAL", str(recipient_canonical))
+    monkeypatch.setattr(Postfix, "SYSTEMCTL_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Postfix, "NEWALIASES_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Postfix, "SYSTEMD_ACTION_CLS", _NoOpSystemdAction)
+    monkeypatch.setattr(Postfix, "APT_ACTION_CLS", _NoOpAptAction)
+    return mod
+
+
+def test_uninstall_removes_all_own_files_and_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt sasl_passwd, recipient_canonical, main.cf-Direktiven
+    und den aliases-Block vollständig."""
+    mod = _prepare_uninstall_fixture(tmp_path, monkeypatch)
+
+    result = mod._uninstall()
+
+    assert result == 0
+    assert not (tmp_path / "sasl_passwd").exists()
+    assert not (tmp_path / "sasl_passwd.db").exists()
+    assert not (tmp_path / "recipient_canonical").exists()
+    assert not (tmp_path / "recipient_canonical.db").exists()
+    main_cf_content = (tmp_path / "main.cf").read_text()
+    for key, _ in mod._main_cf_settings():
+        assert key not in main_cf_content
+    aliases_content = (tmp_path / "aliases").read_text()
+    assert "BEGIN aliases-root" not in aliases_content
+    assert "root:" not in aliases_content
+
+
+def test_uninstall_is_idempotent_on_second_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter uninstall-Lauf auf bereits entfernten Dateien liefert
+    ebenfalls 0, ohne Fehlermeldung."""
+    mod = _prepare_uninstall_fixture(tmp_path, monkeypatch)
+    assert mod._uninstall() == 0
+
+    second_conn_payloads_before = len(_sent_payloads(mod))
+    result = mod._uninstall()
+
+    assert result == 0
+    payloads = _sent_payloads(mod)[second_conn_payloads_before:]
+    assert not any(str(p).startswith("fehlgeschlagen:") for p in payloads)
+    assert any("sasl_passwd entfernen: bereits entfernt" in str(p) for p in payloads)
+    assert any(
+        "recipient_canonical entfernen: bereits entfernt" in str(p) for p in payloads
+    )
+
+
+def test_uninstall_does_not_leak_relay_password_in_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Das Klartext-Passwort erscheint in keiner gesendeten Meldung."""
+    mod = _prepare_uninstall_fixture(tmp_path, monkeypatch)
+
+    mod._uninstall()
+
+    payloads = _sent_payloads(mod)
+    assert not any("s3cret" in str(p) for p in payloads)
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden
+    Schritten."""
+    mod = _prepare_uninstall_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(Postfix, "NEWALIASES_BIN", "/usr/bin/false")
+
+    result = mod._uninstall()
+
+    assert result == 1
+    payloads = _sent_payloads(mod)
+    assert "fehlgeschlagen: aliases-Datenbank aktualisieren" in payloads
+    assert "Pakete entfernen" not in payloads
+
+
+# --- start()-Verzweigung ---
+
+
+def test_start_dispatches_uninstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """operation='uninstall' ruft _uninstall auf."""
+    mod = _prepare_uninstall_fixture(tmp_path, monkeypatch)
+    mod.operation = "uninstall"
+    assert mod.start() == 0
+
+
+def test_start_dispatches_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation='test' ruft _test auf."""
+    mod = _make_postfix()
+    mod.operation = "test"
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    assert mod.start() == 0

@@ -22,6 +22,7 @@ from typing import Any, ClassVar
 from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.block_in_file_action import BlockInFileAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.line_in_file_action import LineInFileAction
 from pifos.actions.permissions_action import PermissionsAction
 from pifos.actions.sys_cmd_action import SysCmdAction
@@ -187,6 +188,14 @@ class Postfix(Module):
         "postfix",
     )
 
+    # uninstall entfernt ca-certificates bewusst nicht mit — Distro-Basis,
+    # von anderen Paketen mitgenutzt (Bash-Original: do_uninstall).
+    UNINSTALL_PACKAGES: ClassVar[tuple[str, ...]] = (
+        "libsasl2-modules",
+        "mailutils",
+        "postfix",
+    )
+
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py):
     # feste Vorgaben, die eine Testunterklasse außerhalb dieses Moduls
     # überschreiben kann, ohne das Modul selbst anzufassen.
@@ -224,7 +233,7 @@ class Postfix(Module):
     relay_password: str
 
     def start(self) -> int:
-        """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
+        """Führt Einrichtung, Abgleich, Rückbau oder Funktionstest aus.
 
         Returns:
             0 bei Erfolg, ungleich 0 bei Fehler.
@@ -235,6 +244,10 @@ class Postfix(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -409,6 +422,138 @@ class Postfix(Module):
             return 0
         finally:
             Path(debconf_path).unlink(missing_ok=True)
+
+    def _uninstall(self) -> int:
+        """Nimmt genau die eigenen Änderungen der install-Betriebsart zurück.
+
+        Bereits fehlende eigene Dateien oder Direktiven sind kein Fehler
+        (Idempotenz) — der jeweilige Schritt entfällt dann und wird nur als
+        INFO gemeldet. sasl_passwd (Geheimnisrest) wird ohne Sicherungskopie
+        gelöscht, damit kein Klartext-Passwort als .bak liegen bleibt.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, Action]] = [
+            (
+                "postfix stoppen",
+                self.SYSTEMD_ACTION_CLS(operation="stop", unit="postfix", timeout=60),
+            ),
+            (
+                "postfix deaktivieren",
+                self.SYSTEMD_ACTION_CLS(
+                    operation="disable", unit="postfix", timeout=60
+                ),
+            ),
+        ]
+
+        for path, label, safe_mode in (
+            (self.SASL_PASSWD, "sasl_passwd entfernen", False),
+            (f"{self.SASL_PASSWD}.db", "sasl_passwd.db entfernen", False),
+            (self.RECIPIENT_CANONICAL, "recipient_canonical entfernen", True),
+            (
+                f"{self.RECIPIENT_CANONICAL}.db",
+                "recipient_canonical.db entfernen",
+                True,
+            ),
+        ):
+            step = self._delete_step(path, label, safe_mode=safe_mode)
+            if step is not None:
+                steps.append(step)
+
+        if Path(self.MAIN_CF).exists():
+            for key, value in self._main_cf_settings():
+                steps.append(
+                    (
+                        f"main.cf {key} zurücknehmen",
+                        LineInFileAction(
+                            path=self.MAIN_CF,
+                            line=f"{key} = {value}",
+                            match=rf"^{re.escape(key)}\s*=",
+                            state="absent",
+                        ),
+                    )
+                )
+        else:
+            self.send_message(LogLevel.INFO, "postfix", "main.cf: bereits entfernt")
+
+        if Path(self.ALIASES).exists():
+            steps.append(
+                (
+                    "/etc/aliases: root-Weiterleitung zurücknehmen",
+                    BlockInFileAction(
+                        path=self.ALIASES,
+                        block=_aliases_block_content(self.admin_mail),
+                        marker=_ALIASES_MARKER,
+                        state="absent",
+                    ),
+                )
+            )
+            steps.append(
+                (
+                    "aliases-Datenbank aktualisieren",
+                    SysCmdAction(command=[self.NEWALIASES_BIN], timeout=30),
+                )
+            )
+        else:
+            self.send_message(
+                LogLevel.INFO, "postfix", "/etc/aliases: bereits entfernt"
+            )
+
+        steps.append(
+            (
+                "Pakete entfernen",
+                self.APT_ACTION_CLS(
+                    packages=list(self.UNINSTALL_PACKAGES), state="absent"
+                ),
+            )
+        )
+
+        for label, action in steps:
+            self.send_message(LogLevel.INFO, "postfix", label)
+            if self.run_action(action) != 0:
+                self.send_message(LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}")
+                return 1
+        return 0
+
+    def _delete_step(
+        self, path: str, label: str, *, safe_mode: bool
+    ) -> tuple[str, Action] | None:
+        """Baut einen Löschschritt für path, wenn die Datei vorhanden ist.
+
+        Fehlt die Datei bereits, ist das kein Fehler (Idempotenz) — der
+        Schritt entfällt, stattdessen ergeht eine INFO-Meldung.
+
+        Args:
+            path: Zu löschende Datei.
+            label: Beschreibung für die Meldung.
+            safe_mode: An DeleteFileAction durchgereicht; False bei
+                Geheimnisresten (keine Sicherungskopie mit Klartext).
+
+        Returns:
+            (label, Action) wenn die Datei vorhanden ist, sonst None.
+        """
+        if not Path(path).exists():
+            self.send_message(LogLevel.INFO, "postfix", f"{label}: bereits entfernt")
+            return None
+        return label, DeleteFileAction(path=path, safe_mode=safe_mode)
+
+    def _test(self) -> int:
+        """Weist die Zustellfähigkeit nach, ohne die Konfiguration zu ändern.
+
+        Nutzt denselben Zustellungsnachweis wie der install-Schritt
+        (_check_delivery) wieder — ein eigenständiges Duplikat des
+        Testmail/Queue-Musters wäre Redundanz.
+
+        Returns:
+            0 bei nachgewiesener Zustellung, sonst 1.
+        """
+        label = "Funktionstest: Zustellung prüfen"
+        self.send_message(LogLevel.INFO, "postfix", label)
+        if self._check_delivery() != 0:
+            self.send_message(LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}")
+            return 1
+        return 0
 
     def _check_delivery(self) -> int:
         """Weist die Zustellfähigkeit über eine Testmail nach.
