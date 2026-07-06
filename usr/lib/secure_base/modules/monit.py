@@ -4,8 +4,10 @@ Installiert Monit, setzt die globalen monitrc-Direktiven über die
 Marker-Mechanik (BlockInFileAction) und legt die ausgewählten Checks unter
 /etc/monit/conf.d/ als eigene Dateien an. Prüft die Konfiguration vor dem
 (Neu-)Start, aktiviert und startet den Dienst. Alarm-Mail läuft über das
-konfigurierte SMTP-Relay (Modul postfix). Betriebsart über den Schlüssel
-operation.
+konfigurierte SMTP-Relay (Modul postfix). uninstall nimmt alle eigenen
+Eingriffe zurück (konfig-unabhängig, alle KNOWN_CHECKS statt nur der
+konfigurierten); test führt einen lesenden Funktionstest ohne
+Systemänderung aus. Betriebsart über den Schlüssel operation.
 """
 
 import re
@@ -16,6 +18,7 @@ from typing import ClassVar
 from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.block_in_file_action import BlockInFileAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.actions.write_file_action import WriteFileAction
@@ -154,6 +157,7 @@ class Monit(Module):
     MONIT_BIN: ClassVar[str] = "/usr/bin/monit"
     DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
     SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
+    MAIL_BIN: ClassVar[str] = "/usr/bin/mail"
     MONITRC: ClassVar[str] = "/etc/monit/monitrc"
     CONFD: ClassVar[str] = "/etc/monit/conf.d"
 
@@ -180,6 +184,10 @@ class Monit(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -322,6 +330,153 @@ class Monit(Module):
             dst = str(Path(self.CONFD) / name)
             ok &= self._check_file_mode(dst, 0o644, f"Check {name}")
         return 0 if ok else 1
+
+    def _uninstall(self) -> int:
+        """Nimmt die Installation zurück (Original: do_uninstall).
+
+        Läuft konfig-unabhängig wie das Original: entfernt alle jemals
+        verwalteten conf.d-Checks (KNOWN_CHECKS, nicht nur die aktuell
+        konfigurierten monit_checks), nimmt sämtliche monitrc-Eingriffe über
+        BlockInFileAction mit state="absent" zurück, deaktiviert den Dienst
+        und entfernt zuletzt das Paket (ohne --purge, wie im Original).
+        Idempotent — ein zweiter Lauf trifft auf bereits entfernte Dateien
+        und Marker und bricht dafür nicht ab.
+
+        Returns:
+            0 bei Erfolg oder wenn das Paket bereits fehlt, sonst 1 beim
+            ersten fehlgeschlagenen Schritt.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.INFO,
+                "monit",
+                "Paket monit nicht installiert — nichts zu tun",
+            )
+            return 0
+
+        steps: list[tuple[str, Action]] = [
+            (
+                "Dienst stoppen",
+                self.SYSTEMD_ACTION_CLS(operation="stop", unit="monit", timeout=60),
+            ),
+            (
+                "Dienst deaktivieren",
+                self.SYSTEMD_ACTION_CLS(operation="disable", unit="monit", timeout=60),
+            ),
+        ]
+        for name in sorted(KNOWN_CHECKS):
+            dst = Path(self.CONFD) / name
+            if dst.exists():
+                steps.append(
+                    (
+                        f"Check {name} entfernen",
+                        # kein safe_mode: eine .bak-Sicherung in conf.d würde
+                        # von monits Include-Glob mitgelesen (siehe _install).
+                        DeleteFileAction(path=str(dst), safe_mode=False),
+                    )
+                )
+        if Path(self.MONITRC).exists():
+            for marker, key_label in MONITRC_MARKERS:
+                steps.append(
+                    (
+                        f"monitrc: {key_label} zurücknehmen",
+                        BlockInFileAction(
+                            path=self.MONITRC,
+                            block="",
+                            marker=marker,
+                            state="absent",
+                        ),
+                    )
+                )
+        steps.append(
+            ("Paket entfernen", self.APT_ACTION_CLS(packages=["monit"], state="absent"))
+        )
+
+        for label, action in steps:
+            self.send_message(LogLevel.INFO, "monit", label)
+            if self.run_action(action) != 0:
+                self.send_message(LogLevel.ERROR, "monit", f"fehlgeschlagen: {label}")
+                return 1
+        return 0
+
+    def _test(self) -> int:
+        """Führt einen lesenden Funktionstest ohne Systemänderung aus.
+
+        Original: do_test. Prüft die Konfigurationssyntax (monit -t), ruft
+        den Status über den lokalen httpd ab (monit status) und meldet, ob
+        der mail-Befehl für die Alarm-Zustellung vorhanden ist. Sammelt alle
+        Befunde, statt beim ersten Fehler abzubrechen (anders als
+        _install/_uninstall).
+
+        Returns:
+            0, wenn das Paket installiert ist und beide Prüfungen (Syntax,
+            Status) erfolgreich sind; sonst 1.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.ERROR,
+                "monit",
+                "Paket monit nicht installiert — kein Funktionstest möglich",
+            )
+            return 1
+
+        ok = True
+        ok &= self._run_diagnostic(
+            [self.MONIT_BIN, "-t"], "monit -t", "Konfiguration syntaktisch gültig"
+        )
+        ok &= self._run_diagnostic(
+            [self.MONIT_BIN, "status"], "monit status", "Dienst über httpd erreichbar"
+        )
+        if Path(self.MAIL_BIN).exists():
+            self.send_message(
+                LogLevel.INFO,
+                "monit",
+                f"{self.MAIL_BIN} vorhanden — Alarm-Zustellung möglich",
+            )
+        else:
+            self.send_message(
+                LogLevel.WARN,
+                "monit",
+                f"{self.MAIL_BIN} fehlt — Alarm-Mails würden nicht zugestellt"
+                " (Modul postfix installiert mailutils)",
+            )
+        return 0 if ok else 1
+
+    def _package_installed(self) -> bool:
+        """Prüft, ob das Paket monit installiert ist.
+
+        Returns:
+            True, wenn dpkg-query den Status "install ok installed" meldet.
+        """
+        action = SysCmdAction(
+            command=[self.DPKG_QUERY_BIN, "-W", "-f=${Status}", "monit"], timeout=15
+        )
+        if self.run_action(action) != 0:
+            return False
+        return action.stdout.strip() == "install ok installed"
+
+    def _run_diagnostic(self, command: list[str], label: str, ok_note: str) -> bool:
+        """Führt einen lesenden Diagnosebefehl aus und protokolliert jede Zeile.
+
+        Args:
+            command: Auszuführender Befehl.
+            label: Bezeichner für die Zeilen-Meldungen und die Zusammenfassung.
+            ok_note: Kurzbeschreibung für die Erfolgsmeldung.
+
+        Returns:
+            True bei Rückgabewert 0, sonst False.
+        """
+        action = SysCmdAction(command=command, timeout=30)
+        rc = self.run_action(action)
+        for line in action.stdout.splitlines():
+            stripped = line.strip()
+            if stripped:
+                self.send_message(LogLevel.INFO, "monit", f"{label}: {stripped}")
+        if rc == 0:
+            self.send_message(LogLevel.INFO, "monit", f"test: '{label}' ok ({ok_note})")
+            return True
+        self.send_message(LogLevel.ERROR, "monit", f"test: '{label}' fehlgeschlagen")
+        return False
 
     def _check_value(self, command: list[str], expected: str, label: str) -> bool:
         """Liest einen Wert über einen Befehl und vergleicht ihn mit dem Soll.

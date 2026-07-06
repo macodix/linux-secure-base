@@ -249,3 +249,73 @@ def test_check_file_mode_missing_returns_false(tmp_path: Path) -> None:
     check_file = tmp_path / "fehlt"
     mod = _make_monit()
     assert mod._check_file_mode(str(check_file), 0o644, "Check fehlt") is False
+
+
+# --- _package_installed ---
+
+
+def _write_dpkg_stub(path: Path, output: str, returncode: int = 0) -> str:
+    """Schreibt ein ausführbares Stub-Skript als dpkg-query-Ersatz.
+
+    Args:
+        path: Zielpfad des Stub-Skripts.
+        output: Stdout-Ausgabe des Stubs.
+        returncode: Rückgabewert des Stubs.
+
+    Returns:
+        Pfad des Stub-Skripts als Zeichenkette.
+    """
+    path.write_text(f"#!/bin/sh\nprintf '%s' '{output}'\nexit {returncode}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_package_installed_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Meldet dpkg-query den Status 'install ok installed', liefert True."""
+    stub = _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed")
+    monkeypatch.setattr(Monit, "DPKG_QUERY_BIN", stub)
+    mod = _make_monit()
+    assert mod._package_installed() is True
+
+
+def test_package_installed_false_on_status_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Meldet dpkg-query einen anderen Status, liefert False."""
+    stub = _write_dpkg_stub(tmp_path / "dpkg-query", "deinstall ok config-files")
+    monkeypatch.setattr(Monit, "DPKG_QUERY_BIN", stub)
+    mod = _make_monit()
+    assert mod._package_installed() is False
+
+
+def test_package_installed_false_on_command_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scheitert dpkg-query (unbekanntes Paket), liefert False."""
+    monkeypatch.setattr(Monit, "DPKG_QUERY_BIN", "/bin/false")
+    mod = _make_monit()
+    assert mod._package_installed() is False
+
+
+# --- _run_diagnostic ---
+
+
+def test_run_diagnostic_success_logs_output_and_ok_note() -> None:
+    """Ein erfolgreicher Befehl liefert True und protokolliert Zeile und Erfolg."""
+    conn = MagicMock()
+    mod = Monit(conn=conn, loglevel=LogLevel.INFO)
+    assert mod._run_diagnostic(["/bin/echo", "Kernel ok"], "diag", "alles ok") is True
+    payloads = [call.args[0].payload for call in conn.send.call_args_list]
+    assert any("diag: Kernel ok" in str(p) for p in payloads)
+    assert any("diag" in str(p) and "ok (alles ok)" in str(p) for p in payloads)
+
+
+def test_run_diagnostic_failure_reports_error() -> None:
+    """Ein fehlschlagender Befehl liefert False und meldet den Fehlschlag."""
+    conn = MagicMock()
+    mod = Monit(conn=conn, loglevel=LogLevel.INFO)
+    assert mod._run_diagnostic(["/bin/false"], "diag", "irrelevant") is False
+    payloads = [call.args[0].payload for call in conn.send.call_args_list]
+    assert any("diag" in str(p) and "fehlgeschlagen" in str(p) for p in payloads)

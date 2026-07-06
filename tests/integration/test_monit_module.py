@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.monit import Monit
 
@@ -32,6 +32,30 @@ class _NoOpSystemdAction(SystemdServiceAction):
     def run(self) -> str:
         self.status = "finished"
         return self.status
+
+
+class _FailingSystemdAction(SystemdServiceAction):
+    """Ersetzt SystemdServiceAction für Tests: scheitert immer."""
+
+    def run(self) -> str:
+        self.status = "failed"
+        raise ActionError("stub: systemd-Aktion fehlgeschlagen")
+
+
+def _write_dpkg_stub(path: Path, output: str, returncode: int = 0) -> str:
+    """Schreibt ein ausführbares Stub-Skript als dpkg-query-Ersatz.
+
+    Args:
+        path: Zielpfad des Stub-Skripts.
+        output: Stdout-Ausgabe des Stubs.
+        returncode: Rückgabewert des Stubs.
+
+    Returns:
+        Pfad des Stub-Skripts als Zeichenkette.
+    """
+    path.write_text(f"#!/bin/sh\nprintf '%s' '{output}'\nexit {returncode}\n")
+    path.chmod(0o755)
+    return str(path)
 
 
 def _make_module(
@@ -181,3 +205,181 @@ def test_check_confirms_markers_and_files_after_install(
     messages = _sent_messages(conn)
     assert any("monitrc-Eingriff 'set alert': vorhanden" in str(m) for m in messages)
     assert any("Check system:" in str(m) and "OK" in str(m) for m in messages)
+
+
+# --- Betriebsart uninstall ---
+
+
+def test_uninstall_skips_when_package_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist das Paket monit nicht installiert, meldet uninstall Erfolg ohne Schritte."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "unknown", returncode=1),
+    )
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Paket monit nicht installiert — nichts zu tun" in messages
+    assert "Paket entfernen" not in messages
+
+
+def test_uninstall_removes_all_known_checks_and_monitrc_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt alle KNOWN_CHECKS (nicht nur monit_checks) und alle Marker."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0  # install: legt system, rootfs und die sechs Marker an
+
+    # Eine nicht (mehr) konfigurierte Check-Datei simuliert einen älteren
+    # Lauf mit anderer monit_checks-Auswahl — muss ebenfalls entfernt werden.
+    (Path(Monit.CONFD) / "sshd").write_text('check process sshd matching "sshd"\n')
+
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    assert list(Path(Monit.CONFD).iterdir()) == []
+    assert "BEGIN" not in Path(Monit.MONITRC).read_text()
+    messages = _sent_messages(conn)
+    assert "Paket entfernen" in messages
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Schritt liefert 1 und stoppt vor den folgenden Schritten."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    monkeypatch.setattr(Monit, "SYSTEMD_ACTION_CLS", _FailingSystemdAction)
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Dienst stoppen" in messages
+    assert "Paket entfernen" not in messages
+    assert (Path(Monit.CONFD) / "system").exists()
+
+
+def test_uninstall_twice_stays_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter uninstall-Lauf trifft auf bereits entfernte Dateien/Marker."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    mod.operation = "uninstall"
+
+    assert mod.start() == 0
+    assert mod.start() == 0
+
+
+# --- Betriebsart test ---
+
+
+def test_test_reports_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sind Paket, Syntax und Status in Ordnung, liefert test 0."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    monkeypatch.setattr(Monit, "MAIL_BIN", "/usr/bin/true")
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("monit -t" in str(m) and "ok" in str(m) for m in messages)
+    assert any("monit status" in str(m) and "ok" in str(m) for m in messages)
+    assert any("vorhanden" in str(m) for m in messages)
+
+
+def test_test_collects_both_diagnostics_without_aborting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test sammelt beide Befunde, statt beim ersten Fehler abzubrechen."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    monkeypatch.setattr(Monit, "MONIT_BIN", "/usr/bin/false")
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("monit -t" in str(m) and "fehlgeschlagen" in str(m) for m in messages)
+    assert any(
+        "monit status" in str(m) and "fehlgeschlagen" in str(m) for m in messages
+    )
+
+
+def test_test_fails_when_package_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt das Paket monit, meldet test einen Fehler ohne Diagnosebefehle."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "unknown", returncode=1),
+    )
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "Paket monit nicht installiert — kein Funktionstest möglich" in messages
+
+
+def test_test_warns_when_mail_binary_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt der mail-Befehl, warnt test, ohne den Rückgabewert zu verschlechtern."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        Monit,
+        "DPKG_QUERY_BIN",
+        _write_dpkg_stub(tmp_path / "dpkg-query", "install ok installed"),
+    )
+    monkeypatch.setattr(Monit, "MAIL_BIN", str(tmp_path / "mail-fehlt"))
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("fehlt" in str(m) and "Alarm-Mails" in str(m) for m in messages)
