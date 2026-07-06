@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "secure-base-installer"
-version = "0.1.0-rc10"
+version = "0.1.0-rc11"
 description = "Linux Secure Base — Installer für ein gehärtetes Grundsystem"
 requires-python = ">=3.13"
 
