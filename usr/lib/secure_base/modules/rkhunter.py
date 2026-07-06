@@ -3,10 +3,12 @@
 Installiert das Paket rkhunter, härtet /etc/default/rkhunter (täglicher
 Cron-Lauf, DB-Update, Report-Mail, apt-Hook) und den Mail-Absender in
 /etc/rkhunter.conf, und initialisiert die Baseline-Datenbank. Betriebsart
-über den Schlüssel operation. Kein eigener systemd-Dienst — der Lauf
-erfolgt über /etc/cron.daily/rkhunter und einen apt-Hook.
+über den Schlüssel operation (install, check, uninstall, test). Kein
+eigener systemd-Dienst — der Lauf erfolgt über /etc/cron.daily/rkhunter
+und einen apt-Hook.
 """
 
+import contextlib
 import re
 from pathlib import Path
 from typing import ClassVar
@@ -15,7 +17,7 @@ from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.line_in_file_action import LineInFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
@@ -45,6 +47,13 @@ class Rkhunter(Module):
     # eine größere Zahl von Systemdateien und kann mehrere Minuten dauern).
     PROPUPD_TIMEOUT: ClassVar[float] = 600.0
 
+    # Zeitgrenze für den Funktionstest (rkhunter --check liest eine
+    # größere Zahl von Systemdateien und kann einige Minuten dauern).
+    CHECK_TIMEOUT: ClassVar[float] = 300.0
+
+    DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
+    DPKG_QUERY_TIMEOUT: ClassVar[float] = 15.0
+
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
 
     # Von check_config per setattr gesetzt (siehe Module.check_config);
@@ -54,18 +63,26 @@ class Rkhunter(Module):
     admin_mail: str
 
     def start(self) -> int:
-        """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
+        """Führt Einrichtung, Abgleich, Rückbau oder Funktionstest aus.
+
+        Die Betriebsart uninstall lässt _validate() bewusst aus: der
+        Rückbau verwendet fqdn/admin_mail nicht und muss wie im
+        Bash-Original auch bei ungültigen Werten durchlaufen (fail-safe).
 
         Returns:
             0 bei Erfolg, ungleich 0 bei Fehler.
 
         Raises:
             ModuleError: Bei ungültigem fqdn, nicht ableitbarem Absender
-                oder ungültiger admin_mail.
+                oder ungültiger admin_mail (außer bei uninstall).
         """
+        if self.operation == "uninstall":
+            return self._uninstall()
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -218,6 +235,84 @@ class Rkhunter(Module):
             return 1
         return 0
 
+    def _uninstall(self) -> int:
+        """Nimmt die install-Konfig-Eingriffe zurück und entfernt das Paket.
+
+        Kein Dienst zu stoppen — rkhunter hat keinen eigenen
+        systemd-Dienst. Die Baseline-Datenbank (RK_BASELINE) bleibt wie
+        im Original unangetastet: sie kann aus einem früheren Lauf
+        stammen und wird nicht durch uninstall entsorgt.
+
+        Läuft schrittweise mit Abbruch beim ersten Fehler; jeder Schritt
+        ist für sich idempotent (fehlende Zieldatei überspringt ihren
+        Revert, eine bereits fehlende Zeile bleibt bei state="absent"
+        unverändert).
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        if not self._revert_config(
+            self.RK_DEFAULT,
+            (
+                ("täglichen Lauf zurücknehmen", r"^CRON_DAILY_RUN="),
+                ("DB-Update zurücknehmen", r"^CRON_DB_UPDATE="),
+                ("DB-Update-Mail zurücknehmen", r"^DB_UPDATE_EMAIL="),
+                ("Report-Empfänger zurücknehmen", r"^REPORT_EMAIL="),
+                ("apt-Hook zurücknehmen", r"^APT_AUTOGEN="),
+            ),
+        ):
+            return 1
+        if not self._revert_config(
+            self.RK_CONF, (("Mail-Absender zurücknehmen", r"^MAIL_CMD="),)
+        ):
+            return 1
+        return self._remove_package()
+
+    def _revert_config(self, path: str, entries: tuple[tuple[str, str], ...]) -> bool:
+        """Nimmt die genannten Einstellungen in path zurück.
+
+        Fehlt path, gilt der Revert als bereits erledigt (idempotent) —
+        entspricht dem Original, das den Revert je Datei nur bei
+        Vorhandensein ausführt.
+
+        Args:
+            path: Zu bereinigende Konfigurationsdatei.
+            entries: Folge aus (Meldungstext, Regex für die Sollzeile).
+                line bleibt bei state="absent" mit gesetztem match ohne
+                Wirkung und wird deshalb leer übergeben.
+
+        Returns:
+            True bei Erfolg oder wenn path nicht existiert, sonst False.
+        """
+        if not Path(path).exists():
+            self.send_message(
+                LogLevel.INFO, "rkhunter", f"{path} nicht vorhanden — kein Revert nötig"
+            )
+            return True
+        for label, match in entries:
+            self.send_message(LogLevel.INFO, "rkhunter", label)
+            action = LineInFileAction(path=path, line="", match=match, state="absent")
+            if self.run_action(action) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "rkhunter", f"fehlgeschlagen: {label}"
+                )
+                return False
+        return True
+
+    def _remove_package(self) -> int:
+        """Entfernt das Paket rkhunter ohne --purge (Baseline bleibt liegen).
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehlschlag.
+        """
+        label = "Paket entfernen (ohne --purge)"
+        self.send_message(LogLevel.INFO, "rkhunter", label)
+        action = self.APT_ACTION_CLS(packages=["rkhunter"], state="absent")
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "rkhunter", f"fehlgeschlagen: {label}")
+            return 1
+        return 0
+
     def _verify(self) -> int:
         """Gleicht die eigenen install-Wirkungen mit dem Soll ab.
 
@@ -308,5 +403,93 @@ class Rkhunter(Module):
             return True
         self.send_message(
             LogLevel.ERROR, "rkhunter", f"Baseline fehlt oder leer ({self.RK_BASELINE})"
+        )
+        return False
+
+    def _test(self) -> int:
+        """Führt den Funktionstest ohne Systemänderung aus.
+
+        Prüft, ob das Paket rkhunter installiert ist, und führt bei
+        vorhandenem Paket einen lesenden Scan aus (rkhunter --check --sk
+        --nocolors --report-warnings-only), wie im Original. Läuft
+        sammelnd durch — anders als _install/_uninstall kein Abbruch
+        beim ersten Fehler.
+
+        Returns:
+            0 bei erfolgreichem Test, 1 bei Fehler.
+        """
+        ok = True
+        ok &= self._check_package_installed()
+        ok &= self._run_scan()
+        return 0 if ok else 1
+
+    def _check_package_installed(self) -> bool:
+        """Prüft per dpkg-query, ob das Paket rkhunter installiert ist.
+
+        Returns:
+            True, wenn dpkg-query den Status "install ok installed" meldet.
+        """
+        action = SysCmdAction(
+            command=[self.DPKG_QUERY_BIN, "-W", "-f=${Status}", "rkhunter"],
+            timeout=self.DPKG_QUERY_TIMEOUT,
+        )
+        if self.run_action(action) == 0 and "install ok installed" in action.stdout:
+            self.send_message(LogLevel.INFO, "rkhunter", "Paket rkhunter: installiert")
+            return True
+        self.send_message(
+            LogLevel.ERROR, "rkhunter", "Paket rkhunter: nicht installiert"
+        )
+        return False
+
+    def _run_scan(self) -> bool:
+        """Führt den lesenden rkhunter-Scan aus und meldet das Ergebnis.
+
+        Die Scan-Ausgabe geht zeilenweise als WARN ins Log (Audit-
+        Lesbarkeit, wie im Original). Exit-Code 1 (rkhunter meldet
+        Warnungen) gilt nicht als Testfehler — Warnungen direkt nach
+        Erstinstallation sind manuell zu sichten, kein Hard-Fail. Nur ein
+        anderer Exit-Code oder ein Startfehler zählt als Fehler.
+
+        Returns:
+            True bei Exit-Code 0 oder 1, sonst False.
+        """
+        self.send_message(
+            LogLevel.INFO,
+            "rkhunter",
+            "Scan startet (lesend, kann einige Sekunden bis Minuten dauern)",
+        )
+        action = SysCmdAction(
+            command=[
+                self.RKHUNTER_BIN,
+                "--check",
+                "--sk",
+                "--nocolors",
+                "--report-warnings-only",
+            ],
+            timeout=self.CHECK_TIMEOUT,
+        )
+        with contextlib.suppress(ActionError):
+            action.run()
+
+        for line in action.stdout.splitlines():
+            if line.strip():
+                self.send_message(LogLevel.WARN, "rkhunter", line)
+
+        if action.returncode == 0:
+            self.send_message(LogLevel.INFO, "rkhunter", "Scan ohne Warnungen")
+            return True
+        if action.returncode == 1:
+            self.send_message(
+                LogLevel.WARN,
+                "rkhunter",
+                "Scan meldet Warnungen (siehe oben) — kein Testfehler. Warnungen"
+                " direkt nach Erstinstallation manuell sichten, nicht ungeprüft"
+                " als Fehlalarm abtun.",
+            )
+            return True
+        self.send_message(
+            LogLevel.ERROR,
+            "rkhunter",
+            f"Scan nicht ausführbar (Exit {action.returncode})",
         )
         return False

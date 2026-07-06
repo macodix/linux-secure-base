@@ -11,8 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from pifos.actions.apt_action import AptAction
-from pifos.errors import ModuleError
+from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules import rkhunter as rkhunter_module
 from secure_base.modules.rkhunter import Rkhunter
 
 
@@ -148,3 +149,140 @@ def test_check_passes_after_install(
     messages = _sent_messages(conn)
     assert not any("nicht gesetzt" in str(m) for m in messages)
     assert not any("Baseline fehlt" in str(m) for m in messages)
+
+
+# --- uninstall ---
+
+
+def test_uninstall_reverts_config_and_removes_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nach install nimmt uninstall alle Konfig-Eingriffe zurück; Baseline bleibt."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    Path(mod.RK_BASELINE).write_text("baseline-inhalt\n", encoding="utf-8")
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0
+    default_content = Path(mod.RK_DEFAULT).read_text(encoding="utf-8")
+    assert "CRON_DAILY_RUN" not in default_content
+    assert "CRON_DB_UPDATE" not in default_content
+    assert "DB_UPDATE_EMAIL" not in default_content
+    assert "REPORT_EMAIL" not in default_content
+    assert "APT_AUTOGEN" not in default_content
+    conf_content = Path(mod.RK_CONF).read_text(encoding="utf-8")
+    assert "MAIL_CMD" not in conf_content
+    # Baseline bleibt erhalten — uninstall entsorgt sie nicht.
+    assert Path(mod.RK_BASELINE).read_text(encoding="utf-8") == "baseline-inhalt\n"
+    messages = _sent_messages(conn)
+    assert "Paket entfernen (ohne --purge)" in messages
+
+
+def test_uninstall_is_idempotent_without_prior_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall ohne vorherigen install läuft ohne Fehler durch (fehlende Dateien)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    Path(mod.RK_DEFAULT).unlink()
+    Path(mod.RK_CONF).unlink()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("nicht vorhanden" in str(m) for m in messages)
+
+
+def test_uninstall_ignores_invalid_fqdn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall läuft auch mit ungültigem fqdn durch (fail-safe, keine _validate)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mod.fqdn = "-invalid-"
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    assert conn.send.call_args_list  # es wurden Meldungen gesendet
+
+
+def test_uninstall_stops_at_first_failed_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt der package-remove-Schritt fehl, liefert uninstall 1."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+
+    class _FailingAptAction(AptAction):
+        def run(self) -> str:
+            self.status = "failed"
+            raise ActionError("boom")
+
+    monkeypatch.setattr(Rkhunter, "APT_ACTION_CLS", _FailingAptAction)
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Paket entfernen (ohne --purge)" in messages
+
+
+# --- test ---
+
+
+def test_test_operation_ok_when_installed_and_scan_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test liefert 0, wenn Paket-Prüfung und Scan beide sauber sind."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+
+    class _OkSysCmd:
+        def __init__(self, command: list[str], timeout: float) -> None:
+            self.command = command
+            self.timeout = timeout
+            self.stdout = "install ok installed" if "dpkg-query" in command[0] else ""
+            self.returncode = 0
+
+        def run(self) -> str:
+            return "finished"
+
+    monkeypatch.setattr(rkhunter_module, "SysCmdAction", _OkSysCmd)
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "Paket rkhunter: installiert" in messages
+    assert "Scan ohne Warnungen" in messages
+
+
+def test_test_operation_fails_when_package_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test liefert 1, wenn dpkg-query das Paket nicht als installiert meldet."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+
+    class _MissingPackageSysCmd:
+        def __init__(self, command: list[str], timeout: float) -> None:
+            self.command = command
+            self.timeout = timeout
+            self.stdout = ""
+            self.returncode = 1
+
+        def run(self) -> str:
+            self.returncode = 1
+            raise ActionError("Paket nicht bekannt")
+
+    monkeypatch.setattr(rkhunter_module, "SysCmdAction", _MissingPackageSysCmd)
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "Paket rkhunter: nicht installiert" in messages
