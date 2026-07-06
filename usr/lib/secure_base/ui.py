@@ -103,10 +103,27 @@ class StatusView:
         self._label_width = max(len(s.label) for s in specs) if specs else 10
         self._name_width = max(len(s.name) for s in specs) if specs else 8
         self._state_width = max(len(state.value) for state in State)
-        # Gesamthöhe einmalig festlegen: Rahmen+Innenabstand (4), Kopf (1),
-        # Modulliste, Meldungsfenster (_LOG_LINES+2), Fortschritt (1) und
-        # drei Leerzeilen — die Anzeige kann damit nie wachsen.
-        self._height = 4 + 1 + len(specs) + (_LOG_LINES + 2) + 1 + 3
+        self._layout(self._console.size.height)
+
+    def _layout(self, terminal_rows: int) -> None:
+        """Legt Meldungsfenster- und Gesamthöhe einmalig fest.
+
+        Passt sich der Terminalhöhe an: Ist der Schirm zu niedrig für das
+        volle Meldungsfenster, schrumpft es (mindestens 3 Zeilen), und die
+        Gesamthöhe bleibt unter der Schirmhöhe. Eine Live-Anzeige, die
+        höher ist als das Terminal, zeichnet sonst sichtbar springend.
+        """
+        # Feste Zeilen: Rahmen+Innenabstand (4), Kopf (1), Modulliste,
+        # drei Leerzeilen, Fortschritt (1).
+        fixed_rows = 4 + 1 + len(self._specs) + 3 + 1
+        log_lines = _LOG_LINES
+        if terminal_rows > 0:
+            log_lines = max(3, min(_LOG_LINES, terminal_rows - 1 - fixed_rows - 2))
+        self._log_lines = log_lines
+        self._log = deque(self._log, maxlen=log_lines)
+        self._height = fixed_rows + log_lines + 2
+        if terminal_rows > 0:
+            self._height = min(self._height, terminal_rows - 1)
 
     @contextlib.contextmanager
     def live(self) -> Iterator[None]:
@@ -205,7 +222,7 @@ class StatusView:
     def _header(self) -> Text:
         """Baut die Kopfzeile aus Betriebsart und Zielsystem."""
         title = _OPERATION_TITLE.get(self._operation, self._operation)
-        header = Text()
+        header = Text(no_wrap=True, overflow="ellipsis")
         header.append("Linux Secure Base", style="bold")
         header.append(f"  ·  {title}", style="cyan")
         if self._host:
@@ -236,14 +253,14 @@ class StatusView:
     def _log_window(self) -> Panel:
         """Baut das Meldungsfenster mit fester Höhe."""
         lines: list[RenderableType] = list(self._log)
-        while len(lines) < _LOG_LINES:
+        while len(lines) < self._log_lines:
             lines.append(Text(""))
         return Panel(
             Group(*lines),
             title="Meldungen",
             title_align="left",
             border_style="grey50",
-            height=_LOG_LINES + 2,
+            height=self._log_lines + 2,
         )
 
     def _footer(self) -> Table:

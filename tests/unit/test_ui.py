@@ -195,3 +195,23 @@ def test_render_geometry_is_stable_under_long_messages() -> None:
     after = _render_text(view).count("\n")
     assert before == after
     assert after == view._height
+
+
+def test_layout_shrinks_log_window_on_small_terminal() -> None:
+    """Bei niedrigem Terminal schrumpft das Meldungsfenster.
+
+    Deckt den Servertest-Befund ab: eine Anzeige höher als das Terminal
+    zeichnet sichtbar springend.
+    """
+    view = _silent_view()
+    # Feste Zeilen bei 2 Modulen: 4+1+2+3+1 = 11.
+    view._layout(20)
+    assert view._log_lines == 6
+    assert view._height <= 19
+
+    view._layout(16)
+    assert view._log_lines == 3
+    assert view._height <= 15
+
+    view._layout(50)
+    assert view._log_lines == 8
