@@ -7,6 +7,7 @@ Aufruf: lsb-installer [OPTIONEN] {install|check} [MODUL ...]
 import argparse
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 # Keine Bytecode-Ablagen (__pycache__) im Paketbaum — der Baum bleibt so,
@@ -29,10 +30,25 @@ sys.path.insert(0, str(_ROOT / "usr" / "lib" / "lsb" / "_vendor"))
 from lsb.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
 
 
+def _version() -> str:
+    """Liest die Version aus der pyproject.toml des Paketbaums.
+
+    Die pyproject.toml ist die einzige Quelle der Version (auch der
+    Paketbau liest sie); die rc-Kennung ist Teil des Versionswerts.
+    """
+    with (_ROOT / "pyproject.toml").open("rb") as fh:
+        return str(tomllib.load(fh)["project"]["version"])
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Baut den Argumentparser des Kommandos."""
     parser = argparse.ArgumentParser(
         description="Installer für ein gehärtetes Linux-Grundsystem."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"lsb-installer {_version()}",
     )
     parser.add_argument(
         "command",
