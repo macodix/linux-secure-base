@@ -457,7 +457,9 @@ def test_main_install_sends_report_with_results_and_skipped(
     monkeypatch.setattr(
         installer_module,
         "_send_install_report",
-        lambda config, results, skipped, host: calls.append((results, skipped)),
+        lambda config, results, skipped, host: calls.append(
+            ([(spec.label, ok) for spec, ok in results], skipped)
+        ),
     )
 
     main(_base_args())
@@ -612,6 +614,53 @@ def test_main_dry_run_skips_modules_and_report(
     assert _StubInstaller.last_instance is not None
     assert _StubInstaller.last_instance.run_calls == []
     assert reports == []
+
+
+def test_build_install_report_appends_docs() -> None:
+    """Doku-Abschnitte der Module werden an den Bericht angehängt."""
+    _, body = installer_module._build_install_report(
+        "srv.example.com",
+        [("Grundkonfiguration", True)],
+        [],
+        "2026-07-06 12:00",
+        docs=["\n## Grundkonfiguration\n\n**Hostname:** `srv`\n"],
+    )
+    assert "## Grundkonfiguration" in body
+    assert "**Hostname:** `srv`" in body
+
+
+def test_doc_selftest_blocks_secret_name_and_value() -> None:
+    """Der Selbsttest erkennt Geheimnisnamen und -werte im Berichtstext."""
+    config = Config()
+    config.load_dict({"postfix": {"relay_password": "GEHEIM-X"}})
+    assert installer_module._doc_selftest_no_secrets("alles sauber", config)
+    assert not installer_module._doc_selftest_no_secrets(
+        "enthält relay_password", config
+    )
+    assert not installer_module._doc_selftest_no_secrets("enthält GEHEIM-X", config)
+
+
+def test_module_docs_collects_only_successful_modules() -> None:
+    """_module_docs nimmt nur erfolgreiche Module mit doc-Methode auf."""
+
+    class _WithDoc:
+        CONFIG: ClassVar[list[str]] = ["operation"]
+
+        @classmethod
+        def doc(cls, values: dict[str, str]) -> str:
+            return "\n## Beispiel\n"
+
+    ok_spec = ModuleSpec("a", "A", _WithDoc, optional=False)  # type: ignore[arg-type]
+    fail_spec = ModuleSpec("b", "B", _WithDoc, optional=False)  # type: ignore[arg-type]
+    plain_spec = ModuleSpec("c", "C", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    config = Config()
+    config.load_dict({"general": {}})
+
+    docs = installer_module._module_docs(
+        config, [(ok_spec, True), (fail_spec, False), (plain_spec, True)]
+    )
+
+    assert docs == ["\n## Beispiel\n"]
 
 
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(

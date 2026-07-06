@@ -133,6 +133,7 @@ def _build_install_report(
     results: list[tuple[str, bool]],
     skipped: list[str],
     stamp: str,
+    docs: list[str] | None = None,
 ) -> tuple[str, str]:
     """Baut Betreff und Text des Installationsberichts.
 
@@ -144,6 +145,7 @@ def _build_install_report(
         results: (Modul-Label, Ergebnis) der gelaufenen Module.
         skipped: Labels der nach einem Abbruch nicht ausgeführten Module.
         stamp: Zeitangabe für Betreff und Kopfzeile.
+        docs: Doku-Abschnitte der erfolgreichen Module (Markdown).
 
     Returns:
         (Betreff, Berichtstext).
@@ -163,17 +165,76 @@ def _build_install_report(
     ]
     lines += [f"- {label}: {'OK' if ok else 'Fehler'}" for label, ok in results]
     lines += [f"- {label}: nicht ausgeführt" for label in skipped]
-    return subject, "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    if docs:
+        body += "".join(docs)
+    return subject, body
+
+
+# Geheimnis-Schlüssel für den Selbsttest des Berichts: weder Name noch
+# Wert darf in der versendeten Doku auftauchen (Bash-Vorgänger:
+# doc_selftest_no_secrets).
+_SECRET_KEYS = ("relay_password", "main_user_password", "restic_passphrase")
+
+
+def _doc_selftest_no_secrets(body: str, config: Config) -> bool:
+    """Prüft den Berichtstext auf Geheimnisnamen und -werte.
+
+    Returns:
+        True, wenn der Text frei von Geheimnissen ist.
+    """
+    flat: dict[str, object] = {}
+    for section in config.to_dict().values():
+        if isinstance(section, dict):
+            flat.update(section)
+    for key in _SECRET_KEYS:
+        if key in body:
+            logger.error("Bericht-Selbsttest: Geheimnisname %r im Text.", key)
+            return False
+        value = str(flat.get(key, "") or "").strip()
+        if value and value in body:
+            logger.error("Bericht-Selbsttest: Wert von %r im Text.", key)
+            return False
+    return True
+
+
+def _module_docs(config: Config, results: list[tuple[ModuleSpec, bool]]) -> list[str]:
+    """Sammelt die Doku-Abschnitte der erfolgreichen Module.
+
+    Ein Modul ohne doc-Klassenmethode oder mit fehlschlagender Montage
+    wird mit WARN übersprungen (fail-soft).
+    """
+    docs: list[str] = []
+    for spec, ok in results:
+        if not ok:
+            continue
+        doc_fn = getattr(spec.module_cls, "doc", None)
+        if not callable(doc_fn):
+            continue
+        try:
+            values = {
+                k: str(v)
+                for k, v in module_config(config, spec, "install").to_dict().items()
+            }
+            docs.append(str(doc_fn(values)))
+        except Exception as exc:  # noqa: BLE001 — Bericht ist fail-soft
+            logger.warning("Doku-Abschnitt %s nicht erzeugbar: %s", spec.name, exc)
+    return docs
 
 
 def _send_install_report(
-    config: Config, results: list[tuple[str, bool]], skipped: list[str], host: str
+    config: Config,
+    results: list[tuple[ModuleSpec, bool]],
+    skipped: list[str],
+    host: str,
 ) -> None:
     """Legt den Installationsbericht lokal ab und mailt ihn an admin_mail.
 
-    Nachzügler des Bash-Berichts (sb_install_report), auf den Kern
-    reduziert: Modulliste mit Ergebnis. Fail-soft — scheitert Ablage
-    oder Versand, bleibt der Lauf-Exit-Code unverändert (WARN im Log).
+    Nachzügler des Bash-Berichts (sb_install_report): Modulliste mit
+    Ergebnis plus die Doku-Abschnitte (doc) der erfolgreichen Module.
+    Vor dem Versand läuft der Geheimnis-Selbsttest; schlägt er an, wird
+    nicht versendet, die lokale Datei bleibt zur Diagnose. Fail-soft —
+    scheitert Ablage oder Versand, bleibt der Lauf-Exit-Code unverändert.
     """
     if not _report_enabled(config) or not results:
         return
@@ -184,7 +245,9 @@ def _send_install_report(
         admin_mail = ""
 
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    subject, body = _build_install_report(host, results, skipped, stamp)
+    labels = [(spec.label, ok) for spec, ok in results]
+    docs = _module_docs(config, results)
+    subject, body = _build_install_report(host, labels, skipped, stamp, docs)
 
     report_file = REPORT_DIR / time.strftime("install-bericht-%Y%m%d-%H%M%S.txt")
     try:
@@ -197,6 +260,13 @@ def _send_install_report(
 
     if not admin_mail:
         logger.warning("Kein admin_mail gesetzt — Bericht nur lokal.")
+        return
+    if not _doc_selftest_no_secrets(body, config):
+        logger.error(
+            "Bericht enthält möglicherweise Geheimnisse — kein Versand, "
+            "Datei liegt lokal: %s",
+            report_file,
+        )
         return
     message = (
         f"To: {admin_mail}\n"
@@ -336,7 +406,7 @@ def main(args: argparse.Namespace) -> int:
         return 2
 
     ufw_ok = False
-    results: list[tuple[str, bool]] = []
+    results: list[tuple[ModuleSpec, bool]] = []
     with view.live():
         for spec in run_specs:
             # Trockenlauf: Module nur benennen, nichts starten (wie der
@@ -353,7 +423,7 @@ def main(args: argparse.Namespace) -> int:
                 continue
             module_cfg = module_config(config, spec, args.command)
             ok = caller.run_module(spec, module_cfg, args.command)
-            results.append((spec.label, ok))
+            results.append((spec, ok))
             if spec.name == "ufw" and ok:
                 ufw_ok = True
             # install und uninstall ändern das System und bauen
