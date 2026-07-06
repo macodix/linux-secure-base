@@ -8,7 +8,9 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.monit import (
     CHECK_CONTENT,
+    DAEMON_VALUE,
     KNOWN_CHECKS,
+    MAILSERVER_VALUE,
     MONITRC_MARKERS,
     Monit,
     _httpd_block,
@@ -319,3 +321,55 @@ def test_run_diagnostic_failure_reports_error() -> None:
     assert mod._run_diagnostic(["/bin/false"], "diag", "irrelevant") is False
     payloads = [call.args[0].payload for call in conn.send.call_args_list]
     assert any("diag" in str(p) and "fehlgeschlagen" in str(p) for p in payloads)
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, monitrc-Direktiven und Dienst."""
+    values = {
+        "admin_mail": "admin@example.com",
+        "monit_mail_from": "monit@example.com",
+        "monit_checks": "system,rootfs",
+    }
+    section = Monit.doc(values)
+    assert section.startswith("\n## Monitoring\n\n")
+    assert "**Pakete:** monit\n\n" in section
+    assert f"`{Monit.MONITRC}`" in section
+    assert f"set daemon {DAEMON_VALUE}" in section
+    assert f"set mailserver {MAILSERVER_VALUE}" in section
+    assert "alert admin@example.com" in section
+    assert "mail-format from: monit@example.com" in section
+    assert f"`{Monit.CONFD}/system`" in section
+    assert "Check: system" in section
+    assert f"`{Monit.CONFD}/rootfs`" in section
+    assert "Check: rootfs" in section
+    assert section.endswith("\n**Dienste:** monit (enabled, aktiv nach install)\n")
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Monit.doc({})
+    assert "alert (leer/Default)" in section
+    assert "mail-format from: (leer/Default)" in section
+
+
+def test_doc_omits_check_files_when_monit_checks_empty() -> None:
+    """Ohne monit_checks entfällt der Check-Dateien-Abschnitt vollständig."""
+    section = Monit.doc({"admin_mail": "admin@example.com"})
+    assert f"{Monit.CONFD}/" not in section
+    assert "Check:" not in section
+
+
+def test_doc_never_leaks_unrelated_secrets() -> None:
+    """Ein Kunstgeheimnis unter fremdem Schlüssel erscheint nicht in doc()."""
+    values = {
+        "admin_mail": "admin@example.com",
+        "monit_mail_from": "monit@example.com",
+        "monit_checks": "system",
+        "restic_passphrase": "GEHEIM-X",
+    }
+    section = Monit.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "restic_passphrase" not in section

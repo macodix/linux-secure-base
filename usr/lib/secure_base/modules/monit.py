@@ -142,6 +142,24 @@ def _httpd_block() -> str:
     return "set httpd port 2812 and\n    use address localhost\n    allow localhost"
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich fest benannte Schlüssel ab (admin_mail,
+    monit_mail_from) — monit verwaltet keine Geheimnisse (Alarm-Mail läuft
+    über das lokale Postfix), ein Allowlist-Mechanismus wie im Bash-Original
+    (doc_val) ist deshalb hier nicht nötig.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 class Monit(Module):
     """Systemüberwachung über pifos-Aktionen."""
 
@@ -170,6 +188,42 @@ class Monit(Module):
     admin_mail: str
     monit_mail_from: str
     monit_checks: str
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: monit verwaltet keine Geheimnisse (Alarm-Mail läuft über
+        das lokale Postfix); doc() liest ausschließlich admin_mail,
+        monit_mail_from und monit_checks aus values.
+
+        Args:
+            values: Konfigurationswerte des Moduls (admin_mail,
+                monit_mail_from, monit_checks, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Monitoring".
+        """
+        admin_mail = _doc_value(values, "admin_mail")
+        monit_mail_from = _doc_value(values, "monit_mail_from")
+        checks = [
+            c.strip() for c in values.get("monit_checks", "").split(",") if c.strip()
+        ]
+        check_lines = "".join(
+            f"- `{cls.CONFD}/{check}`:\n  - `Check: {check}`\n" for check in checks
+        )
+        return (
+            "\n## Monitoring\n\n"
+            "**Pakete:** monit\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.MONITRC}`:\n"
+            f"  - `set daemon {DAEMON_VALUE}`\n"
+            f"  - `set mailserver {MAILSERVER_VALUE}`\n"
+            f"  - `alert {admin_mail}`\n"
+            f"  - `mail-format from: {monit_mail_from}`\n"
+            f"{check_lines}"
+            "\n**Dienste:** monit (enabled, aktiv nach install)\n"
+        )
 
     def start(self) -> int:
         """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
