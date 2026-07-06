@@ -282,12 +282,18 @@ def test_check_aliases_block_false_when_markers_missing(
 def test_test_mail_content_includes_fqdn_admin_mail_and_token() -> None:
     """Die Testmail enthält fqdn im Betreff, admin_mail als Empfänger und token."""
     content = _test_mail_content("server.example.com", "admin@example.com", "abc123")
-    assert (
-        "Subject: secure-base server.example.com:"
-        " Testnachricht (Prüfung des Mailversands)" in content
-    )
-    assert "To: admin@example.com" in content
-    assert "abc123" in content
+    assert isinstance(content, bytes)
+    text = content.decode("ascii")
+    assert "Subject: secure-base server.example.com:" in text
+    assert "=?utf-8?q?" in text
+    assert "To: admin@example.com" in text
+    assert "abc123" in text
+
+
+def test_test_mail_content_is_ascii_only() -> None:
+    """Die serialisierte Testmail besteht ausschließlich aus ASCII-Bytes."""
+    content = _test_mail_content("server.example.com", "admin@example.com", "abc123")
+    assert all(byte < 128 for byte in content)
 
 
 # --- _SendMailAction ---
@@ -307,7 +313,9 @@ def test_send_mail_action_success_reads_stdin(tmp_path: Path) -> None:
         tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
     )
     action = _SendMailAction(
-        command=[script, "admin@example.com"], content="Subject: x\n\nbody\n", timeout=5
+        command=[script, "admin@example.com"],
+        content=b"Subject: x\n\nbody\n",
+        timeout=5,
     )
     assert action.run() == "finished"
     assert action.returncode == 0
@@ -321,7 +329,7 @@ def test_send_mail_action_failure_raises_with_stderr(tmp_path: Path) -> None:
         "import sys\nsys.stdin.read()\n"
         "sys.stderr.write('relay refused\\n')\nsys.exit(1)\n",
     )
-    action = _SendMailAction(command=[script], content="x", timeout=5)
+    action = _SendMailAction(command=[script], content=b"x", timeout=5)
     with pytest.raises(ActionError, match="endete mit Code 1"):
         action.run()
     assert action.status == "failed"
@@ -333,7 +341,7 @@ def test_send_mail_action_timeout_raises(tmp_path: Path) -> None:
     script = _write_script(
         tmp_path, "fake-sendmail-slow", "import time\ntime.sleep(5)\n"
     )
-    action = _SendMailAction(command=[script], content="x", timeout=0.2)
+    action = _SendMailAction(command=[script], content=b"x", timeout=0.2)
     with pytest.raises(ActionError, match="Zeitgrenze"):
         action.run()
     assert action.status == "failed"
@@ -342,7 +350,7 @@ def test_send_mail_action_timeout_raises(tmp_path: Path) -> None:
 def test_send_mail_action_missing_program_raises() -> None:
     """Ein nicht startbares Programm erzeugt ActionError."""
     action = _SendMailAction(
-        command=["/no/such/sendmail-binary"], content="x", timeout=5
+        command=["/no/such/sendmail-binary"], content=b"x", timeout=5
     )
     with pytest.raises(ActionError, match="nicht gestartet werden"):
         action.run()

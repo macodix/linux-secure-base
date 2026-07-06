@@ -106,7 +106,10 @@ def _totp_mail_content(
         f"Notfall-Codes (getrennt und sicher aufbewahren):\n{emergency_text}\n\n"
         "Diese Mail nach der Einrichtung löschen.\n"
     )
-    msg.set_content(body)
+    # cte="quoted-printable": ASCII-sicher auf der Leitung, sonst erzwingt
+    # ein Umlaut im Text SMTPUTF8, das nicht jeder Relay anbietet (siehe
+    # postfix._test_mail_content). Der Anhang ist ohnehin Base64-kodiert.
+    msg.set_content(body, cte="quoted-printable")
     png_data = Path(qr_png_path).read_bytes()
     msg.add_attachment(
         png_data, maintype="image", subtype="png", filename="totp-qr.png"

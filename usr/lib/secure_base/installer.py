@@ -5,6 +5,7 @@ import logging
 import os
 import subprocess
 import time
+from email.message import EmailMessage
 from pathlib import Path
 from typing import cast
 
@@ -269,18 +270,18 @@ def _send_install_report(
     if not admin_mail:
         logger.warning("Kein admin_mail gesetzt — Bericht nur lokal.")
         return
-    message = (
-        f"To: {admin_mail}\n"
-        f"Subject: {subject}\n"
-        "MIME-Version: 1.0\n"
-        "Content-Type: text/plain; charset=utf-8\n"
-        "\n"
-        f"{body}"
-    )
+    # Über EmailMessage gebaut statt als rohe f-String-Header: ein Umlaut im
+    # Betreff oder Text erzwingt sonst SMTPUTF8, das nicht jeder Relay
+    # anbietet (siehe postfix._test_mail_content). set_content mit
+    # quoted-printable hält den Rumpf auf der Leitung ASCII-sicher.
+    msg = EmailMessage()
+    msg["To"] = admin_mail
+    msg["Subject"] = subject
+    msg.set_content(body, cte="quoted-printable")
     try:
         result = subprocess.run(
             [SENDMAIL_BIN, "-t"],
-            input=message.encode("utf-8"),
+            input=msg.as_bytes(),
             check=False,
             timeout=60,
         )

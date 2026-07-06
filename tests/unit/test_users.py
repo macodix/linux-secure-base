@@ -541,6 +541,35 @@ def test_totp_mail_content_includes_secret_url_codes_and_attachment(
     assert attachments[0].get_payload(decode=True) == qr_png.read_bytes()
 
 
+def test_totp_mail_content_is_ascii_only_with_encoded_subject(
+    tmp_path: Path,
+) -> None:
+    """Die serialisierte TOTP-Mail ist ASCII-sicher, der Umlaut-Betreff kodiert.
+
+    Reproduziert den Servertest-Befund (SMTPUTF8 required): ein Umlaut im
+    Mailkopf muss als RFC-2047-Encoded-Word stehen, nicht als rohes UTF-8-
+    Byte, sonst verlangt das Relay eine Erweiterung, die es nicht anbietet.
+    """
+    qr_png = tmp_path / "qr.png"
+    qr_png.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+
+    raw = _totp_mail_content(
+        user="alice",
+        fqdn="server.example.com",
+        admin_mail="admin@example.com",
+        secret="SECRETVALUE",  # noqa: S106 — Testwert, kein echtes Geheimnis
+        url="otpauth://totp/alice@server.example.com?secret=SECRETVALUE"
+        "&issuer=server.example.com",
+        emergency_codes=_EMERGENCY_CODES,
+        qr_png_path=str(qr_png),
+    )
+
+    assert all(byte < 128 for byte in raw)
+    text = raw.decode("ascii")
+    assert "=?utf-8?q?" in text
+    assert "Content-Transfer-Encoding: quoted-printable" in text
+
+
 # --- _QrEncodeStdinAction / _SendMailAction ---
 
 

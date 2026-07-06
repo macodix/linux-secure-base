@@ -16,6 +16,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -102,21 +103,29 @@ def _doc_value(values: dict[str, str], key: str) -> str:
     return values.get(key) or "(leer/Default)"
 
 
-def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> str:
+def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> bytes:
     """Baut Kopf und Rumpf der Testmail für den Zustellungsnachweis.
 
     token identifiziert den Lauf in der Mail selbst (kein Geheimnis, dient
     nur der Nachvollziehbarkeit beim Admin). Der Betreff nennt den Zweck aus
     Empfängersicht (Prüfung des Mailversands), nicht die interne
-    Verfahrensbezeichnung "Zustellungsnachweis".
+    Verfahrensbezeichnung "Zustellungsnachweis". Über EmailMessage gebaut,
+    damit der Betreff-Umlaut als RFC-2047-Encoded-Word im Kopf steht und der
+    Rumpf quoted-printable-kodiert ist — beides ASCII auf der Leitung, sonst
+    verlangt das Relay SMTPUTF8, das nicht jeder Relay anbietet.
+
+    Returns:
+        Die vollständige Mail (Kopf und Rumpf) als ASCII-sichere Bytes.
     """
-    return (
-        f"Subject: secure-base {fqdn}: Testnachricht (Prüfung des Mailversands)\n"
-        f"To: {admin_mail}\n"
-        "\n"
+    msg = EmailMessage()
+    msg["Subject"] = f"secure-base {fqdn}: Testnachricht (Prüfung des Mailversands)"
+    msg["To"] = admin_mail
+    msg.set_content(
         f"Testnachricht des secure-base-Installers zur Prüfung des"
-        f" Mailversands. Referenz: {token}.\n"
+        f" Mailversands. Referenz: {token}.\n",
+        cte="quoted-printable",
     )
+    return msg.as_bytes()
 
 
 class _SendMailAction(Action):
@@ -128,7 +137,7 @@ class _SendMailAction(Action):
     Attributes:
         PARAMS: Parameternamen der Aktion.
         command: Sendmail-Aufruf als Liste einzelner Elemente.
-        content: Mailkopf und -rumpf, wird über stdin übergeben.
+        content: Mailkopf und -rumpf (bereits serialisiert), über stdin.
         timeout: Zeitgrenze in Sekunden.
         stderr: Fehlerausgabe des Befehls nach run().
         returncode: Rückgabewert des Befehls nach run(); -1 vor der Ausführung.
@@ -136,13 +145,15 @@ class _SendMailAction(Action):
 
     PARAMS: ClassVar[list[str]] = ["command", "content", "timeout"]
 
-    def __init__(self, command: list[str], content: str, timeout: float) -> None:
+    def __init__(self, command: list[str], content: bytes, timeout: float) -> None:
         """Initialisiert die Sendmail-Aktion.
 
         Args:
             command: Programmpfad und Argumente (SIC-04); die Empfänger stehen
                 als Argument, nicht im Mailinhalt allein.
-            content: Kopf und Rumpf der Mail (RFC-822-artig), über stdin.
+            content: Kopf und Rumpf der Mail (RFC-822-artig), bereits als
+                Bytes serialisiert (z. B. über EmailMessage.as_bytes()), über
+                stdin.
             timeout: Zeitgrenze in Sekunden (SIC-05).
         """
         super().__init__()
@@ -165,7 +176,7 @@ class _SendMailAction(Action):
         try:
             result = subprocess.run(
                 self.command,
-                input=self.content.encode("utf-8"),
+                input=self.content,
                 shell=False,
                 capture_output=True,
                 timeout=self.timeout,
