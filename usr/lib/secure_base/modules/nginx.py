@@ -307,6 +307,7 @@ class Nginx(Module):
                     content=_http_block_content(domain, docroot),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             )
             yield (
@@ -408,6 +409,7 @@ class Nginx(Module):
                 content=_hardening_content(),
                 mode=0o644,
                 overwrite=True,
+                safe_mode=False,
             ),
         )
         yield (

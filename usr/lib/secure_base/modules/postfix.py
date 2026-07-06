@@ -331,6 +331,9 @@ class Postfix(Module):
                         ),
                         mode=0o600,
                         overwrite=True,
+                        # kein safe_mode: eine .bak-Sicherung würde die
+                        # Relay-Zugangsdaten im Klartext duplizieren.
+                        safe_mode=False,
                     ),
                 ),
                 (
@@ -350,6 +353,7 @@ class Postfix(Module):
                         content=_recipient_canonical_content(self.admin_mail),
                         mode=0o644,
                         overwrite=True,
+                        safe_mode=False,
                     ),
                 ),
                 (

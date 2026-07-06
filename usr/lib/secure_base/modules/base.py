@@ -148,6 +148,7 @@ class Base(Module):
                     content=_sysctl_content(),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (
@@ -163,6 +164,7 @@ class Base(Module):
                     content=_modprobe_content(),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (

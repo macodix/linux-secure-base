@@ -261,7 +261,14 @@ class Monit(Module):
                 (
                     f"Check {name} schreiben",
                     WriteFileAction(
-                        dst=dst, content=CHECK_CONTENT[name], mode=0o644, overwrite=True
+                        dst=dst,
+                        content=CHECK_CONTENT[name],
+                        mode=0o644,
+                        overwrite=True,
+                        # kein safe_mode: eine .bak-Sicherung würde von
+                        # monits Include-Glob mitgelesen (doppelter Check,
+                        # monit -t schlägt fehl).
+                        safe_mode=False,
                     ),
                 )
             )

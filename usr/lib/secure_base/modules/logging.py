@@ -224,7 +224,11 @@ class Logging(Module):
                 (
                     "logwatch-Konfig anlegen",
                     WriteFileAction(
-                        dst=self.LOGWATCH_CONF, content="", mode=0o644, overwrite=False
+                        dst=self.LOGWATCH_CONF,
+                        content="",
+                        mode=0o644,
+                        overwrite=False,
+                        safe_mode=False,
                     ),
                 )
             )
@@ -247,6 +251,9 @@ class Logging(Module):
                     content=_logrotate_content(),
                     mode=0o644,
                     overwrite=True,
+                    # kein safe_mode: eine .bak-Sicherung würde von
+                    # logrotates Include-Glob mitgelesen (doppelter Eintrag).
+                    safe_mode=False,
                 ),
             ),
             (
@@ -256,6 +263,7 @@ class Logging(Module):
                     content=_sudolog_content(),
                     mode=0o440,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (
@@ -269,6 +277,7 @@ class Logging(Module):
                     content=_audit_rules_content(),
                     mode=0o640,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (

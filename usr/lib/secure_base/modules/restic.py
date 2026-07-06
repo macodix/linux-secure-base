@@ -309,6 +309,7 @@ class Restic(Module):
                     content=f"{self.restic_passphrase}\n",
                     mode=0o600,
                     overwrite=False,
+                    safe_mode=False,
                 )
             )
             if rc == 0:
@@ -358,6 +359,9 @@ class Restic(Module):
                 content=f"{self.restic_passphrase}\n",
                 mode=0o600,
                 overwrite=True,
+                # kein safe_mode: eine .bak-Sicherung würde die
+                # Repo-Passphrase im Klartext duplizieren.
+                safe_mode=False,
             )
         )
 
@@ -401,6 +405,7 @@ class Restic(Module):
                 content=content,
                 mode=0o700,
                 overwrite=True,
+                safe_mode=False,
             )
         )
 
@@ -409,7 +414,11 @@ class Restic(Module):
         content = _cron_content(self._backup_script_path())
         return self.run_action(
             WriteFileAction(
-                dst=self._cron_file_path(), content=content, mode=0o644, overwrite=True
+                dst=self._cron_file_path(),
+                content=content,
+                mode=0o644,
+                overwrite=True,
+                safe_mode=False,
             )
         )
 
@@ -422,7 +431,11 @@ class Restic(Module):
             return rc
         return self.run_action(
             WriteFileAction(
-                dst=self.SENTINEL_FILE, content="", mode=0o644, overwrite=True
+                dst=self.SENTINEL_FILE,
+                content="",
+                mode=0o644,
+                overwrite=True,
+                safe_mode=False,
             )
         )
 

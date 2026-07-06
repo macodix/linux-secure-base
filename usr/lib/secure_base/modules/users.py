@@ -462,7 +462,11 @@ class Users(Module):
             new_content = pubkey + "\n"
 
         write_action = WriteFileAction(
-            dst=str(authkeys), content=new_content, mode=0o600, overwrite=True
+            dst=str(authkeys),
+            content=new_content,
+            mode=0o600,
+            overwrite=True,
+            safe_mode=False,
         )
         if self.run_action(write_action) != 0:
             return 1

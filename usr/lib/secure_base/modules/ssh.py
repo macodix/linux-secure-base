@@ -434,6 +434,7 @@ class Ssh(Module):
             content=_login_mail_script_content(self.admin_mail),
             mode=0o700,
             overwrite=True,
+            safe_mode=False,
         )
         if self.run_action(write_action) != 0:
             return 1

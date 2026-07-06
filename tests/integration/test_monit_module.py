@@ -125,6 +125,24 @@ def test_install_rejects_invalid_admin_mail_before_any_step(
     assert conn.send.call_args_list == []
 
 
+def test_install_twice_writes_no_backup_files_in_confd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf legt keine .bak-Sicherung in conf.d an.
+
+    Sonst würde die Sicherung von monits Include-Glob mitgelesen (doppelter
+    Check) und der anschließende monit -t-Lauf fehlschlagen (Regressionstest
+    zum Servertest-Befund).
+    """
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+
+    assert mod.start() == 0
+    assert mod.start() == 0
+
+    confd_entries = sorted(p.name for p in Path(Monit.CONFD).iterdir())
+    assert confd_entries == ["rootfs", "system"]
+
+
 def test_check_reports_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -209,6 +209,10 @@ class Unattended(Module):
                     ),
                     mode=0o644,
                     overwrite=True,
+                    # kein safe_mode: eine .bak-Sicherung würde von apts
+                    # Include-Glob in apt.conf.d mitgelesen und dessen
+                    # lexikalisch spätere Version die neue Datei überstimmen.
+                    safe_mode=False,
                 ),
             ),
             (
@@ -218,6 +222,10 @@ class Unattended(Module):
                     content=_periodic_conf_content(),
                     mode=0o644,
                     overwrite=True,
+                    # kein safe_mode: eine .bak-Sicherung würde von apts
+                    # Include-Glob in apt.conf.d mitgelesen und dessen
+                    # lexikalisch spätere Version die neue Datei überstimmen.
+                    safe_mode=False,
                 ),
             ),
             (
@@ -233,6 +241,7 @@ class Unattended(Module):
                     content=_timer_override_content(self.apt_daily_time),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (
@@ -250,6 +259,7 @@ class Unattended(Module):
                     content=_timer_override_content(self.apt_daily_upgrade_time),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (

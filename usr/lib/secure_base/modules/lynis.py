@@ -145,6 +145,7 @@ class Lynis(Module):
                     content=_pruef_script_content(self.BERICHTE_DIR),
                     mode=0o700,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
             (
@@ -154,6 +155,7 @@ class Lynis(Module):
                     content=_cron_content(self.lynis_schedule, self.PRUEF_SCRIPT),
                     mode=0o644,
                     overwrite=True,
+                    safe_mode=False,
                 ),
             ),
         ]
