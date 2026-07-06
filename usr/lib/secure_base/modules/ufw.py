@@ -49,6 +49,36 @@ def _parse_port_list(raw: str, name: str) -> list[int]:
     return sorted(ports)
 
 
+def _doc_ports(values: dict[str, str], key: str) -> list[str]:
+    """Liest eine Portliste für den Installationsbericht aus values.
+
+    Rein anzeigend: keine Gültigkeitsprüfung (die übernimmt _validate vor
+    jeder Systemänderung), nur Trennen und Trimmen der Einträge.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel (allow_in_tcp, allow_out_tcp,
+            allow_out_udp).
+
+    Returns:
+        Liste der Portangaben als Zeichenketten, ohne leere Einträge.
+    """
+    raw = values.get(key, "")
+    return [token.strip() for token in raw.split(",") if token.strip()]
+
+
+def _doc_list(items: list[str]) -> str:
+    """Baut eine einfache Markdown-Aufzählung aus items.
+
+    Args:
+        items: Listenpunkte; eine leere Liste ergibt eine leere Zeichenkette.
+
+    Returns:
+        Eine Zeile "- <item>\\n" je Eintrag.
+    """
+    return "".join(f"- {item}\n" for item in items)
+
+
 class Ufw(Module):
     """Firewall-Grundkonfiguration über pifos-Aktionen."""
 
@@ -108,6 +138,37 @@ class Ufw(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: doc() liest ausschließlich die drei Portlisten-
+        Schlüssel; ufw verarbeitet keine Geheimnisse, andere Schlüssel in
+        values bleiben unberücksichtigt.
+
+        Args:
+            values: Konfigurationswerte des Moduls (allow_in_tcp,
+                allow_out_tcp, allow_out_udp, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Firewall".
+        """
+        in_tcp = _doc_ports(values, "allow_in_tcp")
+        out_tcp = _doc_ports(values, "allow_out_tcp")
+        out_udp = _doc_ports(values, "allow_out_udp")
+        return (
+            "\n## Firewall\n\n"
+            "**Pakete:** ufw\n\n"
+            "**Default-Policy:** deny incoming, deny outgoing\n\n"
+            "**Eingehend TCP erlaubt:**\n"
+            f"{_doc_list(in_tcp)}"
+            "\n**Ausgehend TCP erlaubt:**\n"
+            f"{_doc_list(out_tcp)}"
+            "\n**Ausgehend UDP erlaubt:**\n"
+            f"{_doc_list(out_udp)}"
+            "\n**Dienste:** ufw (enabled, aktiv nach install)\n"
+        )
 
     def _validate(self) -> None:
         """Parst die drei Portlisten und sichert den SSH-Zugang ab.

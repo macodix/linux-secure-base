@@ -181,3 +181,45 @@ def test_start_test_dispatches_to_test_method(monkeypatch: pytest.MonkeyPatch) -
 
     assert mod.start() == 0
     assert called == [True]
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Policy und Portlisten."""
+    values = {
+        "allow_in_tcp": "22,80",
+        "allow_out_tcp": "443",
+        "allow_out_udp": "53",
+    }
+    section = Ufw.doc(values)
+    assert section.startswith("\n## Firewall\n\n")
+    assert "**Pakete:** ufw" in section
+    assert "**Default-Policy:** deny incoming, deny outgoing" in section
+    assert "**Eingehend TCP erlaubt:**\n- 22\n- 80\n" in section
+    assert "**Ausgehend TCP erlaubt:**\n- 443\n" in section
+    assert "**Ausgehend UDP erlaubt:**\n- 53\n" in section
+    assert "**Dienste:** ufw (enabled, aktiv nach install)" in section
+
+
+def test_doc_empty_lists_produce_no_bullet_lines() -> None:
+    """Fehlende Werte in values ergeben leere Aufzählungen, kein Fehler."""
+    section = Ufw.doc({})
+    assert "**Eingehend TCP erlaubt:**\n\n**Ausgehend TCP erlaubt:**" in section
+    assert "- " not in section
+
+
+def test_doc_never_leaks_unrelated_secret_values() -> None:
+    """doc() liest nur die drei Portlisten-Schlüssel — ein untergeschobenes
+    Geheimnis unter fremdem Schlüssel erscheint weder als Name noch als Wert.
+    """
+    values = {
+        "allow_in_tcp": "22",
+        "allow_out_tcp": "",
+        "allow_out_udp": "",
+        "relay_password": "GEHEIM-X",
+    }
+    section = Ufw.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "relay_password" not in section
