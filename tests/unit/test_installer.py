@@ -89,6 +89,12 @@ class _StubInstaller:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _no_install_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verhindert echten Berichtsversand (Dateisystem/sendmail) in Tests."""
+    monkeypatch.setattr(installer_module, "_send_install_report", lambda *a, **k: None)
+
+
 def _base_args(**overrides: object) -> argparse.Namespace:
     """Baut ein argparse.Namespace mit den von main() erwarteten Feldern."""
     defaults: dict[str, object] = {
@@ -388,6 +394,99 @@ def test_main_check_never_offers_ufw_enable(
 
     assert result == 0
     assert offered == []
+
+
+def test_build_install_report_success() -> None:
+    """Erfolgsbericht: Betreff ohne Abbruch, alle Module als OK gelistet."""
+    subject, body = installer_module._build_install_report(
+        "srv.example.com",
+        [("Grundkonfiguration", True), ("Firewall", True)],
+        [],
+        "2026-07-06 12:00",
+    )
+    assert subject == "secure-base Installation srv.example.com - 2026-07-06 12:00"
+    assert "Ergebnis: alle Module erfolgreich" in body
+    assert "- Grundkonfiguration: OK" in body
+    assert "- Firewall: OK" in body
+
+
+def test_build_install_report_abort_lists_failed_and_skipped() -> None:
+    """Abbruchbericht: Betreff mit ABGEBROCHEN, Fehler- und Restliste."""
+    subject, body = installer_module._build_install_report(
+        "srv.example.com",
+        [("Grundkonfiguration", True), ("Mailversand (Relay)", False)],
+        ["Hauptbenutzer", "SSH-Härtung"],
+        "2026-07-06 12:00",
+    )
+    assert "ABGEBROCHEN" in subject
+    assert "Ergebnis: abgebrochen bei Mailversand (Relay)" in body
+    assert "- Mailversand (Relay): Fehler" in body
+    assert "- Hauptbenutzer: nicht ausgeführt" in body
+    assert "- SSH-Härtung: nicht ausgeführt" in body
+
+
+def test_report_enabled_defaults_to_yes_and_honors_no() -> None:
+    """install_report fehlt oder yes → an; no → aus."""
+    config = Config()
+    config.load_dict({"installer": {"logfile": "x", "loglevel": "INFO"}})
+    assert installer_module._report_enabled(config) is True
+    config.load_dict({"installer": {"install_report": "no"}})
+    assert installer_module._report_enabled(config) is False
+
+
+def test_main_install_sends_report_with_results_and_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Der install-Lauf übergibt Ergebnisse und Restliste an den Bericht."""
+    _StubInstaller.fail_names = {"base"}
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    calls: list[tuple[list[tuple[str, bool]], list[str]]] = []
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module,
+        "_send_install_report",
+        lambda config, results, skipped, host: calls.append((results, skipped)),
+    )
+
+    main(_base_args())
+
+    assert calls == [([("Grundkonfiguration", False)], ["SSH-Härtung"])]
+
+
+def test_main_check_sends_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Der check-Lauf erzeugt keinen Installationsbericht."""
+    _StubInstaller.fail_names = set()
+    spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    calls: list[object] = []
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: [spec]
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module,
+        "_send_install_report",
+        lambda *a, **k: calls.append(a),
+    )
+
+    main(_base_args(command="check"))
+
+    assert calls == []
 
 
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(

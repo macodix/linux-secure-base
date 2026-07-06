@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import cast
 
@@ -114,6 +115,117 @@ class LsbInstaller(PifosCaller):
         self.failures += 1
 
 
+SENDMAIL_BIN = "/usr/sbin/sendmail"
+REPORT_DIR = Path("/var/log/secure-base")
+
+
+def _report_enabled(config: Config) -> bool:
+    """Liest den Schalter install_report aus [installer]; Vorgabe: an."""
+    try:
+        section = cast(dict[str, object], config.get_section("installer"))
+    except (ConfigError, KeyError):
+        return True
+    return str(section.get("install_report", "yes")).strip().lower() != "no"
+
+
+def _build_install_report(
+    host: str,
+    results: list[tuple[str, bool]],
+    skipped: list[str],
+    stamp: str,
+) -> tuple[str, str]:
+    """Baut Betreff und Text des Installationsberichts.
+
+    Reine Textmontage ohne Uhr und Dateizugriff (testbar); den
+    Zeitstempel liefert der Aufrufer.
+
+    Args:
+        host: Rechnername des Zielsystems.
+        results: (Modul-Label, Ergebnis) der gelaufenen Module.
+        skipped: Labels der nach einem Abbruch nicht ausgeführten Module.
+        stamp: Zeitangabe für Betreff und Kopfzeile.
+
+    Returns:
+        (Betreff, Berichtstext).
+    """
+    failed = [label for label, ok in results if not ok]
+    if failed:
+        subject = f"secure-base Installation {host} - ABGEBROCHEN ({stamp})"
+        outcome = f"Ergebnis: abgebrochen bei {failed[0]}"
+    else:
+        subject = f"secure-base Installation {host} - {stamp}"
+        outcome = "Ergebnis: alle Module erfolgreich"
+
+    lines = [
+        f"Installationslauf secure-base-installer auf {host}, {stamp}.",
+        outcome,
+        "",
+    ]
+    lines += [f"- {label}: {'OK' if ok else 'Fehler'}" for label, ok in results]
+    lines += [f"- {label}: nicht ausgeführt" for label in skipped]
+    return subject, "\n".join(lines) + "\n"
+
+
+def _send_install_report(
+    config: Config, results: list[tuple[str, bool]], skipped: list[str], host: str
+) -> None:
+    """Legt den Installationsbericht lokal ab und mailt ihn an admin_mail.
+
+    Nachzügler des Bash-Berichts (sb_install_report), auf den Kern
+    reduziert: Modulliste mit Ergebnis. Fail-soft — scheitert Ablage
+    oder Versand, bleibt der Lauf-Exit-Code unverändert (WARN im Log).
+    """
+    if not _report_enabled(config) or not results:
+        return
+    try:
+        general = cast(dict[str, object], config.get_section("general"))
+        admin_mail = str(general.get("admin_mail", "") or "").strip()
+    except (ConfigError, KeyError):
+        admin_mail = ""
+
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    subject, body = _build_install_report(host, results, skipped, stamp)
+
+    report_file = REPORT_DIR / time.strftime("install-bericht-%Y%m%d-%H%M%S.txt")
+    try:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        report_file.write_text(body, encoding="utf-8")
+        os.chmod(report_file, 0o600)
+        logger.info("Installationsbericht abgelegt: %s", report_file)
+    except OSError as exc:
+        logger.warning("Installationsbericht nicht ablegbar: %s", exc)
+
+    if not admin_mail:
+        logger.warning("Kein admin_mail gesetzt — Bericht nur lokal.")
+        return
+    message = (
+        f"To: {admin_mail}\n"
+        f"Subject: {subject}\n"
+        "MIME-Version: 1.0\n"
+        "Content-Type: text/plain; charset=utf-8\n"
+        "\n"
+        f"{body}"
+    )
+    try:
+        result = subprocess.run(
+            [SENDMAIL_BIN, "-t"],
+            input=message.encode("utf-8"),
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("Berichtsversand fehlgeschlagen: %s", exc)
+        return
+    if result.returncode == 0:
+        logger.info("Installationsbericht an %s versendet.", admin_mail)
+    else:
+        logger.warning(
+            "Berichtsversand an %s fehlgeschlagen (sendmail-Status %s).",
+            admin_mail,
+            result.returncode,
+        )
+
+
 def _offer_ufw_enable() -> None:
     """Bietet nach erfolgreichem ufw-Modul die Aktivierung der Firewall an.
 
@@ -204,10 +316,12 @@ def main(args: argparse.Namespace) -> int:
         return 2
 
     ufw_ok = False
+    results: list[tuple[str, bool]] = []
     with view.live():
         for spec in specs:
             module_cfg = module_config(config, spec, args.command)
             ok = caller.run_module(spec, module_cfg, args.command)
+            results.append((spec.label, ok))
             if spec.name == "ufw" and ok:
                 ufw_ok = True
             # install baut aufeinander auf: nach einem Modul-Fehlschlag
@@ -218,6 +332,9 @@ def main(args: argparse.Namespace) -> int:
                 caller.write_log(f"install abgebrochen bei {spec.name}", LogLevel.ERROR)
                 break
     view.summary()
+    if args.command == "install":
+        skipped = [s.label for s in specs[len(results) :]]
+        _send_install_report(config, results, skipped, host)
     # Aktivierung nur nach vollständig erfolgreichem Installationslauf:
     # nach einem Abbruch wird erst behoben und neu gelaufen.
     if args.command == "install" and ufw_ok and not caller.failures:

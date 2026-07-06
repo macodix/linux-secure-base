@@ -19,6 +19,10 @@ modules_enabled = base,postfix,users,ssh,ufw,fail2ban,rkhunter,logging,unattende
 # verarbeitet (verfügbar: nginx). Leer lassen, wenn keine.
 optional_enabled =
 
+# Installationsbericht nach jedem install-Lauf: lokal unter
+# /var/log/secure-base/ ablegen und an admin_mail senden (yes/no).
+install_report = yes
+
 [general]
 # Pflicht — vollständiger Rechnername des Servers.
 fqdn =
