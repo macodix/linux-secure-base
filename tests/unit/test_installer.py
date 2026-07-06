@@ -13,7 +13,7 @@ import secure_base.installer as installer_module
 from pifos.config.config import Config
 from pifos.errors import ConfigError
 from pifos.ipc import IpcMessage, LogLevel, MessageKind
-from secure_base.installer import LsbInstaller, main
+from secure_base.installer import LsbInstaller, _send_install_report, main
 from secure_base.module_spec import ModuleSpec
 from secure_base.ui import StatusView
 
@@ -690,10 +690,67 @@ def test_send_install_report_selftest_blocks_all_persistence(
         "secure_base.installer.subprocess.run", lambda *a, **k: sent.append(a)
     )
 
-    installer_module._send_install_report(config, [(spec, True)], [], "srv")
+    # Direktimport statt Modulattribut: die autouse-Fixture _no_install_report
+    # patcht installer_module._send_install_report; der Direktaufruf prüft
+    # das echte Codeverhalten.
+    _send_install_report(config, [(spec, True)], [], "srv")
 
     assert not (tmp_path / "berichte").exists()
     assert sent == []
+
+
+def test_send_install_report_mail_is_ascii_with_umlaut_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der Mailversand bleibt bei Umlauten im Bericht ASCII-sicher auf der Leitung.
+
+    Reproduziert den Servertest-Befund (SMTPUTF8 required): ein roher
+    f-String-Header mit Umlaut im Betreff/Text bounct am Relay ohne
+    SMTPUTF8-Unterstützung. _send_install_report baut die Mail seit der
+    Umstellung über EmailMessage, RFC-2047-kodierter Kopf und
+    quoted-printable-Rumpf.
+    """
+
+    class _DocWithUmlaut:
+        CONFIG: ClassVar[list[str]] = ["operation"]
+
+        @classmethod
+        def doc(cls, values: dict[str, str]) -> str:
+            return "\n## Härtung\n\nAbschluss überprüft.\n"
+
+    spec = ModuleSpec("haertung", "Härtung", _DocWithUmlaut, optional=False)  # type: ignore[arg-type]
+    config = Config()
+    config.load_dict(
+        {
+            "installer": {"install_report": "yes"},
+            "general": {"admin_mail": "admin@example.com"},
+        }
+    )
+    monkeypatch.setattr(installer_module, "REPORT_DIR", tmp_path / "berichte")
+    calls: list[dict[str, object]] = []
+
+    def _fake_run(*args: object, **kwargs: object) -> MagicMock:
+        calls.append(kwargs)
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    monkeypatch.setattr("secure_base.installer.subprocess.run", _fake_run)
+
+    # Direkt importierte Funktion aufrufen (nicht installer_module.
+    # _send_install_report): die autouse-Fixture _no_install_report patcht
+    # genau dieses Modulattribut auf ein No-op, damit main() in anderen
+    # Tests keinen echten Versand auslöst.
+    _send_install_report(config, [(spec, True)], [], "srv")
+
+    assert len(calls) == 1
+    sent_bytes = calls[0]["input"]
+    assert isinstance(sent_bytes, bytes)
+    assert all(byte < 128 for byte in sent_bytes)
+    # Umlaute im Rumpf stehen quoted-printable-kodiert (z. B. ä -> =C3=A4),
+    # nicht mehr als rohe UTF-8-Bytes auf der Leitung.
+    assert "Content-Transfer-Encoding: quoted-printable" in sent_bytes.decode("ascii")
+    assert "=C3=A4" in sent_bytes.decode("ascii")
 
 
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
