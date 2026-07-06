@@ -235,3 +235,200 @@ def test_read_passphrase_file_missing_returns_none(
     mod = _make_restic()
     monkeypatch.setattr(Restic, "PASSPHRASE_FILE", str(tmp_path / "nichts"))
     assert mod._read_passphrase_file() is None
+
+
+# --- _remove_if_exists ---
+
+
+def test_remove_if_exists_removes_existing_file(tmp_path: Path) -> None:
+    """Eine vorhandene Datei wird entfernt."""
+    mod = _make_restic()
+    target = tmp_path / "cronfile"
+    target.write_text("x", encoding="utf-8")
+    assert mod._remove_if_exists(str(target), "Testdatei") == 0
+    assert not target.exists()
+
+
+def test_remove_if_exists_missing_file_is_noop(tmp_path: Path) -> None:
+    """Eine bereits fehlende Datei ist kein Fehler — idempotent."""
+    mod = _make_restic()
+    assert mod._remove_if_exists(str(tmp_path / "nichts"), "Testdatei") == 0
+
+
+# --- _package_installed ---
+
+
+def _make_executable(tmp_path: Path, content: str, name: str = "cmd.sh") -> str:
+    """Legt ein ausführbares Shell-Script an und liefert dessen Pfad."""
+    script = tmp_path / name
+    script.write_text(f"#!/bin/sh\n{content}\n", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_package_installed_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Meldet dpkg-query 'install ok installed', liefert die Prüfung True."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic,
+        "DPKG_QUERY_BIN",
+        _make_executable(tmp_path, "echo 'install ok installed'"),
+    )
+    assert mod._package_installed() is True
+
+
+def test_package_installed_false_on_other_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein anderer Paketstatus liefert False."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic,
+        "DPKG_QUERY_BIN",
+        _make_executable(tmp_path, "echo 'deinstall ok config-files'"),
+    )
+    assert mod._package_installed() is False
+
+
+def test_package_installed_false_on_command_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scheitert dpkg-query (unbekanntes Paket), liefert False."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "DPKG_QUERY_BIN", "/bin/false")
+    assert mod._package_installed() is False
+
+
+# --- _check_sftp_reachable ---
+
+
+def test_check_sftp_reachable_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein erfolgreicher sftp-Batch-Lauf liefert True."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "SFTP_BIN", "/bin/true")
+    assert mod._check_sftp_reachable() is True
+
+
+def test_check_sftp_reachable_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein fehlschlagender sftp-Batch-Lauf liefert False."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "SFTP_BIN", "/bin/false")
+    assert mod._check_sftp_reachable() is False
+
+
+# --- _check_repo_decryptable ---
+
+
+def test_check_repo_decryptable_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein erfolgreiches 'restic cat config' liefert True."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "RESTIC_BIN", "/bin/true")
+    assert mod._check_repo_decryptable(mod._repo_url()) is True
+
+
+def test_check_repo_decryptable_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein fehlschlagendes 'restic cat config' liefert False."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "RESTIC_BIN", "/bin/false")
+    assert mod._check_repo_decryptable(mod._repo_url()) is False
+
+
+# --- _latest_snapshot_id ---
+
+
+def test_latest_snapshot_id_returns_id_from_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein Snapshot in der JSON-Antwort liefert dessen id."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic,
+        "RESTIC_BIN",
+        _make_executable(tmp_path, "printf '%s' '[{\"id\": \"abc123def456\"}]'"),
+    )
+    assert mod._latest_snapshot_id(mod._repo_url()) == "abc123def456"
+
+
+def test_latest_snapshot_id_returns_none_when_no_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine leere JSON-Liste (kein Snapshot) liefert None."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic, "RESTIC_BIN", _make_executable(tmp_path, "printf '%s' '[]'")
+    )
+    assert mod._latest_snapshot_id(mod._repo_url()) is None
+
+
+def test_latest_snapshot_id_returns_none_on_invalid_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine nicht als JSON lesbare Antwort liefert None statt eines Absturzes."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic, "RESTIC_BIN", _make_executable(tmp_path, "printf '%s' 'kaputt'")
+    )
+    assert mod._latest_snapshot_id(mod._repo_url()) is None
+
+
+def test_latest_snapshot_id_returns_none_on_command_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scheitert der Befehl, liefert _latest_snapshot_id None."""
+    mod = _make_restic()
+    monkeypatch.setattr(Restic, "RESTIC_BIN", "/bin/false")
+    assert mod._latest_snapshot_id(mod._repo_url()) is None
+
+
+# --- _check_probe_restore ---
+
+
+def test_check_probe_restore_true_when_no_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne Snapshot gilt der Probe-Restore als bestanden (kein Testfehler)."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic, "RESTIC_BIN", _make_executable(tmp_path, "printf '%s' '[]'")
+    )
+    assert mod._check_probe_restore(mod._repo_url()) is True
+
+
+def test_check_probe_restore_true_on_successful_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein erfolgreicher Restore aus dem jüngsten Snapshot liefert True."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic,
+        "RESTIC_BIN",
+        _make_executable(
+            tmp_path,
+            'case "$5" in\n'
+            '  snapshots) printf "%s" \'[{"id": "abc123"}]\' ;;\n'
+            "  restore) exit 0 ;;\n"
+            "esac",
+        ),
+    )
+    assert mod._check_probe_restore(mod._repo_url()) is True
+
+
+def test_check_probe_restore_false_on_failed_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein fehlschlagender Restore aus dem jüngsten Snapshot liefert False."""
+    mod = _make_restic()
+    monkeypatch.setattr(
+        Restic,
+        "RESTIC_BIN",
+        _make_executable(
+            tmp_path,
+            'case "$5" in\n'
+            '  snapshots) printf "%s" \'[{"id": "abc123"}]\' ;;\n'
+            "  restore) exit 1 ;;\n"
+            "esac",
+        ),
+    )
+    assert mod._check_probe_restore(mod._repo_url()) is False

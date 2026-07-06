@@ -12,8 +12,10 @@ ausschließlich in der Passphrase-Datei (Rechte 0600) — nie in Meldungen,
 Ausnahmen oder Befehlsargumenten.
 """
 
+import json
 import os
 import re
+import shutil
 import stat
 import tempfile
 from collections.abc import Callable
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from pifos.actions.apt_action import AptAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.write_file_action import WriteFileAction
@@ -183,6 +186,18 @@ class Restic(Module):
     # keinen Modul-eigenen Dienst (cron = Distro-Default).
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
 
+    # Für _uninstall/_test: Paketstatus- und mail-Verfügbarkeitsprüfung
+    # (gleiches Muster wie secure_base.modules.monit/fail2ban).
+    DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
+    MAIL_BIN: ClassVar[str] = "/usr/bin/mail"
+
+    # Zeitgrenzen für den Funktionstest (_test): Integritätsprüfung und
+    # Probe-Restore können bei großen Repos deutlich länger laufen als die
+    # übrigen, schnellen Lesebefehle (cat config, snapshots).
+    TEST_SNAPSHOTS_TIMEOUT: ClassVar[float] = 30.0
+    TEST_CHECK_TIMEOUT: ClassVar[float] = 300.0
+    TEST_RESTORE_TIMEOUT: ClassVar[float] = 60.0
+
     # Von check_config per setattr gesetzt (siehe Module.check_config);
     # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
     operation: str
@@ -204,6 +219,10 @@ class Restic(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -439,6 +458,98 @@ class Restic(Module):
             )
         )
 
+    # --- uninstall ---
+
+    def _uninstall(self) -> int:
+        """Entfernt die lokalen install-Artefakte (Original: do_uninstall).
+
+        Das Backup-Repo auf dem SFTP-Server bleibt in jedem Fall
+        unangetastet — es ist die eigentliche Datensicherung, kein
+        install-Artefakt. Ebenso bleibt die Passphrase-Datei erhalten (wie
+        im Original): ihr Wert wird für einen erneuten install oder einen
+        manuellen Zugriff auf das Repo weiterhin gebraucht, ein Löschen
+        wäre nicht rückholbar. Entfernt werden nur Cron-Datei,
+        Backup-Skript und das Paket (ohne --purge).
+
+        Schrittliste mit Abbruch beim ersten Fehler (wie _install); jeder
+        Schritt ist idempotent.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, Callable[[], int]]] = [
+            ("Cron-Datei entfernen", self._step_remove_cron),
+            ("Backup-Skript entfernen", self._step_remove_backup_script),
+            ("Paket entfernen", self._step_remove_package),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "restic", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "restic", f"fehlgeschlagen: {label}")
+                return 1
+        self.send_message(
+            LogLevel.INFO,
+            "restic",
+            f"Passphrase-Datei ({self.PASSPHRASE_FILE}), Backup-Repo und"
+            " SFTP-Zugang (Vorbedingung) bleiben unverändert",
+        )
+        self.send_message(
+            LogLevel.WARN,
+            "restic",
+            f"{self.PASSPHRASE_FILE} ist ein Klartext-Geheimnis und bleibt auf"
+            " der Platte. Bei endgültiger Außerdienststellung oder Weitergabe"
+            " der Maschine manuell löschen",
+        )
+        return 0
+
+    def _step_remove_cron(self) -> int:
+        """Entfernt die FQDN-benannte Cron-Datei, sofern vorhanden."""
+        return self._remove_if_exists(self._cron_file_path(), "Cron-Datei")
+
+    def _step_remove_backup_script(self) -> int:
+        """Entfernt das FQDN-benannte Backup-Skript, sofern vorhanden."""
+        return self._remove_if_exists(self._backup_script_path(), "Backup-Skript")
+
+    def _remove_if_exists(self, path: str, label: str) -> int:
+        """Entfernt path, sofern vorhanden — idempotent.
+
+        Args:
+            path: Zu entfernende Datei.
+            label: Beschreibung für die Meldung.
+
+        Returns:
+            0 bei Erfolg oder wenn die Datei bereits fehlt, sonst 1.
+        """
+        if not Path(path).exists():
+            self.send_message(
+                LogLevel.INFO, "restic", f"{label} bereits entfernt: {path}"
+            )
+            return 0
+        # kein safe_mode: vollständig eigene, generierte Datei (wie beim
+        # Schreiben in _step_write_backup_script/_step_write_cron).
+        return self.run_action(DeleteFileAction(path=path, safe_mode=False))
+
+    def _step_remove_package(self) -> int:
+        """Entfernt das Paket restic ohne --purge (Original: pkg_remove).
+
+        apt-get remove auf ein nicht installiertes Paket endet bereits mit
+        Rückgabewert 0 — ein vorheriger Installiert-Check entfällt.
+        """
+        return self.run_action(self.APT_ACTION_CLS(packages=["restic"], state="absent"))
+
+    def _package_installed(self) -> bool:
+        """Prüft per dpkg-query, ob das Paket restic installiert ist.
+
+        Ohne eigene Meldung — für _test, das den Fall selbst vermeldet.
+
+        Returns:
+            True, wenn dpkg-query den Status "install ok installed" meldet.
+        """
+        action = SysCmdAction(
+            command=[self.DPKG_QUERY_BIN, "-W", "-f=${Status}", "restic"], timeout=15
+        )
+        return self.run_action(action) == 0 and "install ok installed" in action.stdout
+
     def _read_passphrase_file(self) -> str | None:
         """Liest die bestehende Passphrase-Datei.
 
@@ -542,17 +653,20 @@ class Restic(Module):
         )
         return 0 if ok else 1
 
-    def _check_command_succeeds(self, command: list[str], label: str) -> bool:
+    def _check_command_succeeds(
+        self, command: list[str], label: str, timeout: float = 30.0
+    ) -> bool:
         """Führt einen Befehl aus und meldet, ob er erfolgreich endet.
 
         Args:
             command: Auszuführender Befehl.
             label: Beschreibung für die Meldung.
+            timeout: Zeitgrenze in Sekunden. Voreinstellung 30.0.
 
         Returns:
             True bei Rückgabewert 0, sonst False.
         """
-        action = SysCmdAction(command=command, timeout=30.0)
+        action = SysCmdAction(command=command, timeout=timeout)
         if self.run_action(action) == 0:
             self.send_message(LogLevel.INFO, "restic", f"{label}: OK")
             return True
@@ -591,3 +705,191 @@ class Restic(Module):
             f"{label}: ist {oct(current)}, soll {oct(expected_mode)}",
         )
         return False
+
+    # --- test ---
+
+    def _test(self) -> int:
+        """Funktionstest ohne Systemänderung (Original: do_test).
+
+        Prüft mail-Verfügbarkeit (nur Hinweis, kein Testfehler),
+        SFTP-Erreichbarkeit, Repo-Entschlüsselbarkeit, Snapshot-Liste,
+        Repo-Integrität (restic check) und — sofern ein Snapshot vorhanden
+        ist — einen Probe-Restore. Sammelt alle Befunde, statt beim ersten
+        Fehler abzubrechen (anders als _install/_uninstall); nur ohne
+        installiertes Paket ist jede weitere Prüfung bedeutungslos und der
+        Test bricht sofort ab (wie im Original).
+
+        Returns:
+            0, wenn alle Prüfungen erfolgreich waren, sonst 1.
+        """
+        if not self._package_installed():
+            self.send_message(
+                LogLevel.ERROR,
+                "restic",
+                "Paket restic nicht installiert — kein Funktionstest möglich",
+            )
+            return 1
+
+        self._check_mail_available()
+
+        repo = self._repo_url()
+        ok = True
+        ok &= self._check_sftp_reachable()
+        ok &= self._check_repo_decryptable(repo)
+        ok &= self._check_command_succeeds(
+            [self.RESTIC_BIN, "-r", repo, "-p", self.PASSPHRASE_FILE, "snapshots"],
+            "Snapshot-Liste",
+            timeout=self.TEST_SNAPSHOTS_TIMEOUT,
+        )
+        ok &= self._check_command_succeeds(
+            [self.RESTIC_BIN, "-r", repo, "-p", self.PASSPHRASE_FILE, "check"],
+            "Repo-Integrität",
+            timeout=self.TEST_CHECK_TIMEOUT,
+        )
+        ok &= self._check_probe_restore(repo)
+        return 0 if ok else 1
+
+    def _check_mail_available(self) -> None:
+        """Meldet, ob der mail-Befehl vorhanden ist (Fehlermail des Backup-Skripts).
+
+        Nur ein Hinweis — ein fehlender mail-Befehl zählt nicht als
+        Testfehler (wie im Original).
+        """
+        if Path(self.MAIL_BIN).exists():
+            self.send_message(LogLevel.INFO, "restic", "mail-Befehl vorhanden")
+            return
+        self.send_message(
+            LogLevel.WARN,
+            "restic",
+            "mail-Befehl fehlt — Fehlermail des Backup-Skripts würde nicht"
+            " zugestellt; postfix-Modul vorab laufen lassen",
+        )
+
+    def _check_sftp_reachable(self) -> bool:
+        """Prüft die SFTP-Erreichbarkeit über den konfigurierten Host-Alias.
+
+        Returns:
+            True, wenn das SFTP-Ziel erreichbar ist, sonst False.
+        """
+        if self._run_sftp_batch(["pwd"]) == 0:
+            self.send_message(LogLevel.INFO, "restic", "SFTP-Ziel erreichbar")
+            return True
+        self.send_message(
+            LogLevel.ERROR,
+            "restic",
+            f"SFTP-Ziel über Alias {self.sftp_host_alias!r} nicht erreichbar",
+        )
+        return False
+
+    def _check_repo_decryptable(self, repo: str) -> bool:
+        """Prüft, ob das Repo initialisiert und mit der Passphrase lesbar ist.
+
+        Args:
+            repo: restic-Repo-URL.
+
+        Returns:
+            True, wenn "restic cat config" erfolgreich endet, sonst False.
+        """
+        if self._restic_cat_config_succeeds(repo):
+            self.send_message(
+                LogLevel.INFO,
+                "restic",
+                f"Repo {repo}: initialisiert und mit der Passphrase entschlüsselbar",
+            )
+            return True
+        self.send_message(
+            LogLevel.ERROR,
+            "restic",
+            f"Repo {repo}: nicht initialisiert/erreichbar oder Passphrase falsch",
+        )
+        return False
+
+    def _check_probe_restore(self, repo: str) -> bool:
+        """Restauriert probeweise eine kleine Datei aus dem jüngsten Snapshot.
+
+        Ohne Snapshot ist kein Wiederherstellungstest möglich — das gilt
+        nicht als Fehler (frisch initialisiertes Repo, wie im Original).
+
+        Args:
+            repo: restic-Repo-URL.
+
+        Returns:
+            True, wenn kein Snapshot vorhanden ist oder der Probe-Restore
+            gelingt; sonst False.
+        """
+        snapshot_id = self._latest_snapshot_id(repo)
+        if snapshot_id is None:
+            self.send_message(
+                LogLevel.INFO,
+                "restic",
+                "kein Snapshot vorhanden — Probe-Restore übersprungen",
+            )
+            return True
+
+        restore_dir = Path(tempfile.mkdtemp(prefix="secure-base-restic-restore-"))
+        try:
+            action = SysCmdAction(
+                command=[
+                    self.RESTIC_BIN,
+                    "-r",
+                    repo,
+                    "-p",
+                    self.PASSPHRASE_FILE,
+                    "restore",
+                    snapshot_id,
+                    "--include",
+                    "/etc/hostname",
+                    "--target",
+                    str(restore_dir),
+                ],
+                timeout=self.TEST_RESTORE_TIMEOUT,
+            )
+            if self.run_action(action) == 0:
+                self.send_message(
+                    LogLevel.INFO,
+                    "restic",
+                    f"Probe-Restore aus Snapshot {snapshot_id} erfolgreich",
+                )
+                return True
+            self.send_message(
+                LogLevel.ERROR,
+                "restic",
+                f"Probe-Restore aus Snapshot {snapshot_id} fehlgeschlagen",
+            )
+            return False
+        finally:
+            shutil.rmtree(restore_dir, ignore_errors=True)
+
+    def _latest_snapshot_id(self, repo: str) -> str | None:
+        """Liest die ID des jüngsten Snapshots über "restic snapshots --json --last".
+
+        Args:
+            repo: restic-Repo-URL.
+
+        Returns:
+            Snapshot-ID, oder None wenn kein Snapshot vorhanden ist oder die
+            Abfrage fehlschlägt.
+        """
+        action = SysCmdAction(
+            command=[
+                self.RESTIC_BIN,
+                "-r",
+                repo,
+                "-p",
+                self.PASSPHRASE_FILE,
+                "snapshots",
+                "--json",
+                "--last",
+            ],
+            timeout=self.TEST_SNAPSHOTS_TIMEOUT,
+        )
+        if self.run_action(action) != 0:
+            return None
+        try:
+            snapshots = json.loads(action.stdout)
+        except json.JSONDecodeError:
+            return None
+        if not snapshots:
+            return None
+        snapshot_id = snapshots[0].get("id")
+        return str(snapshot_id) if snapshot_id else None
