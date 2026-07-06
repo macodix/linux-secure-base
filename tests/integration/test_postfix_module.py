@@ -53,6 +53,13 @@ def _make_fake_postmap(tmp_path: Path) -> str:
     return str(script)
 
 
+_SENT_LOG_LINE = (
+    "Jul  6 10:00:00 host postfix/smtp[123]: ABC123: to=<admin@example.com>, "
+    "relay=smtp.example.com[1.2.3.4]:587, delay=0.1, delays=0/0/0/0.1, dsn=2.0.0, "
+    "status=sent (250 2.0.0 Ok: queued as 12345)"
+)
+
+
 def _make_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Postfix, MagicMock]:
@@ -64,10 +71,16 @@ def _make_module(
     monkeypatch.setattr(Postfix, "SYSTEMCTL_BIN", "/usr/bin/true")
     # /usr/bin/true ignoriert stdin/Argumente und liefert Returncode 0 bzw.
     # (als postqueue-Platzhalter) eine leere Ausgabe — entspricht einer
-    # zugestellten Testmail bzw. einer leeren Queue.
+    # zugestellten Testmail bzw. einer leeren Queue. Die Testmail zeigt sich
+    # als tatsächlich zugestellt erst über eine status=sent-Zeile in MAIL_LOG
+    # (Zustellungsnachweis über das Mail-Log statt nur die leere Queue).
     monkeypatch.setattr(Postfix, "SENDMAIL_BIN", "/usr/bin/true")
     monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", "/usr/bin/true")
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text(_SENT_LOG_LINE + "\n")
+    monkeypatch.setattr(Postfix, "MAIL_LOG", str(mail_log))
     monkeypatch.setattr(Postfix, "MAIN_CF", str(tmp_path / "main.cf"))
     monkeypatch.setattr(Postfix, "SASL_PASSWD", str(tmp_path / "sasl_passwd"))
     monkeypatch.setattr(
@@ -109,7 +122,7 @@ def test_install_all_steps_succeed(
     messages = _sent_messages(conn)
     assert "postfix neu laden" in messages
     assert "Zustellung prüfen" in messages
-    assert "Testmail zugestellt — Queue leer" in messages
+    assert any("status=sent" in str(m) for m in messages)
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
     assert (tmp_path / "sasl_passwd").exists()
     assert (tmp_path / "recipient_canonical").exists()
@@ -185,6 +198,65 @@ def test_install_fails_when_test_mail_stays_deferred(
     messages = _sent_messages(conn)
     assert "fehlgeschlagen: Zustellung prüfen" in messages
     assert any("relay access denied" in str(m) for m in messages)
+
+
+def test_install_fails_when_log_shows_bounced_despite_empty_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verlässt die Testmail die Queue als Bounce (MAIL_LOG: status=bounced),
+    liefert install 1 — die frühere Falsch-positiv-Lücke (leere Queue allein
+    als Erfolg gewertet)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text(
+        "Jul  6 10:00:00 host postfix/smtp[123]: ABC123: to=<admin@example.com>, "
+        "relay=none, delay=0.1, delays=0/0/0/0.1, dsn=5.1.2, "
+        "status=bounced (host smtp.example.com said: 550 5.1.2 unknown recipient)\n"
+    )
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Zustellung prüfen" in messages
+    assert any("unknown recipient" in str(m) for m in messages)
+
+
+def test_install_fails_when_queue_empty_but_no_log_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leert sich die Queue ohne zugehörigen Logeintrag, liefert install
+    fail-closed 1 statt eines stillen Erfolgs."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text("keine passende Zeile\n")
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_ATTEMPTS", 1)
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Zustellung prüfen" in messages
+    assert any("Zustellstatus nicht nachweisbar" in str(m) for m in messages)
+
+
+def test_install_succeeds_via_journalctl_fallback_when_mail_log_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt MAIL_LOG, weist install die Zustellung über den
+    journalctl-Fallback nach."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    journalctl = tmp_path / "fake-journalctl"
+    journalctl.write_text(f"#!/usr/bin/env python3\nprint({_SENT_LOG_LINE!r})\n")
+    journalctl.chmod(0o755)
+    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
+    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", str(journalctl))
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("status=sent" in str(m) for m in messages)
 
 
 def test_install_fails_when_sendmail_fails(
@@ -366,7 +438,7 @@ def test_test_all_steps_succeed(
     assert result == 0
     messages = _sent_messages(conn)
     assert "Funktionstest: Zustellung prüfen" in messages
-    assert "Testmail zugestellt — Queue leer" in messages
+    assert any("status=sent" in str(m) for m in messages)
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
     assert (tmp_path / "main.cf").read_text() == ""
     assert (tmp_path / "aliases").read_text() == ""

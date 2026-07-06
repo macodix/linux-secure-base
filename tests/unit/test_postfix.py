@@ -1,5 +1,6 @@
 """Unit-Tests für secure_base.modules.postfix."""
 
+import re
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
@@ -349,6 +350,31 @@ def test_send_mail_action_missing_program_raises() -> None:
     assert action.status == "failed"
 
 
+def _write_mail_log(tmp_path: Path, status_line: str) -> str:
+    """Legt eine Mail-Log-Datei mit genau einer Statuszeile an und liefert den Pfad."""
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text(status_line + "\n")
+    return str(mail_log)
+
+
+_SENT_LINE = (
+    "Jul  6 10:00:00 host postfix/smtp[123]: ABC123: to=<admin@example.com>, "
+    "relay=smtp.example.com[1.2.3.4]:587, delay=0.1, delays=0/0/0/0.1, dsn=2.0.0, "
+    "status=sent (250 2.0.0 Ok: queued as 12345)"
+)
+_BOUNCED_LINE = (
+    "Jul  6 10:00:00 host postfix/smtp[123]: ABC123: to=<admin@example.com>, "
+    "relay=none, delay=0.1, delays=0/0/0/0.1, dsn=5.1.2, "
+    "status=bounced (host smtp.example.com said: 550 5.1.2 unknown recipient)"
+)
+
+
+def _apply_sent_mail_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lenkt MAIL_LOG auf eine Datei mit einer status=sent-Zeile für admin_mail um."""
+    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, _SENT_LINE))
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+
+
 # --- Zustellungsnachweis: _send_test_mail, _queue_entries, _deferred_reasons ---
 
 
@@ -444,13 +470,88 @@ def test_deferred_reasons_empty_when_no_reason_present() -> None:
     assert mod._deferred_reasons(entries) == []
 
 
+# --- Zustellstatus: _log_anchor, _mail_log_lines, _check_delivery_log,
+# _evaluate_log_line ---
+
+
+def test_log_anchor_matches_since_format() -> None:
+    """_log_anchor liefert einen journalctl-kompatiblen --since-Zeitstempel."""
+    mod = _make_postfix()
+    anchor = mod._log_anchor()
+    assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", anchor)
+
+
+def test_mail_log_lines_reads_mail_log_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist MAIL_LOG lesbar, liest _mail_log_lines daraus, ohne journalctl."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, _SENT_LINE))
+    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", "/bin/false")
+    assert mod._mail_log_lines("2026-01-01 00:00:00") == [_SENT_LINE]
+
+
+def test_mail_log_lines_falls_back_to_journalctl_when_file_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt MAIL_LOG, weicht _mail_log_lines auf JOURNALCTL_BIN aus."""
+    mod = _make_postfix()
+    journalctl = _write_script(tmp_path, "fake-journalctl", f"print({_SENT_LINE!r})\n")
+    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
+    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", journalctl)
+    assert mod._mail_log_lines("2026-01-01 00:00:00") == [_SENT_LINE]
+
+
+def test_mail_log_lines_returns_none_when_journalctl_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt auch journalctl fehl, liefert _mail_log_lines None."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
+    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", "/bin/false")
+    assert mod._mail_log_lines("2026-01-01 00:00:00") is None
+
+
+def test_evaluate_log_line_sent_returns_zero_with_relay() -> None:
+    """Eine status=sent-Zeile liefert 0 und meldet den relay-Wert."""
+    mod = _make_postfix()
+    assert mod._evaluate_log_line(_SENT_LINE) == 0
+    payloads = _sent_payloads(mod)
+    assert any(
+        "status=sent" in str(p) and "smtp.example.com" in str(p) for p in payloads
+    )
+
+
+def test_evaluate_log_line_bounced_returns_one_with_reason() -> None:
+    """Eine status=bounced-Zeile liefert 1 mit dem Fehlertext aus der Zeile."""
+    mod = _make_postfix()
+    assert mod._evaluate_log_line(_BOUNCED_LINE) == 1
+    payloads = _sent_payloads(mod)
+    assert any("unknown recipient" in str(p) for p in payloads)
+
+
+def test_check_delivery_log_fails_when_no_matching_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Findet sich keine passende Zeile, liefert _check_delivery_log
+    fail-closed 1."""
+    mod = _make_postfix()
+    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, "no match here"))
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_ATTEMPTS", 1)
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+    assert mod._check_delivery_log("2026-01-01 00:00:00") == 1
+    payloads = _sent_payloads(mod)
+    assert any("Zustellstatus nicht nachweisbar" in str(p) for p in payloads)
+
+
 # --- _check_delivery ---
 
 
-def test_check_delivery_succeeds_when_queue_empties(
+def test_check_delivery_succeeds_when_queue_empties_and_log_shows_sent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Verlässt die Testmail die Queue, liefert _check_delivery 0."""
+    """Verlässt die Testmail die Queue und zeigt das Mail-Log status=sent,
+    liefert _check_delivery 0."""
     mod = _make_postfix()
     sendmail = _write_script(
         tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
@@ -459,6 +560,71 @@ def test_check_delivery_succeeds_when_queue_empties(
     monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
     monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    _apply_sent_mail_log(tmp_path, monkeypatch)
+    assert mod._check_delivery() == 0
+
+
+def test_check_delivery_fails_when_queue_empties_but_log_shows_bounced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zeigt das Mail-Log status=bounced für admin_mail, liefert _check_delivery
+    1 mit dem Fehlertext aus der Zeile — die frühere Falsch-positiv-Lücke
+    (Queue leer = Erfolg trotz Bounce)."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, _BOUNCED_LINE))
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+    assert mod._check_delivery() == 1
+    payloads = _sent_payloads(mod)
+    assert any(
+        "unzustellbar" in str(p) and "unknown recipient" in str(p) for p in payloads
+    )
+
+
+def test_check_delivery_fails_when_queue_empty_and_no_log_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist die Queue leer, aber findet sich keine passende Log-Zeile, liefert
+    _check_delivery fail-closed 1 (kein stiller Erfolg)."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "MAIL_LOG", _write_mail_log(tmp_path, "no match here"))
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_ATTEMPTS", 1)
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+    assert mod._check_delivery() == 1
+    payloads = _sent_payloads(mod)
+    assert any("Zustellstatus nicht nachweisbar" in str(p) for p in payloads)
+
+
+def test_check_delivery_falls_back_to_journalctl_when_mail_log_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt MAIL_LOG, liest _check_delivery den Zustellstatus über
+    JOURNALCTL_BIN nach."""
+    mod = _make_postfix()
+    sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.read()\n"
+    )
+    postqueue = _write_script(tmp_path, "fake-postqueue-empty", "")
+    journalctl = _write_script(tmp_path, "fake-journalctl", f"print({_SENT_LINE!r})\n")
+    monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
+    monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
+    monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(Postfix, "MAIL_LOG", str(tmp_path / "missing-mail.log"))
+    monkeypatch.setattr(Postfix, "JOURNALCTL_BIN", journalctl)
+    monkeypatch.setattr(Postfix, "DELIVERY_LOG_CHECK_INTERVAL", 0)
     assert mod._check_delivery() == 0
 
 
@@ -532,6 +698,7 @@ def test_test_reuses_check_delivery_and_succeeds(
     monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
     monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    _apply_sent_mail_log(tmp_path, monkeypatch)
     assert mod._test() == 0
 
 
@@ -566,6 +733,7 @@ def test_test_does_not_change_config_files(
     monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
     monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    _apply_sent_mail_log(tmp_path, monkeypatch)
 
     assert mod._test() == 0
 
@@ -789,4 +957,5 @@ def test_start_dispatches_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(Postfix, "SENDMAIL_BIN", sendmail)
     monkeypatch.setattr(Postfix, "POSTQUEUE_BIN", postqueue)
     monkeypatch.setattr(Postfix, "DELIVERY_CHECK_INTERVAL", 0)
+    _apply_sent_mail_log(tmp_path, monkeypatch)
     assert mod.start() == 0

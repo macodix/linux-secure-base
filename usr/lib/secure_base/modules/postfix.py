@@ -44,6 +44,11 @@ _RELAY_USER_RE = re.compile(r"^[^\s:]+$")
 # würde die Zeile zerreißen. Der Wert selbst erscheint in keiner Meldung.
 _RELAY_PASSWORD_RE = re.compile(r"^\S+$")
 
+# Felder status=/relay= aus gefilterten Mail-Log-Zeilen des Zustellungsnachweises
+# (reines Auslesen zur Auswertung, keine Eingabe in Kommandos).
+_LOG_STATUS_RE = re.compile(r"status=(\w+)")
+_LOG_RELAY_RE = re.compile(r"relay=([^,]+)")
+
 # Marker des /etc/aliases-Blocks für die root-Weiterleitung.
 _ALIASES_MARKER = "aliases-root"
 
@@ -229,6 +234,8 @@ class Postfix(Module):
     RECIPIENT_CANONICAL: ClassVar[str] = "/etc/postfix/recipient_canonical"
     ALIASES: ClassVar[str] = "/etc/aliases"
     CA_CERTIFICATES_FILE: ClassVar[str] = "/etc/ssl/certs/ca-certificates.crt"
+    MAIL_LOG: ClassVar[str] = "/var/log/mail.log"
+    JOURNALCTL_BIN: ClassVar[str] = "/usr/bin/journalctl"
 
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
     SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
@@ -239,6 +246,13 @@ class Postfix(Module):
     # (Tests setzen DELIVERY_CHECK_INTERVAL auf 0, keine echten Wartezeiten).
     DELIVERY_CHECK_ATTEMPTS: ClassVar[int] = 6
     DELIVERY_CHECK_INTERVAL: ClassVar[float] = 5.0
+
+    # Zustellstatus im Mail-Log: eine leere Queue allein belegt keine
+    # Zustellung (auch ein Bounce verlässt die Queue) — eigene, kleinere
+    # Versuchs-/Wartekonstanten, falls der Logeintrag der Queue-Leerung
+    # knapp nachläuft. Ebenfalls als Klassenattribute testbar.
+    DELIVERY_LOG_CHECK_ATTEMPTS: ClassVar[int] = 3
+    DELIVERY_LOG_CHECK_INTERVAL: ClassVar[float] = 2.0
 
     # Von check_config per setattr gesetzt (siehe Module.check_config);
     # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
@@ -610,15 +624,18 @@ class Postfix(Module):
         """Weist die Zustellfähigkeit über eine Testmail nach.
 
         Sendet eine Testmail an admin_mail und fragt danach die Postfix-Queue
-        ab, bis die Mail die Queue verlassen hat (Erfolg), ein Zustellfehler
-        vermerkt ist (Fehlschlag) oder die Versuche ausgeschöpft sind
-        (Fehlschlag). Eine formal gültige main.cf liefert sonst keine
-        Garantie, dass Mail das System tatsächlich verlässt.
+        ab, bis die Mail die Queue verlassen hat, ein Zustellfehler vermerkt
+        ist (Fehlschlag) oder die Versuche ausgeschöpft sind (Fehlschlag).
+        Eine leere Queue allein ist kein Zustellungsnachweis — eine
+        unzustellbare Mail verlässt die Queue ebenso als Bounce. Erst danach
+        wird der tatsächliche Zustellstatus im Mail-Log geprüft
+        (_check_delivery_log).
 
         Returns:
             0 bei nachgewiesener Zustellung, sonst 1.
         """
         token = secrets.token_hex(8)
+        anchor = self._log_anchor()
         if not self._send_test_mail(token):
             return 1
         for attempt in range(1, self.DELIVERY_CHECK_ATTEMPTS + 1):
@@ -627,9 +644,11 @@ class Postfix(Module):
                 return 1
             if not entries:
                 self.send_message(
-                    LogLevel.INFO, "postfix", "Testmail zugestellt — Queue leer"
+                    LogLevel.INFO,
+                    "postfix",
+                    "Postfix-Queue leer — prüfe Zustellstatus im Mail-Log",
                 )
-                return 0
+                return self._check_delivery_log(anchor)
             reasons = self._deferred_reasons(entries)
             if reasons:
                 self.send_message(
@@ -643,6 +662,104 @@ class Postfix(Module):
         self.send_message(
             LogLevel.ERROR, "postfix", "Testmail nach Wartezeit weiter in der Queue"
         )
+        return 1
+
+    def _log_anchor(self) -> str:
+        """Baut den Zeit-Anker vor dem Testmail-Versand für die Log-Auswertung.
+
+        Returns:
+            Aktueller Zeitpunkt im journalctl-kompatiblen --since-Format.
+        """
+        return time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _mail_log_lines(self, anchor: str) -> list[str] | None:
+        """Liest die Mail-Log-Zeilen, bevorzugt aus MAIL_LOG, sonst per journalctl.
+
+        Ist MAIL_LOG nicht lesbar oder nicht vorhanden, weicht die Methode auf
+        JOURNALCTL_BIN aus (Einheiten postfix@- und postfix, ab anchor).
+
+        Args:
+            anchor: Log-Anker aus _log_anchor, für den journalctl-Fallback.
+
+        Returns:
+            Liste der Logzeilen, oder None, wenn keine der beiden Quellen
+            lesbar ist.
+        """
+        try:
+            content = Path(self.MAIL_LOG).read_text(encoding="utf-8", errors="replace")
+            return content.splitlines()
+        except OSError:
+            pass
+        action = SysCmdAction(
+            command=[
+                self.JOURNALCTL_BIN,
+                "-u",
+                "postfix@-",
+                "-u",
+                "postfix",
+                "--since",
+                anchor,
+                "--no-pager",
+            ],
+            timeout=15,
+        )
+        if self.run_action(action) != 0:
+            return None
+        return action.stdout.splitlines()
+
+    def _check_delivery_log(self, anchor: str) -> int:
+        """Weist den tatsächlichen Zustellstatus der Testmail im Mail-Log nach.
+
+        Filtert die Log-Zeilen auf den Empfänger (to=<admin_mail>) und
+        bewertet die letzte passende Zeile. Findet sich keine passende Zeile
+        oder ist das Log nicht zugreifbar, gilt das als Fehlschlag
+        (fail-closed) — kein stiller Erfolg aus einer leeren Queue.
+
+        Args:
+            anchor: Log-Anker aus _log_anchor.
+
+        Returns:
+            0 bei nachgewiesenem status=sent, sonst 1.
+        """
+        needle = f"to=<{self.admin_mail}>"
+        for attempt in range(1, self.DELIVERY_LOG_CHECK_ATTEMPTS + 1):
+            lines = self._mail_log_lines(anchor)
+            if lines is not None:
+                matches = [line for line in lines if needle in line]
+                if matches:
+                    return self._evaluate_log_line(matches[-1])
+            if attempt < self.DELIVERY_LOG_CHECK_ATTEMPTS:
+                time.sleep(self.DELIVERY_LOG_CHECK_INTERVAL)
+        self.send_message(LogLevel.ERROR, "postfix", "Zustellstatus nicht nachweisbar")
+        return 1
+
+    def _evaluate_log_line(self, line: str) -> int:
+        """Bewertet eine gefilterte Mail-Log-Zeile anhand ihres status-Felds.
+
+        Args:
+            line: Log-Zeile, die den Empfänger betrifft.
+
+        Returns:
+            0 bei status=sent, sonst 1 (bounced, deferred oder unbekannter
+            Status).
+        """
+        match = _LOG_STATUS_RE.search(line)
+        status = match.group(1) if match else ""
+        if status == "sent":
+            relay_match = _LOG_RELAY_RE.search(line)
+            relay = relay_match.group(1) if relay_match else "unbekannt"
+            self.send_message(
+                LogLevel.INFO,
+                "postfix",
+                f"Testmail zugestellt — status=sent, relay={relay}",
+            )
+            return 0
+        if status in ("bounced", "deferred"):
+            self.send_message(
+                LogLevel.ERROR, "postfix", f"Testmail unzustellbar: {line.strip()}"
+            )
+            return 1
+        self.send_message(LogLevel.ERROR, "postfix", "Zustellstatus nicht nachweisbar")
         return 1
 
     def _send_test_mail(self, token: str) -> bool:
