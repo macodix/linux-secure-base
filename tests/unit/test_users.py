@@ -2,7 +2,9 @@
 
 import os
 import pwd
+from email import message_from_bytes, policy
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,7 +14,10 @@ from secure_base.modules.users import (
     Users,
     _ChpasswdStdinAction,
     _is_password_set,
+    _QrEncodeStdinAction,
+    _SendMailAction,
     _shadow_hash_from_line,
+    _totp_mail_content,
 )
 
 
@@ -21,10 +26,14 @@ def _make_users(
     pubkey: str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test",
     password: str = "s3cret",  # noqa: S107 — Testwert, kein echtes Geheimnis
     uninstall_remove_user: str = "no",
+    fqdn: str = "server.example.com",
+    admin_mail: str = "admin@example.com",
 ) -> Users:
     """Baut ein Users-Modul mit gesetzten Werten, ohne Prozess/IPC."""
     mod = Users(conn=MagicMock(), loglevel=LogLevel.INFO)
     mod.operation = "install"
+    mod.fqdn = fqdn
+    mod.admin_mail = admin_mail
     mod.main_user = main_user
     mod.main_user_password = password
     mod.main_user_pubkey = pubkey
@@ -36,9 +45,11 @@ def _make_users(
 
 
 def test_users_config_declares_expected_keys() -> None:
-    """CONFIG nennt alle vier bekannten Schlüssel plus uninstall_remove_user."""
+    """CONFIG nennt operation, fqdn, admin_mail und alle main_user-Schlüssel."""
     assert Users.CONFIG == [
         "operation",
+        "fqdn",
+        "admin_mail",
         "main_user",
         "main_user_password",
         "main_user_pubkey",
@@ -53,6 +64,20 @@ def test_validate_accepts_valid_values() -> None:
     """Gültiger Benutzername und Pubkey lösen keine Ausnahme aus."""
     mod = _make_users()
     mod._validate()
+
+
+def test_validate_rejects_invalid_fqdn() -> None:
+    """Ein fqdn mit unerlaubten Zeichen erzeugt ModuleError."""
+    mod = _make_users(fqdn="server_example!.com")
+    with pytest.raises(ModuleError, match="Ungültiger Rechnername"):
+        mod._validate()
+
+
+def test_validate_rejects_invalid_admin_mail() -> None:
+    """Eine ungültige admin_mail erzeugt ModuleError."""
+    mod = _make_users(admin_mail="not-an-address")
+    with pytest.raises(ModuleError, match="Ungültige Admin-E-Mail-Adresse"):
+        mod._validate()
 
 
 def test_validate_rejects_invalid_username() -> None:
@@ -473,6 +498,273 @@ def test_step_handle_main_user_fails_when_userdel_fails(
     assert mod._step_handle_main_user() == 1
 
 
+# --- _totp_mail_content ---
+
+
+_EMERGENCY_CODES = ["11111111", "22222222"]
+
+
+def test_totp_mail_content_includes_secret_url_codes_and_attachment(
+    tmp_path: Path,
+) -> None:
+    """Die TOTP-Mail enthält Betreff, Secret, URL, Notfall-Codes und PNG-Anhang."""
+    qr_png = tmp_path / "qr.png"
+    qr_png.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+
+    raw = _totp_mail_content(
+        user="alice",
+        fqdn="server.example.com",
+        admin_mail="admin@example.com",
+        secret="SECRETVALUE",  # noqa: S106 — Testwert, kein echtes Geheimnis
+        url="otpauth://totp/alice@server.example.com?secret=SECRETVALUE"
+        "&issuer=server.example.com",
+        emergency_codes=_EMERGENCY_CODES,
+        qr_png_path=str(qr_png),
+    )
+    msg = message_from_bytes(raw, policy=policy.default)
+
+    assert (
+        msg["Subject"] == "secure-base server.example.com: TOTP-Einrichtung für alice"
+    )
+    assert msg["To"] == "admin@example.com"
+    assert msg.is_multipart()
+    body = msg.get_body(preferencelist=("plain",))
+    assert body is not None
+    body_text = body.get_content()
+    assert "SECRETVALUE" in body_text
+    assert "otpauth://totp/alice@server.example.com" in body_text
+    assert "11111111" in body_text
+    assert "22222222" in body_text
+    attachments = list(msg.iter_attachments())
+    assert len(attachments) == 1
+    assert attachments[0].get_content_type() == "image/png"
+    assert attachments[0].get_payload(decode=True) == qr_png.read_bytes()
+
+
+# --- _QrEncodeStdinAction / _SendMailAction ---
+
+
+def _write_script(tmp_path: Path, name: str, body: str) -> str:
+    """Legt ein ausführbares Fake-Programm unter tmp_path an und liefert den Pfad."""
+    script = tmp_path / name
+    script.write_text(f"#!/usr/bin/env python3\n{body}")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_qr_encode_stdin_action_never_puts_data_in_argv(tmp_path: Path) -> None:
+    """qrencode erhält die Daten nur über stdin, nie als Kommandozeilenargument."""
+    output = tmp_path / "out.png"
+    script = _write_script(
+        tmp_path,
+        "fake-qrencode",
+        "import sys\n"
+        "data = sys.stdin.buffer.read()\n"
+        "assert 'SECRETVALUE' not in ' '.join(sys.argv)\n"
+        "open(sys.argv[2], 'wb').write(data)\n",
+    )
+    action = _QrEncodeStdinAction(
+        data="otpauth://...secret=SECRETVALUE...",
+        output_path=str(output),
+        qrencode_bin=script,
+    )
+    assert action.run() == "finished"
+    assert output.read_bytes() == b"otpauth://...secret=SECRETVALUE..."
+
+
+def test_qr_encode_stdin_action_failure_raises() -> None:
+    """Ein fehlschlagendes qrencode erzeugt ActionError, status wird failed."""
+    action = _QrEncodeStdinAction(
+        data="irrelevant", output_path="/nonexistent/out.png", qrencode_bin="/bin/false"
+    )
+    with pytest.raises(ActionError, match="qrencode endete mit Code"):
+        action.run()
+    assert action.status == "failed"
+
+
+def test_send_mail_action_success_with_bytes_content(tmp_path: Path) -> None:
+    """Ein erfolgreiches Programm liefert finished; content ist bytes."""
+    script = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.buffer.read()\n"
+    )
+    action = _SendMailAction(
+        command=[script, "admin@example.com"], content=b"Subject: x\n\nbody", timeout=5
+    )
+    assert action.run() == "finished"
+    assert action.returncode == 0
+
+
+def test_send_mail_action_failure_message_omits_content(tmp_path: Path) -> None:
+    """Scheitert sendmail, enthält die ActionError-Meldung nie den Mailinhalt."""
+    script = _write_script(
+        tmp_path,
+        "fake-sendmail-fail",
+        "import sys\nsys.stdin.buffer.read()\nsys.exit(1)\n",
+    )
+    action = _SendMailAction(
+        command=[script], content=b"Subject: x\n\nSECRETVALUE", timeout=5
+    )
+    with pytest.raises(ActionError) as exc_info:
+        action.run()
+    assert "SECRETVALUE" not in str(exc_info.value)
+    assert action.status == "failed"
+
+
+# --- _step_totp / _step_totp_mail ---
+
+
+def _write_google_authenticator(
+    home: Path,
+    secret: str = "SECRETVALUE",  # noqa: S107 — Testwert, kein echtes Geheimnis
+) -> Path:
+    """Legt eine .google_authenticator-Datei mit Secret und Notfall-Codes an."""
+    ga_file = home / ".google_authenticator"
+    ga_file.write_text(f'{secret}\n" RATE_LIMIT 3 30\n11111111\n22222222\n')
+    return ga_file
+
+
+def test_step_totp_skips_and_marks_not_created_when_secret_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Existiert bereits ein Secret, überspringt _step_totp und markiert
+    _totp_secret_created als False."""
+    mod = _make_users()
+    _write_google_authenticator(tmp_path)
+    monkeypatch.setattr(mod, "_home_dir", lambda user: str(tmp_path))
+    assert mod._step_totp() == 0
+    assert mod._totp_secret_created is False
+
+
+def test_step_totp_mail_skips_when_no_secret_created() -> None:
+    """Wurde in diesem Lauf kein neues Secret erzeugt, überspringt
+    _step_totp_mail den Versand und liefert 0."""
+    mod = _make_users()
+    mod._totp_secret_created = False
+    assert mod._step_totp_mail() == 0
+
+
+def _prepare_totp_mail_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Users, Path]:
+    """Baut ein Users-Modul mit erzeugtem TOTP-Secret und Platzhalter-Binaries."""
+    mod = _make_users()
+    mod._totp_secret_created = True
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_google_authenticator(home)
+    monkeypatch.setattr(mod, "_home_dir", lambda user: str(home))
+
+    fake_qrencode = _write_script(
+        tmp_path,
+        "fake-qrencode",
+        "import sys\n"
+        "data = sys.stdin.buffer.read()\n"
+        "open(sys.argv[2], 'wb').write(data)\n",
+    )
+    monkeypatch.setattr(Users, "QRENCODE_BIN", fake_qrencode)
+    fake_sendmail = _write_script(
+        tmp_path, "fake-sendmail-ok", "import sys\nsys.stdin.buffer.read()\n"
+    )
+    monkeypatch.setattr(Users, "SENDMAIL_BIN", fake_sendmail)
+    return mod, tmp_path
+
+
+def _apply_sent_mail_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    admin_mail: str = "admin@example.com",
+) -> None:
+    """Lenkt MAIL_LOG auf eine Datei mit einer status=sent-Zeile für admin_mail um."""
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text(
+        f"Jul  6 10:00:00 host postfix/smtp[123]: ABC: to=<{admin_mail}>, "
+        "relay=smtp.example.com[1.2.3.4]:587, status=sent (250 2.0.0 Ok)\n"
+    )
+    monkeypatch.setattr(Users, "MAIL_LOG", str(mail_log))
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+
+
+def test_step_totp_mail_succeeds_and_removes_tmp_qr_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bei nachgewiesener Zustellung liefert _step_totp_mail 0 und entfernt
+    die QR-Code-Tmpdatei."""
+    mod, base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    _apply_sent_mail_log(base, monkeypatch, mod.admin_mail)
+
+    before = set(base.glob("secure-base-totp-qr-*"))
+    result = mod._step_totp_mail()
+    after = set(base.glob("secure-base-totp-qr-*"))
+
+    assert result == 0
+    assert before == after == set()
+
+
+def test_step_totp_mail_fails_when_qrencode_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt qrencode fehl, liefert _step_totp_mail 1 ohne Mailversand."""
+    mod, _base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(Users, "QRENCODE_BIN", "/bin/false")
+    assert mod._step_totp_mail() == 1
+
+
+def test_step_totp_mail_fails_when_sendmail_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt sendmail fehl, liefert _step_totp_mail 1."""
+    mod, _base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(Users, "SENDMAIL_BIN", "/bin/false")
+    assert mod._step_totp_mail() == 1
+
+
+def test_step_totp_mail_fails_when_no_delivery_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt der Zustellbeweis im Mail-Log, liefert _step_totp_mail 1."""
+    mod, base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    mail_log = base / "mail.log"
+    mail_log.write_text("keine passende Zeile\n")
+    monkeypatch.setattr(Users, "MAIL_LOG", str(mail_log))
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_ATTEMPTS", 1)
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+    assert mod._step_totp_mail() == 1
+
+
+def test_step_totp_mail_never_leaks_secret_in_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Secret, URL und Notfall-Codes erscheinen in keiner gesendeten Meldung,
+    weder bei Erfolg noch bei einem Versandfehler."""
+    mod, base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    _apply_sent_mail_log(base, monkeypatch, mod.admin_mail)
+
+    mod._step_totp_mail()
+
+    conn = cast(MagicMock, mod._conn)
+    payloads = [str(call.args[0].payload) for call in conn.send.call_args_list]
+    joined = "\n".join(payloads)
+    assert "SECRETVALUE" not in joined
+    assert "otpauth://" not in joined
+    assert "11111111" not in joined
+    assert "22222222" not in joined
+
+
+def test_step_totp_mail_never_leaks_secret_on_send_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auch bei einem Versandfehler erscheint das Secret in keiner Meldung."""
+    mod, _base = _prepare_totp_mail_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(Users, "SENDMAIL_BIN", "/bin/false")
+
+    mod._step_totp_mail()
+
+    conn = cast(MagicMock, mod._conn)
+    payloads = [str(call.args[0].payload) for call in conn.send.call_args_list]
+    joined = "\n".join(payloads)
+    assert "SECRETVALUE" not in joined
+
+
 # --- _test ---
 
 
@@ -515,7 +807,9 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     section = Users.doc(values)
 
     assert section.startswith("\n## Hauptbenutzer\n\n")
-    assert f"**Pakete:** {Users.PKG_GOOGLE_AUTHENTICATOR}" in section
+    assert (
+        f"**Pakete:** {Users.PKG_GOOGLE_AUTHENTICATOR}, {Users.PKG_QRENCODE}" in section
+    )
     assert f"**Angelegte Benutzer:** alice (Gruppen: {Users.GROUP_NAME})" in section
     assert "`/home/alice/.ssh/authorized_keys`" in section
     assert "`/home/alice/.google_authenticator`" in section

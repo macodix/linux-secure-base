@@ -3,9 +3,13 @@
 Startet Users.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn), analog zu tests/integration/test_base_module.py.
 Alle Systembefehle (getent, groupadd, useradd, usermod, chpasswd, runuser,
-dpkg, id) sind über Klassenattribute auf harmlose Platzhalter umgelenkt:
-entweder /usr/bin/true oder ein kleines, im Test erzeugtes Stellvertreter-
-Skript, dessen Antwort über Umgebungsvariablen gesteuert wird. pwd/grp
+dpkg, id, qrencode, sendmail) sind über Klassenattribute auf harmlose
+Platzhalter umgelenkt: entweder /usr/bin/true oder ein kleines, im Test
+erzeugtes Stellvertreter-Skript, dessen Antwort über Umgebungsvariablen
+gesteuert wird. Der Fake-runuser legt bei einem google-authenticator-Aufruf
+zusätzlich eine .google_authenticator-Testdatei an (Secret + Notfall-Codes),
+damit die TOTP-Einrichtungsmail einen Inhalt zum Versenden hat; MAIL_LOG
+zeigt eine status=sent-Zeile für admin_mail (Zustellungsnachweis). pwd/grp
 sind global auf einen Fake-Eintrag umgelenkt, damit PermissionsAction
 (chown auf main_user) ohne echtes Systemkonto und ohne root auskommt: ein
 chown auf die eigene, bereits vorhandene UID/GID ist unter Linux auch
@@ -26,6 +30,8 @@ from secure_base.modules.users import Users
 
 _MAIN_USER = "alice"
 _PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test@laptop"
+_FQDN = "server.example.com"
+_ADMIN_MAIL = "admin@example.com"
 
 _FAKE_GETENT = """#!/bin/sh
 sub="$1"; shift
@@ -68,6 +74,34 @@ touch "${GETENT_USER_CREATED_MARKER:?}"
 _FAKE_USERDEL = """#!/bin/sh
 touch "${USERDEL_CALLED_MARKER:?}"
 """
+
+# Bei einem google-authenticator-Aufruf legt der Fake-runuser eine
+# .google_authenticator-Testdatei unter $HOME an (Secret + Notfall-Codes),
+# sonst folgenlos (entspricht dem bisherigen /usr/bin/true für
+# _readable_as_user in der Betriebsart test).
+_FAKE_RUNUSER = """#!/bin/sh
+case "$*" in
+    *google-authenticator*)
+        printf '%s\\n' "TESTSECRETNOTREAL" > "$HOME/.google_authenticator"
+        printf '11111111\\n22222222\\n' >> "$HOME/.google_authenticator"
+        ;;
+esac
+exit 0
+"""
+
+_FAKE_QRENCODE = """#!/bin/sh
+cat > "$2"
+"""
+
+_FAKE_SENDMAIL = """#!/bin/sh
+cat >/dev/null
+"""
+
+_SENT_MAIL_LOG_LINE = (
+    f"Jul  6 10:00:00 host postfix/smtp[123]: ABC123: to=<{_ADMIN_MAIL}>, "
+    "relay=smtp.example.com[1.2.3.4]:587, delay=0.1, delays=0/0/0/0.1, dsn=2.0.0, "
+    "status=sent (250 2.0.0 Ok: queued as 12345)"
+)
 
 
 class _NoOpAptAction(AptAction):
@@ -142,6 +176,9 @@ def _make_module(
     fake_id = _write_stub(tmp_path / "fake_id.sh", _FAKE_ID)
     fake_useradd = _write_stub(tmp_path / "fake_useradd.sh", _FAKE_USERADD)
     fake_userdel = _write_stub(tmp_path / "fake_userdel.sh", _FAKE_USERDEL)
+    fake_runuser = _write_stub(tmp_path / "fake_runuser.sh", _FAKE_RUNUSER)
+    fake_qrencode = _write_stub(tmp_path / "fake_qrencode.sh", _FAKE_QRENCODE)
+    fake_sendmail = _write_stub(tmp_path / "fake_sendmail.sh", _FAKE_SENDMAIL)
 
     monkeypatch.setattr(Users, "GETENT_BIN", fake_getent)
     monkeypatch.setattr(Users, "ID_BIN", fake_id)
@@ -150,7 +187,7 @@ def _make_module(
     monkeypatch.setattr(Users, "USERADD_BIN", fake_useradd)
     monkeypatch.setattr(Users, "USERMOD_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "CHPASSWD_BIN", "/usr/bin/true")
-    monkeypatch.setattr(Users, "RUNUSER_BIN", "/usr/bin/true")
+    monkeypatch.setattr(Users, "RUNUSER_BIN", fake_runuser)
     monkeypatch.setattr(Users, "GPASSWD_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "GROUPDEL_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "USERDEL_BIN", fake_userdel)
@@ -158,6 +195,12 @@ def _make_module(
     monkeypatch.setattr(Users, "PKILL_WAIT_SECONDS", 0.0)
     monkeypatch.setattr(Users, "TEST_BIN", "/usr/bin/true")
     monkeypatch.setattr(Users, "APT_ACTION_CLS", _NoOpAptAction)
+    monkeypatch.setattr(Users, "QRENCODE_BIN", fake_qrencode)
+    monkeypatch.setattr(Users, "SENDMAIL_BIN", fake_sendmail)
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text(_SENT_MAIL_LOG_LINE + "\n")
+    monkeypatch.setattr(Users, "MAIL_LOG", str(mail_log))
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_INTERVAL", 0)
 
     monkeypatch.setenv("GETENT_ROOT_HASH", "$6$roothash$xyz")
     monkeypatch.setenv("GETENT_USER_EXISTS", "1")
@@ -176,6 +219,8 @@ def _make_module(
     conn = MagicMock()
     mod = Users(conn=conn, loglevel=LogLevel.INFO)
     mod.operation = "install"
+    mod.fqdn = _FQDN
+    mod.admin_mail = _ADMIN_MAIL
     mod.main_user = _MAIN_USER
     mod.main_user_password = "s3cret"  # noqa: S105 — Testwert, kein echtes Geheimnis
     mod.main_user_pubkey = _PUBKEY
@@ -203,6 +248,10 @@ def test_install_all_steps_succeed(
     assert authkeys.read_text(encoding="utf-8").splitlines() == [_PUBKEY]
     assert (home / ".ssh").stat().st_mode & 0o777 == 0o700
     assert authkeys.stat().st_mode & 0o777 == 0o600
+    joined = "\n".join(str(m) for m in messages)
+    assert f"TOTP-Einrichtungsmail an {_ADMIN_MAIL} versendet" in joined
+    assert f"TOTP-Einrichtungsmail an {_ADMIN_MAIL} zugestellt" in joined
+    assert "TESTSECRETNOTREAL" not in joined
 
 
 def test_install_creates_user_when_missing(
@@ -246,6 +295,41 @@ def test_install_stops_at_first_failed_step(
     messages = _sent_messages(conn)
     assert "fehlgeschlagen: Gruppe ssh-users anlegen" in messages
     assert "Hauptbenutzer anlegen" not in messages
+
+
+def test_install_fails_when_totp_mail_send_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt der Mailversand fehl (sendmail), liefert install 1 — der
+    Aussperr-Schutz greift, install bricht vor dem ssh-Modul ab."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Users, "SENDMAIL_BIN", "/bin/false")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: TOTP-Einrichtungsmail versenden" in messages
+    joined = "\n".join(str(m) for m in messages)
+    assert "TESTSECRETNOTREAL" not in joined
+
+
+def test_install_fails_when_totp_mail_has_no_delivery_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt der Zustellbeweis im Mail-Log, liefert install 1 (fail-closed)."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mail_log = tmp_path / "mail.log"
+    mail_log.write_text("keine passende Zeile\n")
+    monkeypatch.setattr(Users, "MAIL_LOG", str(mail_log))
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_ATTEMPTS", 1)
+    monkeypatch.setattr(Users, "DELIVERY_LOG_CHECK_INTERVAL", 0)
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: TOTP-Einrichtungsmail versenden" in messages
 
 
 def test_install_aborts_on_missing_root_password(

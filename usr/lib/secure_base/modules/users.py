@@ -1,18 +1,27 @@
 """Modul users — Hauptbenutzer, ssh-users-Gruppe, TOTP.
 
 Legt den Hauptbenutzer und die Gruppe ssh-users an, setzt dessen
-Login-Passwort und SSH-Pubkey und richtet TOTP (google-authenticator)
-ein. Setzt das root-Passwort NICHT — prüft es nur als Vorbedingung.
-Betriebsart über den Schlüssel operation.
+Login-Passwort und SSH-Pubkey und richtet TOTP (google-authenticator) ein.
+Verschickt anschließend eine TOTP-Einrichtungsmail (Secret, otpauth-URL,
+QR-Code-Anhang, Notfall-Codes) an admin_mail und weist deren Zustellung im
+Mail-Log nach — ohne diese Mail wäre der Betreiber nach der SSH-Härtung
+(publickey+TOTP, root gesperrt) ausgesperrt. Abweichung vom Bash-Original
+(totp_per_mail): der Schalter TOTP_DELIVERY (terminal/mail) entfällt, der
+Versand läuft fest per Mail — eine Terminal-Zustellung passt nicht zum
+nicht-interaktiven Modulmodell. Setzt das root-Passwort NICHT — prüft es
+nur als Vorbedingung. Betriebsart über den Schlüssel operation.
 """
 
 import grp
+import os
 import pwd
 import re
 import stat
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
+from email.message import EmailMessage
 from pathlib import Path
 from typing import ClassVar
 
@@ -26,6 +35,8 @@ from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
+from secure_base import mail_check
+
 # Benutzername nach den üblichen Login-Namensregeln (useradd/NAME_REGEX):
 # a-z/_ am Anfang, danach a-z, 0-9, _ und -, Gesamtlänge höchstens 32 Zeichen.
 _USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -36,6 +47,16 @@ _USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 # Schlüsselinhalt selbst bleibt Sache von sshd.
 _PUBKEY_RE = re.compile(r"^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-nistp[0-9]+)[ \t]")
 
+# fqdn: nur [A-Za-z0-9.-], wie im postfix-Modul — geht in die otpauth-URL
+# und den Mailbetreff.
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
+# admin_mail: einfache name@domain-Prüfung, wie im postfix-Modul.
+_MAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$")
+
+# Notfall-Codes in ~/.google_authenticator: achtstellige Ziffernzeilen
+# (wie im Bash-Original: grep -E '^[0-9]{8}$').
+_EMERGENCY_CODE_RE = re.compile(r"^[0-9]{8}$")
+
 # Passwort-Hash-Werte, die "kein Passwort gesetzt" bedeuten
 # (getent shadow, Feld 2): leer, gesperrt (!) oder deaktiviert (*).
 _UNSET_HASHES = frozenset({"", "!", "*"})
@@ -44,6 +65,53 @@ _UNSET_HASHES = frozenset({"", "!", "*"})
 _YES_NO = frozenset({"yes", "no"})
 
 _Step = Callable[[], int]
+
+
+def _totp_mail_content(
+    user: str,
+    fqdn: str,
+    admin_mail: str,
+    secret: str,
+    url: str,
+    emergency_codes: list[str],
+    qr_png_path: str,
+) -> bytes:
+    """Baut die TOTP-Einrichtungsmail als MIME multipart/mixed mit QR-Anhang.
+
+    SICHERHEIT: secret, url und emergency_codes landen ausschließlich im
+    Mailinhalt — nie in einer send_message-Meldung, Exception oder im Log.
+
+    Args:
+        user: Login des Hauptbenutzers.
+        fqdn: Vollständiger Rechnername (Mailbetreff, otpauth-Issuer).
+        admin_mail: Empfängeradresse.
+        secret: TOTP-Secret (erste Zeile der .google_authenticator-Datei).
+        url: otpauth-URL für die Authenticator-App.
+        emergency_codes: Notfall-Codes (achtstellige Ziffernzeilen).
+        qr_png_path: Pfad des QR-Code-PNG, wird als Anhang eingelesen.
+
+    Returns:
+        Die vollständige Mail (Kopf, Rumpf, Anhang) als Bytes.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = f"secure-base {fqdn}: TOTP-Einrichtung für {user}"
+    msg["To"] = admin_mail
+    emergency_text = "\n".join(emergency_codes)
+    body = (
+        f"Zwei-Faktor-Einrichtung für {user}@{fqdn}.\n\n"
+        "QR-Code im Anhang mit der Authenticator-App scannen,\n"
+        "oder das Secret manuell eintragen:\n\n"
+        f"  Secret: {secret}\n"
+        f"  URL:    {url}\n\n"
+        f"Notfall-Codes (getrennt und sicher aufbewahren):\n{emergency_text}\n\n"
+        "Diese Mail nach der Einrichtung löschen.\n"
+    )
+    msg.set_content(body)
+    png_data = Path(qr_png_path).read_bytes()
+    msg.add_attachment(
+        png_data, maintype="image", subtype="png", filename="totp-qr.png"
+    )
+    return msg.as_bytes()
 
 
 def _doc_value(values: dict[str, str], key: str) -> str:
@@ -184,11 +252,178 @@ class _ChpasswdStdinAction(Action):
         return self.status
 
 
+class _QrEncodeStdinAction(Action):
+    """Erzeugt einen QR-Code über qrencode, Dateninhalt ausschließlich per stdin.
+
+    Anders als im Bash-Original (`qrencode -o "$qr_png" "$url"`) landet die
+    otpauth-URL — sie enthält das TOTP-Secret — hier nie in argv: qrencode
+    liest den Dateninhalt von stdin, wenn kein Positionsargument angegeben
+    wird (konv-scripting-python.md Abschnitt 4.4/4.14: Geheimnisse nie in
+    der Argumentliste eines Kindprozesses).
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        data: Kodierter Dateninhalt (otpauth-URL), nur über die stdin-Pipe.
+        output_path: Zielpfad des QR-Code-PNG.
+        qrencode_bin: Pfad zum qrencode-Programm.
+        timeout: Zeitgrenze in Sekunden.
+        returncode: Rückgabewert von qrencode nach run(); -1 vor der
+            Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["data", "output_path", "qrencode_bin", "timeout"]
+
+    def __init__(
+        self,
+        data: str,
+        output_path: str,
+        qrencode_bin: str,
+        timeout: float = 15.0,
+    ) -> None:
+        """Initialisiert die QR-Code-Erzeugung.
+
+        Args:
+            data: Dateninhalt für den QR-Code (otpauth-URL).
+            output_path: Zielpfad des QR-Code-PNG.
+            qrencode_bin: Pfad zum qrencode-Programm.
+            timeout: Zeitgrenze in Sekunden für qrencode (SIC-05).
+        """
+        super().__init__()
+        self.data = data
+        self.output_path = output_path
+        self.qrencode_bin = qrencode_bin
+        self.timeout = timeout
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt qrencode aus und liefert den Ausführungsstatus.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler. Die
+                Meldung enthält nie den Dateninhalt (SIC-04).
+        """
+        self.status = "running"
+        stdin_data = self.data.encode("utf-8")
+        try:
+            with subprocess.Popen(
+                [self.qrencode_bin, "-o", self.output_path],
+                shell=False,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ) as proc:
+                try:
+                    proc.communicate(input=stdin_data, timeout=self.timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.returncode = (
+                        proc.returncode if proc.returncode is not None else -1
+                    )
+                    self.status = "failed"
+                    raise ActionError(
+                        f"Zeitgrenze ({self.timeout}s) überschritten: qrencode"
+                    ) from None
+                self.returncode = proc.returncode if proc.returncode is not None else -1
+                if self.returncode != 0:
+                    self.status = "failed"
+                    raise ActionError(f"qrencode endete mit Code {self.returncode}")
+        except ActionError:
+            raise
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"qrencode konnte nicht gestartet werden: {exc}") from exc
+        finally:
+            stdin_data = b""
+
+        self.status = "finished"
+        return self.status
+
+
+class _SendMailAction(Action):
+    """Sendet eine MIME-Mail über ein sendmail-kompatibles Programm.
+
+    Modul-lokal wie postfix._SendMailAction (SysCmdAction unterstützt keine
+    stdin-Eingabe); content ist hier bytes (fertig kodierte MIME-Mail
+    inkl. PNG-Anhang), nicht str.
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        command: Sendmail-Aufruf als Liste einzelner Elemente.
+        content: Vollständige Mail (Kopf, Rumpf, Anhang), über stdin.
+        timeout: Zeitgrenze in Sekunden.
+        stderr: Fehlerausgabe des Befehls nach run().
+        returncode: Rückgabewert des Befehls nach run(); -1 vor der Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["command", "content", "timeout"]
+
+    def __init__(self, command: list[str], content: bytes, timeout: float) -> None:
+        """Initialisiert die Sendmail-Aktion.
+
+        Args:
+            command: Programmpfad und Argumente (SIC-04); der Empfänger
+                steht als Argument, nicht im Mailinhalt allein.
+            content: Vollständige Mail als Bytes, über stdin.
+            timeout: Zeitgrenze in Sekunden (SIC-05).
+        """
+        super().__init__()
+        self.command = command
+        self.content = content
+        self.timeout = timeout
+        self.stderr: str = ""
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt den Sendmail-Aufruf aus und liefert den Ausführungsstatus.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler. Die
+                Meldung enthält nie den Mailinhalt, nur stderr und Returncode.
+        """
+        self.status = "running"
+        try:
+            result = subprocess.run(
+                self.command,
+                input=self.content,
+                shell=False,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            self.status = "failed"
+            raise ActionError(
+                f"Zeitgrenze ({self.timeout}s) überschritten: {self.command[0]!r}"
+            ) from exc
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"Befehl konnte nicht gestartet werden: {exc}") from exc
+        self.stderr = result.stderr.decode("utf-8", errors="replace")
+        self.returncode = result.returncode
+        if self.returncode != 0:
+            self.status = "failed"
+            raise ActionError(
+                f"Befehl {self.command[0]!r} endete mit Code {self.returncode};"
+                f" stderr: {self.stderr.strip()!r}"
+            )
+        self.status = "finished"
+        return self.status
+
+
 class Users(Module):
     """Hauptbenutzer, ssh-users-Gruppe und TOTP über pifos-Aktionen."""
 
     CONFIG: ClassVar[list[str]] = [
         "operation",
+        "fqdn",
+        "admin_mail",
         "main_user",
         "main_user_password",
         "main_user_pubkey",
@@ -200,6 +435,8 @@ class Users(Module):
     GROUP_NAME: ClassVar[str] = "ssh-users"
     SHELL: ClassVar[str] = "/bin/bash"
     PKG_GOOGLE_AUTHENTICATOR: ClassVar[str] = "libpam-google-authenticator"
+    # qrencode: QR-Code-Anhang der TOTP-Einrichtungsmail (siehe _step_totp_mail).
+    PKG_QRENCODE: ClassVar[str] = "qrencode"
     CONTROLLED_PATH: ClassVar[str] = "/usr/sbin:/usr/bin:/sbin:/bin"
 
     # Programmpfade als Klassenattribute statt Literale in den Schritten
@@ -221,6 +458,17 @@ class Users(Module):
     USERDEL_BIN: ClassVar[str] = "/usr/sbin/userdel"
     PKILL_BIN: ClassVar[str] = "/usr/bin/pkill"
     TEST_BIN: ClassVar[str] = "/usr/bin/test"
+    QRENCODE_BIN: ClassVar[str] = "/usr/bin/qrencode"
+    SENDMAIL_BIN: ClassVar[str] = "/usr/sbin/sendmail"
+
+    # Mail-Log-Zustellungsnachweis der TOTP-Einrichtungsmail (mail_check-
+    # Helfer, gemeinsam mit dem postfix-Modul). Eigene Klassenattribute
+    # (kein Zugriff auf Postfix.MAIL_LOG) — beide Module sind unabhängig
+    # konfigurier- und testbar.
+    MAIL_LOG: ClassVar[str] = "/var/log/mail.log"
+    JOURNALCTL_BIN: ClassVar[str] = "/usr/bin/journalctl"
+    DELIVERY_LOG_CHECK_ATTEMPTS: ClassVar[int] = 3
+    DELIVERY_LOG_CHECK_INTERVAL: ClassVar[float] = 2.0
 
     # Wartezeit zwischen SIGTERM und SIGKILL beim Entfernen des
     # Hauptbenutzers (uninstall_remove_user=yes) — als Klassenattribut
@@ -234,10 +482,17 @@ class Users(Module):
     # Von check_config per setattr gesetzt (siehe Module.check_config);
     # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
     operation: str
+    fqdn: str
+    admin_mail: str
     main_user: str
     main_user_password: str
     main_user_pubkey: str
     uninstall_remove_user: str
+
+    # Nicht aus CONFIG, sondern vom install-Lauf selbst gesetzt: True, wenn
+    # _step_totp in diesem Lauf ein neues Secret erzeugt hat (siehe
+    # _install/_step_totp/_step_totp_mail).
+    _totp_secret_created: bool
 
     def start(self) -> int:
         """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
@@ -277,7 +532,7 @@ class Users(Module):
         main_user = _doc_value(values, "main_user")
         return (
             "\n## Hauptbenutzer\n\n"
-            f"**Pakete:** {cls.PKG_GOOGLE_AUTHENTICATOR}\n\n"
+            f"**Pakete:** {cls.PKG_GOOGLE_AUTHENTICATOR}, {cls.PKG_QRENCODE}\n\n"
             f"\n**Angelegte Benutzer:** {main_user} (Gruppen: {cls.GROUP_NAME})\n"
             "**Dateien/Einstellungen:**\n\n"
             f"- `/home/{main_user}/.ssh/authorized_keys`:\n"
@@ -299,10 +554,15 @@ class Users(Module):
         Pubkey (Aussperr-Schutz).
 
         Raises:
-            ModuleError: Wenn main_user kein gültiger Benutzername ist,
+            ModuleError: Wenn fqdn oder admin_mail vom erwarteten Format
+                abweichen, main_user kein gültiger Benutzername ist,
                 main_user_pubkey leer ist oder keinem bekannten Schlüsseltyp
                 entspricht, oder uninstall_remove_user weder yes noch no ist.
         """
+        if not _HOST_RE.match(self.fqdn):
+            raise ModuleError(f"Ungültiger Rechnername: {self.fqdn!r}")
+        if not _MAIL_RE.match(self.admin_mail):
+            raise ModuleError(f"Ungültige Admin-E-Mail-Adresse: {self.admin_mail!r}")
         if not _USERNAME_RE.match(self.main_user):
             raise ModuleError(f"Ungültiger Benutzername: {self.main_user!r}")
         pubkey = self.main_user_pubkey.strip()
@@ -325,9 +585,15 @@ class Users(Module):
     def _install(self) -> int:
         """Richtet Hauptbenutzer, Gruppe, Passwort, Pubkey und TOTP ein.
 
+        Versendet danach die TOTP-Einrichtungsmail; ohne sie ist der
+        Betreiber nach der SSH-Härtung ausgesperrt (Aussperr-Schutz), ein
+        Versandfehler oder fehlender Zustellbeweis lässt install daher
+        fehlschlagen.
+
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
+        self._totp_secret_created = False
         steps: list[tuple[str, _Step]] = [
             ("root-Passwort-Vorbedingung prüfen", self._step_check_root_password),
             ("Paket installieren", self._step_install_package),
@@ -339,6 +605,7 @@ class Users(Module):
             (".ssh-Verzeichnis anlegen", self._step_ssh_dir),
             ("SSH-Pubkey hinterlegen", self._step_authorized_keys),
             ("TOTP-Secret einrichten", self._step_totp),
+            ("TOTP-Einrichtungsmail versenden", self._step_totp_mail),
         ]
         for label, step in steps:
             self.send_message(LogLevel.INFO, "users", label)
@@ -361,12 +628,19 @@ class Users(Module):
         return 1
 
     def _step_install_package(self) -> int:
-        """Installiert libpam-google-authenticator.
+        """Installiert libpam-google-authenticator und qrencode.
+
+        qrencode erzeugt den QR-Code-Anhang der TOTP-Einrichtungsmail
+        (siehe _step_totp_mail). Abweichung vom Original: dort nur bedingt
+        bei TOTP_DELIVERY=mail installiert — hier unbedingt, da der Versand
+        fest per Mail läuft.
 
         Returns:
             0 bei Erfolg, 1 bei Fehler.
         """
-        action = self.APT_ACTION_CLS(packages=[self.PKG_GOOGLE_AUTHENTICATOR])
+        action = self.APT_ACTION_CLS(
+            packages=[self.PKG_GOOGLE_AUTHENTICATOR, self.PKG_QRENCODE]
+        )
         return self.run_action(action)
 
     def _step_ensure_group(self) -> int:
@@ -588,6 +862,7 @@ class Users(Module):
                 "users",
                 f"TOTP-Secret für {self.main_user} bereits vorhanden — übersprungen",
             )
+            self._totp_secret_created = False
             return 0
         command = [
             self.RUNUSER_BIN,
@@ -617,10 +892,132 @@ class Users(Module):
         action = SysCmdAction(command=command, timeout=60, env=env)
         if self.run_action(action) != 0:
             return 1
+        self._totp_secret_created = True
         self.send_message(
             LogLevel.INFO,
             "users",
             f"TOTP-Secret für {self.main_user} abgelegt unter {ga_file}",
+        )
+        return 0
+
+    def _step_totp_mail(self) -> int:
+        """Versendet die TOTP-Einrichtungsmail und weist die Zustellung nach.
+
+        Läuft nur, wenn _step_totp in diesem Lauf ein neues Secret erzeugt
+        hat (self._totp_secret_created) — bei einem bereits vorhandenen
+        Secret entfällt der erneute Versand, wie im Bash-Original
+        (totp_per_mail wurde dort ebenfalls nur beim Erstanlegen aufgerufen).
+
+        Abweichung vom Original: Der Schalter TOTP_DELIVERY (terminal/mail)
+        entfällt, der Versand läuft fest per Mail — eine Terminal-Zustellung
+        (QR-Code/Secret am Bildschirm) passt nicht zum nicht-interaktiven
+        Modulmodell. Secret, otpauth-URL und Notfall-Codes stehen wie im
+        Original ausschließlich in Mailinhalt und QR-Code (hier: einer
+        0600-Tmpdatei, die im finally-Block entfernt wird) — nie in einer
+        send_message-Meldung, Exception, argv oder im Log.
+
+        Ein Versandfehler oder ein fehlender Zustellbeweis (status=sent im
+        Mail-Log) lässt den Schritt fehlschlagen — install bricht dann vor
+        dem ssh-Modul ab (Aussperr-Schutz: ohne diese Mail ist der Betreiber
+        nach der SSH-Härtung ausgesperrt).
+
+        Returns:
+            0 bei nachgewiesener Zustellung oder wenn kein neues Secret
+            erzeugt wurde, sonst 1.
+        """
+        if not self._totp_secret_created:
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "TOTP-Einrichtungsmail übersprungen — Secret bereits vorhanden",
+            )
+            return 0
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+        ga_file = Path(home) / ".google_authenticator"
+        try:
+            lines = ga_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            self.send_message(LogLevel.ERROR, "users", f"{ga_file}: nicht lesbar")
+            return 1
+        if not lines:
+            self.send_message(LogLevel.ERROR, "users", f"{ga_file}: ist leer")
+            return 1
+        secret = lines[0]
+        emergency_codes = [line for line in lines if _EMERGENCY_CODE_RE.match(line)]
+        url = (
+            f"otpauth://totp/{self.main_user}@{self.fqdn}"
+            f"?secret={secret}&issuer={self.fqdn}"
+        )
+
+        fd, qr_png = tempfile.mkstemp(suffix=".png", prefix="secure-base-totp-qr-")
+        os.close(fd)
+        try:
+            os.chmod(qr_png, 0o600)
+            qr_action = _QrEncodeStdinAction(
+                data=url, output_path=qr_png, qrencode_bin=self.QRENCODE_BIN
+            )
+            if self.run_action(qr_action) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "users", "TOTP-QR-Code: qrencode fehlgeschlagen"
+                )
+                return 1
+            content = _totp_mail_content(
+                user=self.main_user,
+                fqdn=self.fqdn,
+                admin_mail=self.admin_mail,
+                secret=secret,
+                url=url,
+                emergency_codes=emergency_codes,
+                qr_png_path=qr_png,
+            )
+            anchor = mail_check.log_anchor()
+            send_action = _SendMailAction(
+                command=[self.SENDMAIL_BIN, self.admin_mail],
+                content=content,
+                timeout=30,
+            )
+            if self.run_action(send_action) != 0:
+                self.send_message(
+                    LogLevel.ERROR,
+                    "users",
+                    f"TOTP-Einrichtungsmail an {self.admin_mail} fehlgeschlagen",
+                )
+                return 1
+        finally:
+            Path(qr_png).unlink(missing_ok=True)
+
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"TOTP-Einrichtungsmail an {self.admin_mail} versendet",
+        )
+        result = mail_check.check_delivery_log(
+            recipient=self.admin_mail,
+            anchor=anchor,
+            mail_log=self.MAIL_LOG,
+            journalctl_bin=self.JOURNALCTL_BIN,
+            attempts=self.DELIVERY_LOG_CHECK_ATTEMPTS,
+            interval=self.DELIVERY_LOG_CHECK_INTERVAL,
+        )
+        if not result.ok:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"TOTP-Einrichtungsmail an {self.admin_mail}:"
+                " Zustellung nicht nachweisbar",
+            )
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"TOTP-Einrichtungsmail an {self.admin_mail} zugestellt",
         )
         return 0
 
