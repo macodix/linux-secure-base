@@ -415,6 +415,49 @@ def test_check_probe_restore_true_on_successful_restore(
     assert mod._check_probe_restore(mod._repo_url()) is True
 
 
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Pakete, Dateien, SFTP-Ziel und Cron."""
+    values = {
+        "fqdn": "server.example.com",
+        "sftp_host_alias": "backup-alias",
+        "sftp_path": "/backup/server",
+    }
+    section = Restic.doc(values)
+    assert section.startswith("\n## Datensicherung\n\n")
+    assert "**Pakete:** restic" in section
+    assert f"`{Restic.PASSPHRASE_FILE}`" in section
+    assert "Repo-Passphrase (0600 root:root)" in section
+    assert f"`{Restic.BACKUP_SCRIPT_DIR}/server.example.com-backup.sh`" in section
+    assert f"`{Restic.CRON_DIR}/server.example.com-backup`" in section
+    assert "**SFTP-Ziel:** `backup-alias:/backup/server`" in section
+    assert "**Timer/Cron:**" in section
+    assert "> Hinweis:" in section
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Restic.doc({})
+    assert "**SFTP-Ziel:** `(leer/Default):(leer/Default)`" in section
+    assert "(leer/Default)-backup.sh" in section
+    assert "(leer/Default)-backup" in section
+
+
+def test_doc_never_leaks_restic_passphrase() -> None:
+    """restic_passphrase erscheint weder als Name noch als Wert in doc()."""
+    values = {
+        "fqdn": "server.example.com",
+        "sftp_host_alias": "backup-alias",
+        "sftp_path": "/backup/server",
+        "restic_passphrase": "GEHEIM-X",
+    }
+    section = Restic.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "restic_passphrase" not in section
+
+
 def test_check_probe_restore_false_on_failed_restore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

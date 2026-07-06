@@ -133,6 +133,24 @@ def _cron_content(backup_script: str) -> str:
     )
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich fest benannte, unkritische Schlüssel ab
+    (fqdn, sftp_host_alias, sftp_path) — restic_passphrase wird nie über
+    diesen Weg gelesen, ein Allowlist-Mechanismus wie im Bash-Original
+    (doc_val) ist deshalb hier nicht nötig.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 def _mkdir_batch_commands(path: str) -> list[str]:
     """Baut die sftp-Batch-Kommandos zum idempotenten Anlegen von path.
 
@@ -224,6 +242,46 @@ class Restic(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: restic_passphrase erscheint hier nie — weder Name noch
+        Wert —, auch wenn sie in values steht. doc() liest ausschließlich
+        die unten aufgeführten, unkritischen Schlüssel; alles andere in
+        values bleibt unberücksichtigt. Dokumentiert wird nur der
+        Ablageort der Passphrase (PASSPHRASE_FILE), nie ihr Inhalt.
+
+        Args:
+            values: Konfigurationswerte des Moduls (fqdn, admin_mail,
+                sftp_host_alias, sftp_path, restic_passphrase, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Datensicherung".
+        """
+        fqdn = _doc_value(values, "fqdn")
+        sftp_host_alias = _doc_value(values, "sftp_host_alias")
+        sftp_path = _doc_value(values, "sftp_path")
+        return (
+            "\n## Datensicherung\n\n"
+            "**Pakete:** restic\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.PASSPHRASE_FILE}`:\n"
+            "  - `Repo-Passphrase (0600 root:root)`\n"
+            f"- `{cls.BACKUP_SCRIPT_DIR}/{fqdn}-backup.sh`:\n"
+            "  - `Backup-Skript (täglicher Cron-Lauf)`\n"
+            f"- `{cls.CRON_DIR}/{fqdn}-backup`:\n"
+            "  - `Cron-Eintrag: restic backup + forget`\n"
+            f"\n**SFTP-Ziel:** `{sftp_host_alias}:{sftp_path}`\n\n"
+            f"\n**Timer/Cron:** täglicher Lauf via {cls.CRON_DIR}/{fqdn}-backup\n"
+            "\n> Hinweis: Repo-Passphrase wird nicht dokumentiert (Secret)."
+            " Forget-Politik: --keep-daily 7 --keep-weekly 4 --keep-monthly 6."
+            " append-only (konv-system.md Abschnitt 3.8 b): am SFTP-Backend"
+            " vom Anbieter serverseitig einzurichten — clientseitig nicht"
+            " erzwingbar. Integritäts- und Restore-Test: Modul restic mit"
+            ' operation "test" (konv-system.md Abschnitt 3.8 c).\n'
+        )
 
     def _validate(self) -> None:
         """Prüft alle Konfigurationswerte, bevor sie in Befehle oder Dateiinhalte gehen.
