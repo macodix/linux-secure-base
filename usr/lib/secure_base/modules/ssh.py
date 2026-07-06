@@ -130,6 +130,25 @@ def _login_mail_script_content(admin_mail: str) -> str:
     )
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    Reine Platzhalter-Logik wie im Bash-Original (doc_val): fehlende oder
+    leere Werte erscheinen als "(leer/Default)". Die hier gelesenen
+    Schlüssel (admin_mail, ssh_enable_login_mail,
+    ssh_enable_challenge_response_auth) sind unkritisch — dieses Modul
+    verwaltet ohnehin kein Geheimnis.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 def _parse_sshd_t(output: str) -> dict[str, str]:
     """Zerlegt die Ausgabe von "sshd -T" in Schlüssel/Wert-Paare.
 
@@ -208,6 +227,49 @@ class Ssh(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: Liest ausschließlich die unten aufgeführten,
+        unkritischen Schlüssel aus values — dieses Modul verwaltet kein
+        Geheimnis, das hier auftauchen könnte.
+
+        Args:
+            values: Konfigurationswerte des Moduls (admin_mail,
+                ssh_enable_login_mail, ssh_enable_challenge_response_auth, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## SSH-Härtung mit TOTP".
+        """
+        challenge_response = _doc_value(values, "ssh_enable_challenge_response_auth")
+        login_mail_enabled = _doc_value(values, "ssh_enable_login_mail")
+        admin_mail = _doc_value(values, "admin_mail")
+
+        sshd_lines = [f"{key} {value}" for key, value in SSHD_SETTINGS]
+        sshd_lines.append(f"{CHALLENGE_RESPONSE_SETTING} {challenge_response}")
+        sshd_entries = "".join(f"  - `{line}`\n" for line in sshd_lines)
+
+        section = (
+            "\n## SSH-Härtung mit TOTP\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.SSHD_CONFIG}`:\n"
+            f"{sshd_entries}"
+            f"- `{cls.PAM_SSHD}`:\n"
+            "  - `@include common-auth auskommentiert (TOTP-Bypass-Schutz)`\n"
+            "  - `auth required pam_google_authenticator.so`\n"
+        )
+        if login_mail_enabled != "no":
+            section += (
+                f"- `{cls.LOGIN_MAIL_SCRIPT}`:\n"
+                f"  - `SSH-Login-Mail an {admin_mail} (via pam_exec)`\n"
+            )
+        section += (
+            "\n> Hinweis: openssh-server und libpam-google-authenticator werden"
+            " nicht installiert (Systempakete).\n"
+        )
+        return section
 
     def _validate(self) -> None:
         """Prüft die Konfigurationswerte und lehnt ungültige ab.

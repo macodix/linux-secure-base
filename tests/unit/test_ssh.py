@@ -23,6 +23,13 @@ from secure_base.modules.ssh import (
     _setting_match,
 )
 
+_VALUES: dict[str, str] = {
+    "admin_mail": "admin@example.com",
+    "main_user": "alice",
+    "ssh_enable_login_mail": "yes",
+    "ssh_enable_challenge_response_auth": "yes",
+}
+
 
 def _make_ssh(
     admin_mail: str = "admin@example.com",
@@ -657,3 +664,45 @@ def test_check_file_mode_missing_path_returns_false(tmp_path: Path) -> None:
     """Ein nicht existierender Pfad liefert False."""
     mod = _make_ssh()
     assert mod._check_file_mode(tmp_path / "fehlt", 0o700, "root") is False
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, sshd_config-Direktiven und PAM-Einträge."""
+    section = Ssh.doc(_VALUES)
+    assert section.startswith("\n## SSH-Härtung mit TOTP\n\n")
+    assert "**Dateien/Einstellungen:**" in section
+    assert f"`{Ssh.SSHD_CONFIG}`" in section
+    for key, value in SSHD_SETTINGS:
+        assert f"{key} {value}" in section
+    assert f"{CHALLENGE_RESPONSE_SETTING} yes" in section
+    assert f"`{Ssh.PAM_SSHD}`" in section
+    assert "@include common-auth auskommentiert (TOTP-Bypass-Schutz)" in section
+    assert "auth required pam_google_authenticator.so" in section
+    assert f"`{Ssh.LOGIN_MAIL_SCRIPT}`" in section
+    assert "SSH-Login-Mail an admin@example.com (via pam_exec)" in section
+    assert "openssh-server und libpam-google-authenticator werden" in section
+
+
+def test_doc_omits_login_mail_file_when_disabled() -> None:
+    """Bei ssh_enable_login_mail=no fehlt der Login-Mail-Dateieintrag."""
+    values = dict(_VALUES, ssh_enable_login_mail="no")
+    section = Ssh.doc(values)
+    assert f"`{Ssh.LOGIN_MAIL_SCRIPT}`" not in section
+    assert "SSH-Login-Mail an" not in section
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Ssh.doc({})
+    assert f"{CHALLENGE_RESPONSE_SETTING} (leer/Default)" in section
+    assert "SSH-Login-Mail an (leer/Default) (via pam_exec)" in section
+
+
+def test_doc_never_leaks_secrets() -> None:
+    """Ein Kunstgeheimnis in values landet nicht in der Ausgabe von doc()."""
+    values = dict(_VALUES, main_user="GEHEIM-X", some_other_key="GEHEIM-X")
+    section = Ssh.doc(values)
+    assert "GEHEIM-X" not in section
