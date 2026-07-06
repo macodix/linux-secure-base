@@ -1,12 +1,12 @@
-"""Unit-Tests für lsb.modules.lynis."""
+"""Unit-Tests für secure_base.modules.lynis."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.lynis import Lynis, _cron_content, _pruef_script_content
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.lynis import Lynis, _cron_content, _pruef_script_content
 
 
 def _make_lynis(schedule: str) -> Lynis:

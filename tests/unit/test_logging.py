@@ -1,19 +1,19 @@
-"""Unit-Tests für lsb.modules.logging."""
+"""Unit-Tests für secure_base.modules.logging."""
 
 import stat
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.logging import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.logging import (
     AUDIT_RULES,
     Logging,
     _audit_rules_content,
     _logrotate_content,
     _sudolog_content,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_logging(

@@ -1,10 +1,10 @@
-"""Unit-Tests für lsb.selection."""
+"""Unit-Tests für secure_base.selection."""
 
-import lsb.selection as selection_module
 import pytest
-from lsb.module_spec import ModuleSpec
-from lsb.selection import _split, select_modules
+import secure_base.selection as selection_module
 from pifos.config.config import Config
+from secure_base.module_spec import ModuleSpec
+from secure_base.selection import _split, select_modules
 
 
 class _DummyModuleCls:

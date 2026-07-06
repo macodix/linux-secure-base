@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.users.
+"""Integrationstest für secure_base.modules.users.
 
 Startet Users.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn), analog zu tests/integration/test_base_module.py.
@@ -19,10 +19,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.users import Users
 from pifos.actions.apt_action import AptAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.users import Users
 
 _MAIN_USER = "alice"
 _PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test@laptop"

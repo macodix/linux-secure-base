@@ -1,4 +1,4 @@
-"""Unit-Tests für lsb.modules.users."""
+"""Unit-Tests für secure_base.modules.users."""
 
 import os
 import pwd
@@ -6,14 +6,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.users import (
+from pifos.errors import ActionError, ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.users import (
     Users,
     _ChpasswdStdinAction,
     _is_password_set,
     _shadow_hash_from_line,
 )
-from pifos.errors import ActionError, ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_users(

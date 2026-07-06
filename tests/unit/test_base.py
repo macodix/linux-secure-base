@@ -1,11 +1,16 @@
-"""Unit-Tests für lsb.modules.base."""
+"""Unit-Tests für secure_base.modules.base."""
 
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.base import SYSCTL_PARAMS, Base, _modprobe_content, _sysctl_content
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.base import (
+    SYSCTL_PARAMS,
+    Base,
+    _modprobe_content,
+    _sysctl_content,
+)
 
 
 def _make_base(fqdn: str, timezone: str) -> Base:

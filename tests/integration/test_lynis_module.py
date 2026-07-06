@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.lynis.
+"""Integrationstest für secure_base.modules.lynis.
 
 Startet Lynis.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn), siehe test_base_module.py für die Begründung.
@@ -8,10 +8,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.lynis import Lynis
 from pifos.actions.apt_action import AptAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.lynis import Lynis
 
 
 class _NoOpAptAction(AptAction):

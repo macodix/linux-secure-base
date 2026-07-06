@@ -39,7 +39,7 @@ def _pruef_script_content(berichte_dir: str) -> str:
     """
     return (
         "#!/bin/bash\n"
-        "# Von lsb/lynis verwaltet — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/lynis verwaltet — nicht von Hand bearbeiten.\n"
         "set -euo pipefail\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         "\n"
@@ -63,7 +63,7 @@ def _cron_content(schedule: str, pruef_script: str) -> str:
         Vollständiger Inhalt der Cron-Datei.
     """
     return (
-        "# Härtungsprüfung (lynis) — Zeitplan aus lynis_schedule (lsb.conf)\n"
+        "# Härtungsprüfung (lynis) — Zeitplan aus lynis_schedule (secure-base.conf)\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{schedule}  root  {pruef_script}\n"
     )

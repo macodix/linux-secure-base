@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.monit.
+"""Integrationstest für secure_base.modules.monit.
 
 Startet Monit.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn) — Begründung siehe test_base_module.py. Der
@@ -11,11 +11,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.monit import Monit
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.monit import Monit
 
 
 class _NoOpAptAction(AptAction):

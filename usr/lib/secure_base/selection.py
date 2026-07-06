@@ -4,8 +4,8 @@ from typing import cast
 
 from pifos.config.config import Config
 
-from lsb.module_spec import ModuleSpec
-from lsb.modules import REGISTRY
+from secure_base.module_spec import ModuleSpec
+from secure_base.modules import REGISTRY
 
 
 def _split(value: object) -> list[str]:

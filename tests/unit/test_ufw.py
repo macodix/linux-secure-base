@@ -1,11 +1,11 @@
-"""Unit-Tests für lsb.modules.ufw."""
+"""Unit-Tests für secure_base.modules.ufw."""
 
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.ufw import Ufw, _parse_port_list
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.ufw import Ufw, _parse_port_list
 
 
 def _make_ufw(in_tcp: str, out_tcp: str, out_udp: str) -> Ufw:

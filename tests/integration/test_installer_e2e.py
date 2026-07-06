@@ -5,7 +5,7 @@ echter Spawn-Subprozess des Moduls base (keine Klassen-Stubs im Auslieferungs-
 modul), Konfigurationsanlage aus der Beispielvorlage, Logdatei-Anlage in einem
 frischen tmp-Verzeichnis, Modulausführung bis zur Gesamtbilanz.
 
-lsb.modules.base bleibt dabei unverändert und frei von jeder Testlogik: keine
+secure_base.modules.base bleibt dabei unverändert und frei von jeder Testlogik: keine
 Umgebungsvariable, kein Laufzeit-Schalter. Die Systembefehle laufen über eine
 Testunterklasse _TestBase(Base), die ausschließlich die dafür vorgesehenen
 Klassenattribute (Programmpfade, Schreibziele, AppArmor-Aktionsklassen) auf
@@ -28,18 +28,18 @@ import stat
 import tempfile
 from pathlib import Path
 
-import lsb.installer as installer_module
 import pytest
-from lsb.installer import main
-from lsb.module_spec import ModuleSpec
-from lsb.modules.base import SYSCTL_PARAMS, Base
+import secure_base.installer as installer_module
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
+from secure_base.installer import main
+from secure_base.module_spec import ModuleSpec
+from secure_base.modules.base import SYSCTL_PARAMS, Base
 
 _FQDN = "server.example.com"
 _TIMEZONE = "Europe/Berlin"
 
-_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "lsb-installer-e2e-test-artifacts"
+_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "secure-base-installer-e2e-test-artifacts"
 
 
 def _true_bin() -> str:
@@ -116,7 +116,7 @@ class _TestBase(Base):
     """Testunterklasse von Base: echte Modullogik, Systembefehle auf Platzhalter.
 
     Überschreibt ausschließlich die dafür vorgesehenen Klassenattribute
-    (Plan Abschnitt 2.12); lsb.modules.base selbst bleibt unverändert.
+    (Plan Abschnitt 2.12); secure_base.modules.base selbst bleibt unverändert.
     """
 
     HOSTNAMECTL = _TRUE_BIN
@@ -136,8 +136,8 @@ def _write_example(tmp_path: Path, logfile: Path) -> Path:
     ensure_config sucht zuerst <Zielpfad>.example, bevor es auf die
     mitgelieferte Paketvorlage zurückfällt (_example_path).
     """
-    conf_path = tmp_path / "lsb.conf"
-    example_path = tmp_path / "lsb.conf.example"
+    conf_path = tmp_path / "secure-base.conf"
+    example_path = tmp_path / "secure-base.conf.example"
     example_path.write_text(
         "[installer]\n"
         f"logfile = {logfile}\n"
@@ -184,7 +184,7 @@ def test_main_e2e_install_real_module_subprocess(tmp_path: Path) -> None:
     Deckt genau die beiden früher gefundenen Defekte ab: fehlender Abschnitt
     [installer] nach Konfigurationsaufbau und fehlendes Logverzeichnis.
     """
-    logfile = tmp_path / "var" / "log" / "lsb" / "lsb-installer.log"
+    logfile = tmp_path / "var" / "log" / "secure-base" / "secure-base-installer.log"
     assert not logfile.parent.exists()
     conf_path = _write_example(tmp_path, logfile)
 
@@ -199,7 +199,7 @@ def test_main_e2e_install_real_module_subprocess(tmp_path: Path) -> None:
 
 def test_main_e2e_check_real_module_subprocess(tmp_path: Path) -> None:
     """main() check, echter base-Subprozess: Rückgabe 0, Logdatei geschrieben."""
-    logfile = tmp_path / "var" / "log" / "lsb" / "lsb-installer.log"
+    logfile = tmp_path / "var" / "log" / "secure-base" / "secure-base-installer.log"
     assert not logfile.parent.exists()
     conf_path = _write_example(tmp_path, logfile)
 

@@ -12,21 +12,21 @@ from pifos.config.config import Config
 from pifos.errors import ConfigError
 from pifos.ipc import LogLevel, MessageKind
 
-from lsb.config_setup import ensure_config, fill_missing, module_config
-from lsb.module_spec import ModuleSpec
-from lsb.modules.ufw import Ufw
-from lsb.selection import select_modules
-from lsb.ui import StatusView
+from secure_base.config_setup import ensure_config, fill_missing, module_config
+from secure_base.module_spec import ModuleSpec
+from secure_base.modules.ufw import Ufw
+from secure_base.selection import select_modules
+from secure_base.ui import StatusView
 
 logger = logging.getLogger(__name__)
 
 # Paket-Root, drei Verzeichnisebenen über dieser Datei
-# (usr/lib/lsb/installer.py -> usr/lib/lsb -> usr/lib -> usr -> Root),
-# analog zu _ROOT im Einstiegspunkt bin/lsb-installer. Verankert
+# (usr/lib/secure_base/installer.py -> usr/lib/secure_base -> usr/lib -> usr -> Root),
+# analog zu _ROOT im Einstiegspunkt bin/secure-base-installer. Verankert
 # DEFAULT_CONF am Paket, unabhängig vom Arbeitsverzeichnis, aus dem
-# lsb-installer aufgerufen wird.
+# secure-base-installer aufgerufen wird.
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONF = _PACKAGE_ROOT / "etc" / "lsb" / "lsb.conf"
+DEFAULT_CONF = _PACKAGE_ROOT / "etc" / "secure-base" / "secure-base.conf"
 
 
 class LsbInstaller(PifosCaller):
@@ -97,7 +97,7 @@ class LsbInstaller(PifosCaller):
             raise RuntimeError("Keine Konfiguration geladen.")
         section = cast(dict[str, object], self.config.get_section("installer"))
         # Verzeichnis der Logdatei anlegen, bevor die Basisklasse die Datei
-        # öffnet; sonst scheitert os.open an einem fehlenden /var/log/lsb.
+        # öffnet; sonst scheitert os.open an einem fehlenden /var/log/secure-base.
         Path(str(section["logfile"])).parent.mkdir(parents=True, exist_ok=True)
         data = self.config.to_dict()
         data["logfile"] = section["logfile"]
@@ -171,7 +171,7 @@ def main(args: argparse.Namespace) -> int:
         Konfiguration.
     """
     if os.geteuid() != 0:
-        logger.error("lsb-installer benötigt Systemrechte (sudo).")
+        logger.error("secure-base-installer benötigt Systemrechte (sudo).")
         return 2
 
     conf_path = Path(args.conf) if args.conf else DEFAULT_CONF

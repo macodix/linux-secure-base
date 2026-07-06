@@ -1,18 +1,18 @@
-"""Unit-Tests für lsb.modules.restic."""
+"""Unit-Tests für secure_base.modules.restic."""
 
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.restic import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.restic import (
     Restic,
     _backup_script_content,
     _cron_content,
     _mkdir_batch_commands,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_restic(

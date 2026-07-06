@@ -1,4 +1,4 @@
-# Fremdbibliotheken des LSB-Installers (vendored in usr/lib/lsb/_vendor, BRS-01/BRS-02).
+# Fremdbibliotheken des LSB-Installers (vendored in usr/lib/secure_base/_vendor, BRS-01/BRS-02).
 # Hashes erzeugt mit: pip hash <wheel>
 # Vollständige Abhängigkeitsschließung von rich und questionary (Plan Abschnitt 2.2).
 # tomli-w gehört nicht dazu: die Konfiguration ist ini, geschrieben über

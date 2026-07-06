@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.ssh.
+"""Integrationstest für secure_base.modules.ssh.
 
 Startet Ssh.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn), analog zu tests/integration/test_base_module.py.
@@ -15,10 +15,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.ssh import SSHD_SETTINGS, Ssh
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.ssh import SSHD_SETTINGS, Ssh
 
 _MAIN_USER = "alice"
 _ADMIN_MAIL = "admin@example.com"

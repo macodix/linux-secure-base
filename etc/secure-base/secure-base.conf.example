@@ -1,12 +1,12 @@
-# lsb.conf.example — Vorlage für etc/lsb/lsb.conf (Zwei-Datei-Muster).
+# secure-base.conf.example — Vorlage für etc/secure-base/secure-base.conf (Zwei-Datei-Muster).
 #
-# Auf dem Zielsystem nach etc/lsb/lsb.conf kopieren und die leeren
-# Pflichtwerte setzen. Die echte lsb.conf wird nie eingecheckt.
+# Auf dem Zielsystem nach etc/secure-base/secure-base.conf kopieren und die leeren
+# Pflichtwerte setzen. Die echte secure-base.conf wird nie eingecheckt.
 # Herkunft des Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
 
 [installer]
 # Logdatei des Installers; enge Rechte (0600) setzt der Aufrufer.
-logfile = /var/log/lsb/lsb-installer.log
+logfile = /var/log/secure-base/secure-base-installer.log
 
 # Logstufe: INFO, WARN, ERROR oder CRITICAL.
 loglevel = INFO

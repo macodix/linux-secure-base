@@ -59,7 +59,7 @@ def _http_block_content(domain: str, docroot: str) -> str:
         Inhalt der Server-Block-Datei.
     """
     return (
-        "# Von lsb/nginx angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/nginx angelegt — nicht von Hand bearbeiten.\n"
         "server {\n"
         "    listen 80;\n"
         "    listen [::]:80;\n"
@@ -73,7 +73,7 @@ def _http_block_content(domain: str, docroot: str) -> str:
 def _hardening_content() -> str:
     """Baut den Inhalt des systemd-Hardening-Drop-ins."""
     return (
-        "# Von lsb/nginx angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/nginx angelegt — nicht von Hand bearbeiten.\n"
         "[Service]\n"
         "NoNewPrivileges=true\n"
         "ProtectSystem=strict\n"

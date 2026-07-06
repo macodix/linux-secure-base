@@ -1,11 +1,11 @@
-"""Unit-Tests für lsb.ui."""
+"""Unit-Tests für secure_base.ui."""
 
 import io
 
-from lsb.module_spec import ModuleSpec
-from lsb.ui import State, StatusView
 from pifos.ipc import LogLevel
 from rich.console import Console
+from secure_base.module_spec import ModuleSpec
+from secure_base.ui import State, StatusView
 
 
 class _DummyModuleCls:

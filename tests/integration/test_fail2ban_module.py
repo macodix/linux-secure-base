@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.fail2ban.
+"""Integrationstest für secure_base.modules.fail2ban.
 
 Startet Fail2ban.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn): Ein Spawn-Subprozess re-importiert das Modul in
@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.fail2ban import Fail2ban
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.fail2ban import Fail2ban
 
 
 class _NoOpAptAction(AptAction):

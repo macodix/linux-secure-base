@@ -47,12 +47,12 @@ Den Fingerabdruck zusätzlich über einen unabhängigen Kanal bestätigen — ei
 
 Eine gültige Signatur bestätigt **ausschließlich Herkunft und Unverändertheit**. Sie ist **keine** Aussage über Reife, Qualität oder Eignung für den Produktivbetrieb; es gelten unverändert „Grenzen & Warnung" und der Projektstatus *In Aufbau*.
 
-Dasselbe Verfahren gilt für das Auslieferungspaket des Python-Installers (`lsb-installer-<version>.tar.gz`): Es liegt eine abgesetzte Signatur `lsb-installer-<version>.tar.gz.asc` bei, mit demselben Schlüssel und demselben Fingerabdruck-Abgleich zu prüfen, bevor das Archiv entpackt wird:
+Dasselbe Verfahren gilt für das Auslieferungspaket des Python-Installers (`secure-base-installer-<version>.tar.gz`): Es liegt eine abgesetzte Signatur `secure-base-installer-<version>.tar.gz.asc` bei, mit demselben Schlüssel und demselben Fingerabdruck-Abgleich zu prüfen, bevor das Archiv entpackt wird:
 
 ```sh
 gpg --import SIGNING-KEY.asc
 gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
-gpg --verify lsb-installer-<version>.tar.gz.asc lsb-installer-<version>.tar.gz
+gpg --verify secure-base-installer-<version>.tar.gz.asc secure-base-installer-<version>.tar.gz
 ```
 
 
@@ -63,8 +63,8 @@ Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es e
 **Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts. Für den aktuellen Vorabstand:
 
 ```sh
-curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc10/lsb-installer-0.1.0-rc10.tar.gz
-curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc10/lsb-installer-0.1.0-rc10.tar.gz.asc
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc10/secure-base-installer-0.1.0-rc10.tar.gz
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/installer-v0.1.0-rc10/secure-base-installer-0.1.0-rc10.tar.gz.asc
 curl -LO https://raw.githubusercontent.com/macodix/linux-secure-base/python-umstellung/SIGNING-KEY.asc
 ```
 
@@ -73,9 +73,9 @@ Danach prüfen, entpacken, starten:
 ```sh
 gpg --import SIGNING-KEY.asc
 gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
-gpg --verify lsb-installer-<version>.tar.gz.asc lsb-installer-<version>.tar.gz
-tar xzf lsb-installer-<version>.tar.gz
-sudo lsb-installer-<version>/bin/lsb-installer install
+gpg --verify secure-base-installer-<version>.tar.gz.asc secure-base-installer-<version>.tar.gz
+tar xzf secure-base-installer-<version>.tar.gz
+sudo secure-base-installer-<version>/bin/secure-base-installer install
 ```
 
 Details zur Bedienung: [`installer/README.md`](installer/README.md).

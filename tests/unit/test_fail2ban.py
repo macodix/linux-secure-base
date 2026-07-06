@@ -1,17 +1,17 @@
-"""Unit-Tests für lsb.modules.fail2ban."""
+"""Unit-Tests für secure_base.modules.fail2ban."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.fail2ban import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.fail2ban import (
     IGNOREIP_LOOPBACK,
     Fail2ban,
     _effective_ignoreip,
     _parse_ignoreip,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_fail2ban(ignoreip: str = "") -> Fail2ban:

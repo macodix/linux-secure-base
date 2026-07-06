@@ -1,6 +1,6 @@
 .PHONY: check fmt install-hooks dist
 
-SOURCES := usr/lib/lsb tests
+SOURCES := usr/lib/secure_base tests
 
 # Version des Auslieferungspakets: einzige Quelle ist pyproject.toml.
 VERSION := $(shell python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
@@ -19,7 +19,7 @@ PIFOS_COMMIT := 35538b7a43a328e7274b1af66eeb6db36086cabf
 # Schlüssel, mit dem das Artefakt signiert wird (README.md, SIGNING-KEY.asc).
 SIGNING_KEY := cert@martinhenkel.net
 
-DIST_NAME := lsb-installer-$(VERSION)
+DIST_NAME := secure-base-installer-$(VERSION)
 
 check:
 	ruff format --check $(SOURCES) $(wildcard bin/*)
@@ -47,7 +47,7 @@ dist:
 	pkgdir="$$tmpdir/$(DIST_NAME)"; \
 	mkdir -p "$$pkgdir"; \
 	git archive HEAD | tar -x -C "$$pkgdir"; \
-	rm -rf "$$pkgdir/usr/lib/lsb/_vendor" "$$pkgdir/usr/lib/pifos"; \
+	rm -rf "$$pkgdir/usr/lib/secure_base/_vendor" "$$pkgdir/usr/lib/pifos"; \
 	git clone --branch $(PIFOS_TAG) --depth 1 $(PIFOS_REPO) "$$tmpdir/pifos"; \
 	actual_commit=$$(git -C "$$tmpdir/pifos" rev-parse HEAD); \
 	if [ "$$actual_commit" != "$(PIFOS_COMMIT)" ]; then \
@@ -58,7 +58,7 @@ dist:
 	mkdir -p "$$pkgdir/usr/lib"; \
 	cp -r "$$tmpdir/pifos/usr/lib/pifos" "$$pkgdir/usr/lib/pifos"; \
 	pip install --require-hashes --no-deps \
-		--target "$$pkgdir/usr/lib/lsb/_vendor" -r requirements.txt; \
+		--target "$$pkgdir/usr/lib/secure_base/_vendor" -r requirements.txt; \
 	find "$$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +; \
 	tar czf "dist/$(DIST_NAME).tar.gz" \
 		--owner=0 --group=0 --numeric-owner --mode='go-w' \

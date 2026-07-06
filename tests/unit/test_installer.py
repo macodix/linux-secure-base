@@ -1,4 +1,4 @@
-"""Unit-Tests für lsb.installer."""
+"""Unit-Tests für secure_base.installer."""
 
 import argparse
 import logging
@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock
 
-import lsb.installer as installer_module
 import pytest
-from lsb.installer import LsbInstaller, main
-from lsb.module_spec import ModuleSpec
-from lsb.ui import StatusView
+import secure_base.installer as installer_module
 from pifos.config.config import Config
 from pifos.errors import ConfigError
 from pifos.ipc import IpcMessage, LogLevel, MessageKind
+from secure_base.installer import LsbInstaller, main
+from secure_base.module_spec import ModuleSpec
+from secure_base.ui import StatusView
 
 
 @pytest.fixture(autouse=True)
@@ -43,11 +43,14 @@ def _reset_shared_logger() -> Iterator[None]:
 def test_default_conf_is_anchored_at_package_root() -> None:
     """DEFAULT_CONF liegt am Paket-Root, unabhängig vom Arbeitsverzeichnis.
 
-    installer.py liegt unter usr/lib/lsb/; der Paket-Root ist drei
-    Verzeichnisebenen darüber (analog _ROOT in bin/lsb-installer).
+    installer.py liegt unter usr/lib/secure_base/; der Paket-Root ist drei
+    Verzeichnisebenen darüber (analog _ROOT in bin/secure-base-installer).
     """
     package_root = Path(installer_module.__file__).resolve().parents[3]
-    assert package_root / "etc" / "lsb" / "lsb.conf" == installer_module.DEFAULT_CONF
+    assert (
+        package_root / "etc" / "secure-base" / "secure-base.conf"
+        == installer_module.DEFAULT_CONF
+    )
     assert installer_module.DEFAULT_CONF.is_absolute()
 
 
@@ -153,7 +156,7 @@ def test_configure_logging_raises_without_config() -> None:
 def test_configure_logging_creates_missing_log_directory(tmp_path: Path) -> None:
     """Fehlt das Verzeichnis der Logdatei, legt configure_logging es an.
 
-    Reproduziert den Servertest-Befund: /var/log/lsb existierte auf dem
+    Reproduziert den Servertest-Befund: /var/log/secure-base existierte auf dem
     Zielsystem nicht, os.open in der Basisklasse scheiterte deshalb mit
     FileNotFoundError. configure_logging legt das Verzeichnis jetzt vorher an.
     """
@@ -402,7 +405,7 @@ def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
 
     monkeypatch.setattr(installer_module, "ensure_config", _raise)
 
-    with caplog.at_level(logging.ERROR, logger="lsb.installer"):
+    with caplog.at_level(logging.ERROR, logger="secure_base.installer"):
         result = main(_base_args())
 
     assert result == 2
@@ -430,7 +433,7 @@ def test_main_returns_2_and_logs_when_configure_logging_raises_configerror(
 
     monkeypatch.setattr(installer_module, "LsbInstaller", _FailingConfigureInstaller)
 
-    with caplog.at_level(logging.ERROR, logger="lsb.installer"):
+    with caplog.at_level(logging.ERROR, logger="secure_base.installer"):
         result = main(_base_args())
 
     assert result == 2

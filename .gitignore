@@ -31,5 +31,5 @@ venv/
 
 # Ein-Schritt-Paket (make dist): gebauter Baum, vendorte Bibliotheken, Artefakte
 usr/lib/pifos/
-usr/lib/lsb/_vendor/
+usr/lib/secure_base/_vendor/
 dist/

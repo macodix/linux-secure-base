@@ -88,10 +88,10 @@ def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> str:
     nur der Nachvollziehbarkeit beim Admin).
     """
     return (
-        f"Subject: lsb postfix: Zustellungsnachweis {fqdn}\n"
+        f"Subject: secure-base postfix: Zustellungsnachweis {fqdn}\n"
         f"To: {admin_mail}\n"
         "\n"
-        f"Zustellungsnachweis des lsb-Moduls postfix. Referenz: {token}.\n"
+        f"Zustellungsnachweis des secure-base-Moduls postfix. Referenz: {token}.\n"
     )
 
 
@@ -282,7 +282,7 @@ class Postfix(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        fd, debconf_path = tempfile.mkstemp(prefix="lsb-postfix-debconf-")
+        fd, debconf_path = tempfile.mkstemp(prefix="secure-base-postfix-debconf-")
         os.close(fd)
         try:
             steps: list[tuple[str, Action]] = [

@@ -28,7 +28,7 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
-# Rechnername: gleiches Muster wie lsb.modules.base — anchored, kein
+# Rechnername: gleiches Muster wie secure_base.modules.base — anchored, kein
 # Whitespace/Metazeichen, da fqdn in Dateipfade und Skriptinhalt eingeht.
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)"
@@ -53,7 +53,7 @@ _SFTP_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 _BACKUP_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
-# Von lsb/restic angelegt — nicht von Hand bearbeiten.
+# Von secure-base/restic angelegt — nicht von Hand bearbeiten.
 # cron-Umgebung ist spartanisch — PATH explizit setzen.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -124,7 +124,7 @@ def _cron_content(backup_script: str) -> str:
     """
     return (
         "# Datensicherung (restic) - täglich um 02:30\n"
-        "# Von lsb/restic angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/restic angelegt — nicht von Hand bearbeiten.\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"30 2 * * *  root  {backup_script}\n"
     )
@@ -166,7 +166,7 @@ class Restic(Module):
         "restic_passphrase",
     ]
 
-    # Programmpfade und Schreibziele als Klassenattribute (wie lsb.modules.base):
+    # Programmpfade und Schreibziele als Klassenattribute (wie Modul base):
     # feste, sichere Vorgaben, die eine Testunterklasse gezielt umlenken kann,
     # ohne dieses Modul anzufassen und ohne Laufzeit-Schalter in Produktionscode.
     RESTIC_BIN: ClassVar[str] = "/usr/bin/restic"
@@ -178,7 +178,7 @@ class Restic(Module):
     SENTINEL_DIR: ClassVar[str] = "/var/lib/secure-base"
     SENTINEL_FILE: ClassVar[str] = "/var/lib/secure-base/restic-last-success"
 
-    # apt-Aktionsklasse als Klassenattribut (wie lsb.modules.base) — für
+    # apt-Aktionsklasse als Klassenattribut (wie secure_base.modules.base) — für
     # Testumlenkung per Unterklasse. Kein SYSTEMD_ACTION_CLS: restic hat
     # keinen Modul-eigenen Dienst (cron = Distro-Default).
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
@@ -244,7 +244,7 @@ class Restic(Module):
     def _install(self) -> int:
         """Richtet Paket, Backup-Ziel, Passphrase, Skript und Cron-Job ein.
 
-        Schrittliste mit Abbruch beim ersten Fehler (wie lsb.modules.base).
+        Schrittliste mit Abbruch beim ersten Fehler (wie secure_base.modules.base).
         Einzelne Schritte kapseln mehr als eine Aktion (z. B. bedingtes
         Überspringen bei bereits initialisiertem Repo); dafür ist jeder
         Schritt hier eine gebundene Methode statt einer einzelnen Action.
@@ -474,7 +474,9 @@ class Restic(Module):
             0 bei Erfolg, 1 bei Fehler.
         """
         content = "\n".join(commands) + "\n"
-        fd, batch_path = tempfile.mkstemp(prefix="lsb-restic-sftp-", suffix=".batch")
+        fd, batch_path = tempfile.mkstemp(
+            prefix="secure-base-restic-sftp-", suffix=".batch"
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(content)
@@ -498,7 +500,7 @@ class Restic(Module):
 
         Kein System-Audit: geprüft wird ausschließlich, ob die eigenen
         install-Aktionen gewirkt haben. Läuft alle Prüfungen durch und
-        sammelt das Ergebnis (wie lsb.modules.base).
+        sammelt das Ergebnis (wie secure_base.modules.base).
 
         Returns:
             0 bei vollständiger Übereinstimmung, sonst 1.

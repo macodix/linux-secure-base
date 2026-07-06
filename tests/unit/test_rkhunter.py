@@ -1,12 +1,12 @@
-"""Unit-Tests für lsb.modules.rkhunter."""
+"""Unit-Tests für secure_base.modules.rkhunter."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.rkhunter import Rkhunter
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.rkhunter import Rkhunter
 
 
 def _make_rkhunter(fqdn: str, admin_mail: str) -> Rkhunter:

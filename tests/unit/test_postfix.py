@@ -1,11 +1,13 @@
-"""Unit-Tests für lsb.modules.postfix."""
+"""Unit-Tests für secure_base.modules.postfix."""
 
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.postfix import (
+from pifos.errors import ActionError, ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.postfix import (
     Postfix,
     _aliases_block_content,
     _debconf_content,
@@ -14,8 +16,6 @@ from lsb.modules.postfix import (
     _SendMailAction,
     _test_mail_content,
 )
-from pifos.errors import ActionError, ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_postfix(
@@ -264,7 +264,10 @@ def test_check_aliases_block_false_when_markers_missing(
 def test_test_mail_content_includes_fqdn_admin_mail_and_token() -> None:
     """Die Testmail enthält fqdn im Betreff, admin_mail als Empfänger und token."""
     content = _test_mail_content("server.example.com", "admin@example.com", "abc123")
-    assert "Subject: lsb postfix: Zustellungsnachweis server.example.com" in content
+    assert (
+        "Subject: secure-base postfix: Zustellungsnachweis server.example.com"
+        in content
+    )
     assert "To: admin@example.com" in content
     assert "abc123" in content
 

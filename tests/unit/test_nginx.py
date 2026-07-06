@@ -1,13 +1,13 @@
-"""Unit-Tests für lsb.modules.nginx."""
+"""Unit-Tests für secure_base.modules.nginx."""
 
 import stat
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.nginx import Nginx, _hardening_content, _http_block_content
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.nginx import Nginx, _hardening_content, _http_block_content
 
 
 def _make_nginx(

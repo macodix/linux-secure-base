@@ -1,17 +1,17 @@
-"""Unit-Tests für lsb.modules.unattended."""
+"""Unit-Tests für secure_base.modules.unattended."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.unattended import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.unattended import (
     Unattended,
     _periodic_conf_content,
     _timer_override_content,
     _uu_conf_content,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_unattended(

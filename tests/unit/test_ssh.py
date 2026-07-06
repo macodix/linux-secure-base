@@ -1,4 +1,4 @@
-"""Unit-Tests für lsb.modules.ssh."""
+"""Unit-Tests für secure_base.modules.ssh."""
 
 import os
 import pwd
@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.ssh import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.ssh import (
     CHALLENGE_RESPONSE_SETTING,
     SSH_USERS_GROUP,
     SSHD_SETTINGS,
@@ -18,8 +20,6 @@ from lsb.modules.ssh import (
     _parse_sshd_t,
     _setting_match,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_ssh(

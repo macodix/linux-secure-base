@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.ufw.
+"""Integrationstest für secure_base.modules.ufw.
 
 Startet Ufw.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn); Begründung siehe test_base_module.py. Die
@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.ufw import Ufw
 from pifos.actions.apt_action import AptAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.ufw import Ufw
 
 
 class _NoOpAptAction(AptAction):

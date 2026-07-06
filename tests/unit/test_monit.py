@@ -1,10 +1,12 @@
-"""Unit-Tests für lsb.modules.monit."""
+"""Unit-Tests für secure_base.modules.monit."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.monit import (
+from pifos.errors import ModuleError
+from pifos.ipc import LogLevel
+from secure_base.modules.monit import (
     CHECK_CONTENT,
     KNOWN_CHECKS,
     MONITRC_MARKERS,
@@ -12,8 +14,6 @@ from lsb.modules.monit import (
     _httpd_block,
     _mail_format_block,
 )
-from pifos.errors import ModuleError
-from pifos.ipc import LogLevel
 
 
 def _make_monit(

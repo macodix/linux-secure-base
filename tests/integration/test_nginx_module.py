@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.nginx.
+"""Integrationstest für secure_base.modules.nginx.
 
 Startet Nginx.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn), analog zu test_base_module.py: Systembefehle
@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.nginx import Nginx
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.nginx import Nginx
 
 
 class _NoOpAptAction(AptAction):

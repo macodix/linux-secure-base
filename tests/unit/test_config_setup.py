@@ -1,12 +1,14 @@
-"""Unit-Tests für lsb.config_setup."""
+"""Unit-Tests für secure_base.config_setup."""
 
 import stat
 from pathlib import Path
 from typing import ClassVar
 
-import lsb.config_setup as config_setup
 import pytest
-from lsb.config_setup import (
+import secure_base.config_setup as config_setup
+from pifos.config.config import Config
+from pifos.errors import ConfigError
+from secure_base.config_setup import (
     _flatten,
     _required_keys,
     _set_in_section,
@@ -14,9 +16,7 @@ from lsb.config_setup import (
     fill_missing,
     module_config,
 )
-from lsb.module_spec import ModuleSpec
-from pifos.config.config import Config
-from pifos.errors import ConfigError
+from secure_base.module_spec import ModuleSpec
 
 
 class _FakeModuleCls:
@@ -30,7 +30,7 @@ _FAKE_REGISTRY = [_FAKE_SPEC]
 
 _EXAMPLE_CONTENT = (
     "[installer]\n"
-    "logfile = /var/log/lsb/lsb-installer.log\n"
+    "logfile = /var/log/secure-base/secure-base-installer.log\n"
     "loglevel = INFO\n"
     "modules_enabled = base\n"
     "optional_enabled =\n"
@@ -149,7 +149,7 @@ def test_fill_missing_prompts_only_empty_required_and_writes_back(
         "QuestionaryPrompter",
         lambda: _StubPrompter({"fqdn": "server.example.com"}),
     )
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
     config = Config()
     config.load_dict(
         {
@@ -170,7 +170,7 @@ def test_fill_missing_prompts_only_empty_required_and_writes_back(
 
 def test_fill_missing_nothing_missing_skips_write(tmp_path: Path) -> None:
     """Sind alle Pflichtwerte gesetzt, entfällt das Zurückschreiben."""
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
     config = Config()
     config.load_dict(
         {
@@ -189,8 +189,8 @@ def test_fill_missing_nothing_missing_skips_write(tmp_path: Path) -> None:
 
 def test_example_path_prefers_sibling_example(tmp_path: Path) -> None:
     """Eine Beispieldatei neben dem Zielpfad hat Vorrang vor der Paket-Vorlage."""
-    path = tmp_path / "lsb.conf"
-    sibling = tmp_path / "lsb.conf.example"
+    path = tmp_path / "secure-base.conf"
+    sibling = tmp_path / "secure-base.conf.example"
     sibling.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
 
     assert config_setup._example_path(path) == sibling
@@ -198,7 +198,7 @@ def test_example_path_prefers_sibling_example(tmp_path: Path) -> None:
 
 def test_example_path_falls_back_to_package_example(tmp_path: Path) -> None:
     """Ohne Geschwister-Beispiel wird die mitgelieferte Paket-Vorlage verwendet."""
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     assert config_setup._example_path(path) == config_setup._DEFAULT_EXAMPLE
 
@@ -208,9 +208,9 @@ def test_example_path_falls_back_to_package_example(tmp_path: Path) -> None:
 
 def test_seed_from_example_copies_template_with_mode_0600(tmp_path: Path) -> None:
     """Die Vorlage wird unverändert mit Rechten 0600 an den Zielpfad kopiert."""
-    example = tmp_path / "lsb.conf.example"
+    example = tmp_path / "secure-base.conf.example"
     example.write_text(_EXAMPLE_CONTENT, encoding="utf-8")
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     result = config_setup._seed_from_example(path)
 
@@ -226,7 +226,7 @@ def test_seed_from_example_returns_false_without_any_template(
     monkeypatch.setattr(
         config_setup, "_DEFAULT_EXAMPLE", tmp_path / "nirgendwo.example"
     )
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     assert config_setup._seed_from_example(path) is False
     assert not path.exists()
@@ -244,7 +244,7 @@ def test_ensure_config_loads_existing_file_without_seeding(
         raise AssertionError("sollte nicht aufgerufen werden")
 
     monkeypatch.setattr(config_setup, "_seed_from_example", _fail_if_called)
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
     path.write_text(
         "[general]\nfqdn = server.example.com\n\n[base]\ntimezone = Europe/Berlin\n",
         encoding="utf-8",
@@ -275,7 +275,7 @@ def test_ensure_config_seeds_from_example_and_fills_only_missing(
         "QuestionaryPrompter",
         lambda: _StubPrompter({"fqdn": "server.example.com"}),
     )
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     config = ensure_config(path)
     assert config is not None
@@ -285,7 +285,7 @@ def test_ensure_config_seeds_from_example_and_fills_only_missing(
     assert path.exists()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert config.get_section("installer") == {
-        "logfile": "/var/log/lsb/lsb-installer.log",
+        "logfile": "/var/log/secure-base/secure-base-installer.log",
         "loglevel": "INFO",
         "modules_enabled": "base",
         "optional_enabled": "",
@@ -302,7 +302,7 @@ def test_ensure_config_returns_none_if_seeding_fails(
 ) -> None:
     """Kann keine Vorlage gefunden werden, liefert ensure_config None."""
     monkeypatch.setattr(config_setup, "_seed_from_example", lambda path: False)
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     assert ensure_config(path) is None
 
@@ -316,7 +316,7 @@ def test_ensure_config_propagates_configerror_from_seeding(
         raise ConfigError("Vorlage kann nicht kopiert werden: kaputt")
 
     monkeypatch.setattr(config_setup, "_seed_from_example", _raise)
-    path = tmp_path / "lsb.conf"
+    path = tmp_path / "secure-base.conf"
 
     with pytest.raises(ConfigError):
         ensure_config(path)

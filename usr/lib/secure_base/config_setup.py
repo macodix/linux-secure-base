@@ -11,7 +11,7 @@ from pifos.config.config import Config
 from pifos.configurator import QuestionaryPrompter, write_config_data
 from pifos.errors import ConfigError
 
-from lsb.module_spec import ModuleSpec
+from secure_base.module_spec import ModuleSpec
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # und die mitgelieferte Vorlage als Rückfall, wenn keine Beispieldatei neben
 # der Zieldatei liegt.
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_EXAMPLE = _PACKAGE_ROOT / "etc" / "lsb" / "lsb.conf.example"
+_DEFAULT_EXAMPLE = _PACKAGE_ROOT / "etc" / "secure-base" / "secure-base.conf.example"
 
 
 def _flatten(data: dict[str, object]) -> dict[str, object]:
@@ -88,7 +88,7 @@ def _example_path(path: Path) -> Path:
     """Bestimmt die als Vorlage zu verwendende Beispieldatei.
 
     Bevorzugt eine Beispieldatei neben dem Zielpfad (<name>.example, z. B.
-    lsb.conf.example neben lsb.conf); fehlt sie, wird die mitgelieferte
+    secure-base.conf.example neben secure-base.conf); fehlt sie, wird die mitgelieferte
     Vorlage aus dem Paket verwendet.
 
     Args:

@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lsb-installer"
+name = "secure-base-installer"
 version = "0.1.0-rc10"
 description = "Linux Secure Base — Installer für ein gehärtetes Grundsystem"
 requires-python = ">=3.13"

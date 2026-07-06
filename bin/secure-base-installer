@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Einstiegspunkt des LSB-Installers.
 
-Aufruf: lsb-installer [OPTIONEN] {install|check} [MODUL ...]
+Aufruf: secure-base-installer [OPTIONEN] {install|check} [MODUL ...]
 """
 
 import argparse
@@ -25,9 +25,9 @@ _ROOT = Path(__file__).resolve().parent.parent
 # Suchpfad des mitgelieferten Baums setzen, bevor Installer-Code geladen wird.
 # Dokumentierte Ausnahme von konv-scripting-python.md 5.6 (Plan 2.3).
 sys.path.insert(0, str(_ROOT / "usr" / "lib"))
-sys.path.insert(0, str(_ROOT / "usr" / "lib" / "lsb" / "_vendor"))
+sys.path.insert(0, str(_ROOT / "usr" / "lib" / "secure-base" / "_vendor"))
 
-from lsb.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
+from secure_base.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
 
 
 def _version() -> str:
@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"lsb-installer {_version()}",
+        version=f"secure-base-installer {_version()}",
     )
     parser.add_argument(
         "command",
@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-c",
         "--conf",
         metavar="PFAD",
-        help="Konfigurationsdatei; ohne Angabe etc/lsb/lsb.conf.",
+        help="Konfigurationsdatei; ohne Angabe etc/secure-base/secure-base.conf.",
     )
     parser.add_argument(
         "-o",

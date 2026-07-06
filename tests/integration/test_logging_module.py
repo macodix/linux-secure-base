@@ -1,4 +1,4 @@
-"""Integrationstest für lsb.modules.logging.
+"""Integrationstest für secure_base.modules.logging.
 
 Startet Logging.start() direkt im Testprozess statt über einen echten
 Modul-Subprozess (spawn) — Begründung analog test_base_module.py: ein
@@ -13,11 +13,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from lsb.modules.logging import Logging
 from pifos.actions.apt_action import AptAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
+from secure_base.modules.logging import Logging
 
 
 class _NoOpAptAction(AptAction):

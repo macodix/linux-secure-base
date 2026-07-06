@@ -1,19 +1,19 @@
 """Registratur aller Module in fester Ausführungsreihenfolge."""
 
-from lsb.module_spec import ModuleSpec
-from lsb.modules.base import Base
-from lsb.modules.fail2ban import Fail2ban
-from lsb.modules.logging import Logging
-from lsb.modules.lynis import Lynis
-from lsb.modules.monit import Monit
-from lsb.modules.nginx import Nginx
-from lsb.modules.postfix import Postfix
-from lsb.modules.restic import Restic
-from lsb.modules.rkhunter import Rkhunter
-from lsb.modules.ssh import Ssh
-from lsb.modules.ufw import Ufw
-from lsb.modules.unattended import Unattended
-from lsb.modules.users import Users
+from secure_base.module_spec import ModuleSpec
+from secure_base.modules.base import Base
+from secure_base.modules.fail2ban import Fail2ban
+from secure_base.modules.logging import Logging
+from secure_base.modules.lynis import Lynis
+from secure_base.modules.monit import Monit
+from secure_base.modules.nginx import Nginx
+from secure_base.modules.postfix import Postfix
+from secure_base.modules.restic import Restic
+from secure_base.modules.rkhunter import Rkhunter
+from secure_base.modules.ssh import Ssh
+from secure_base.modules.ufw import Ufw
+from secure_base.modules.unattended import Unattended
+from secure_base.modules.users import Users
 
 REGISTRY = [
     ModuleSpec("base", "Grundkonfiguration", Base, optional=False),

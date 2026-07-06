@@ -28,7 +28,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from lsb.module_spec import ModuleSpec
+from secure_base.module_spec import ModuleSpec
 
 
 class State(Enum):
