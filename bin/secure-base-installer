@@ -25,7 +25,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # Suchpfad des mitgelieferten Baums setzen, bevor Installer-Code geladen wird.
 # Dokumentierte Ausnahme von konv-scripting-python.md 5.6 (Plan 2.3).
 sys.path.insert(0, str(_ROOT / "usr" / "lib"))
-sys.path.insert(0, str(_ROOT / "usr" / "lib" / "secure-base" / "_vendor"))
+sys.path.insert(0, str(_ROOT / "usr" / "lib" / "secure_base" / "_vendor"))
 
 from secure_base.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
 

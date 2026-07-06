@@ -63,6 +63,15 @@ dist:
 	tar czf "dist/$(DIST_NAME).tar.gz" \
 		--owner=0 --group=0 --numeric-owner --mode='go-w' \
 		-C "$$tmpdir" "$(DIST_NAME)"; \
+	smokedir="$$tmpdir/selbsttest"; \
+	mkdir -p "$$smokedir"; \
+	tar xzf "dist/$(DIST_NAME).tar.gz" -C "$$smokedir"; \
+	got=$$(cd / && env -i PATH=/usr/bin:/bin \
+		python3 "$$smokedir/$(DIST_NAME)/bin/secure-base-installer" --version); \
+	if [ "$$got" != "secure-base-installer $(VERSION)" ]; then \
+		echo "Abbruch: Paket-Selbsttest fehlgeschlagen ($$got)"; \
+		exit 1; \
+	fi; \
 	gpg --detach-sign --armor --local-user $(SIGNING_KEY) \
 		-o "dist/$(DIST_NAME).tar.gz.asc" "dist/$(DIST_NAME).tar.gz"
-	@echo "Erzeugt: dist/$(DIST_NAME).tar.gz und dist/$(DIST_NAME).tar.gz.asc"
+	@echo "Erzeugt: dist/$(DIST_NAME).tar.gz und dist/$(DIST_NAME).tar.gz.asc (Selbsttest bestanden)"
