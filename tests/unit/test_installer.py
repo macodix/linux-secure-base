@@ -663,6 +663,39 @@ def test_module_docs_collects_only_successful_modules() -> None:
     assert docs == ["\n## Beispiel\n"]
 
 
+def test_send_install_report_selftest_blocks_all_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schlägt der Geheimnis-Selbsttest an, entstehen weder Datei noch Mail."""
+
+    class _LeakyDoc:
+        CONFIG: ClassVar[list[str]] = ["operation", "relay_password"]
+
+        @classmethod
+        def doc(cls, values: dict[str, str]) -> str:
+            return "\n## Leck\n\nGEHEIM-X\n"
+
+    spec = ModuleSpec("leck", "Leck", _LeakyDoc, optional=False)  # type: ignore[arg-type]
+    config = Config()
+    config.load_dict(
+        {
+            "installer": {"install_report": "yes"},
+            "general": {"admin_mail": "admin@example.com"},
+            "postfix": {"relay_password": "GEHEIM-X"},
+        }
+    )
+    sent: list[object] = []
+    monkeypatch.setattr(installer_module, "REPORT_DIR", tmp_path / "berichte")
+    monkeypatch.setattr(
+        "secure_base.installer.subprocess.run", lambda *a, **k: sent.append(a)
+    )
+
+    installer_module._send_install_report(config, [(spec, True)], [], "srv")
+
+    assert not (tmp_path / "berichte").exists()
+    assert sent == []
+
+
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

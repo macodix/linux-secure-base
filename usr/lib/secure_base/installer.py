@@ -249,6 +249,14 @@ def _send_install_report(
     docs = _module_docs(config, results)
     subject, body = _build_install_report(host, labels, skipped, stamp, docs)
 
+    # Geheimnis-Selbsttest VOR jeder Persistenz (Audit-Befund 2026-07-06):
+    # schlägt er an, entstehen weder lokale Ablage noch Versand.
+    if not _doc_selftest_no_secrets(body, config):
+        logger.error(
+            "Bericht enthält möglicherweise Geheimnisse — keine Ablage, kein Versand."
+        )
+        return
+
     report_file = REPORT_DIR / time.strftime("install-bericht-%Y%m%d-%H%M%S.txt")
     try:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -260,17 +268,6 @@ def _send_install_report(
 
     if not admin_mail:
         logger.warning("Kein admin_mail gesetzt — Bericht nur lokal.")
-        return
-    # Bewusste Reihenfolge (wie der Bash-Vorgänger, Audit 2026-07-06
-    # nachrangig): Die lokale Ablage oben erfolgt VOR dem Selbsttest und
-    # bleibt bei dessen Anschlag zur Diagnose bestehen (0600, root);
-    # gesperrt wird nur der Versandweg.
-    if not _doc_selftest_no_secrets(body, config):
-        logger.error(
-            "Bericht enthält möglicherweise Geheimnisse — kein Versand, "
-            "Datei liegt lokal: %s",
-            report_file,
-        )
         return
     message = (
         f"To: {admin_mail}\n"
