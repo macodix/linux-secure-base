@@ -106,13 +106,16 @@ def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> str:
     """Baut Kopf und Rumpf der Testmail für den Zustellungsnachweis.
 
     token identifiziert den Lauf in der Mail selbst (kein Geheimnis, dient
-    nur der Nachvollziehbarkeit beim Admin).
+    nur der Nachvollziehbarkeit beim Admin). Der Betreff nennt den Zweck aus
+    Empfängersicht (Prüfung des Mailversands), nicht die interne
+    Verfahrensbezeichnung "Zustellungsnachweis".
     """
     return (
-        f"Subject: secure-base postfix: Zustellungsnachweis {fqdn}\n"
+        f"Subject: secure-base {fqdn}: Testnachricht (Prüfung des Mailversands)\n"
         f"To: {admin_mail}\n"
         "\n"
-        f"Zustellungsnachweis des secure-base-Moduls postfix. Referenz: {token}.\n"
+        f"Testnachricht des secure-base-Installers zur Prüfung des"
+        f" Mailversands. Referenz: {token}.\n"
     )
 
 

@@ -283,8 +283,8 @@ def test_test_mail_content_includes_fqdn_admin_mail_and_token() -> None:
     """Die Testmail enthält fqdn im Betreff, admin_mail als Empfänger und token."""
     content = _test_mail_content("server.example.com", "admin@example.com", "abc123")
     assert (
-        "Subject: secure-base postfix: Zustellungsnachweis server.example.com"
-        in content
+        "Subject: secure-base server.example.com:"
+        " Testnachricht (Prüfung des Mailversands)" in content
     )
     assert "To: admin@example.com" in content
     assert "abc123" in content
