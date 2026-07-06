@@ -130,3 +130,100 @@ def test_check_reports_mismatch_when_nothing_installed(
     messages = _sent_messages(conn)
     assert any("Paket lynis" in str(m) for m in messages)
     assert any("Berichtsverzeichnis" in str(m) for m in messages)
+
+
+class _NoOpAptRemoveAction(_NoOpAptAction):
+    """Ersetzt AptAction für uninstall-Tests: merkt sich den gewünschten Zustand."""
+
+    last_state: str | None = None
+
+    def run(self) -> str:
+        _NoOpAptRemoveAction.last_state = self.state
+        self.status = "finished"
+        return self.status
+
+
+def test_uninstall_removes_cron_and_script_but_keeps_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt Cron-Eintrag und Prüfskript, lässt Berichte stehen."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Lynis, "APT_ACTION_CLS", _NoOpAptRemoveAction)
+    assert mod.start() == 0
+    berichte_dir = tmp_path / "berichte"
+    bericht = berichte_dir / "lynis-2026-07-05.txt"
+    bericht.write_text("Prüfnachweis", encoding="utf-8")
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    assert not (tmp_path / "cron").exists()
+    assert not (tmp_path / "pruef.sh").exists()
+    assert bericht.exists()
+    assert _NoOpAptRemoveAction.last_state == "absent"
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_uninstall_without_prior_install_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall ohne vorherigen install-Lauf meldet keinen Fehler."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Lynis, "APT_ACTION_CLS", _NoOpAptRemoveAction)
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any("übersprungen" in str(m) for m in messages)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_test_operation_succeeds_after_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test bestätigt einen zuvor erfolgreichen install-Lauf, ohne ihn zu ändern."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    fake_dpkg_query = tmp_path / "dpkg-query-fake"
+    fake_dpkg_query.write_text(
+        "#!/bin/sh\nprintf 'install ok installed'\n", encoding="utf-8"
+    )
+    fake_dpkg_query.chmod(0o755)
+    monkeypatch.setattr(Lynis, "DPKG_QUERY_BIN", str(fake_dpkg_query))
+    monkeypatch.setattr(Lynis, "LYNIS_BIN", "/bin/echo")
+    monkeypatch.setattr(Lynis, "BASH_BIN", "/bin/bash")
+    pruef_script = tmp_path / "pruef.sh"
+    pruef_before = pruef_script.read_text(encoding="utf-8")
+    conn.reset_mock()
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 0
+    assert pruef_script.read_text(encoding="utf-8") == pruef_before
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
+def test_test_operation_reports_missing_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test meldet ohne installiertes Paket einen Fehler, ohne abzubrechen."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(Lynis, "DPKG_QUERY_BIN", "/usr/bin/false")
+    mod.operation = "test"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("Paket lynis" in str(m) for m in messages)
+    # Sammelnd statt abbrechend: die nachfolgende Prüfung lief trotz des
+    # ersten Fehlschlags noch mit.
+    assert any("Prüfskript-Selbsttest" in str(m) for m in messages)

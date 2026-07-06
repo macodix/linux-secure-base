@@ -157,3 +157,90 @@ def test_check_file_content_missing_path_returns_false(tmp_path: Path) -> None:
     mod = _make_lynis("0 4 1 * *")
     result = mod._check_file_content(str(tmp_path / "fehlt"), "egal", "Testdatei")
     assert result is False
+
+
+# --- _delete_if_exists ---
+
+
+def test_delete_if_exists_removes_existing_file(tmp_path: Path) -> None:
+    """Existiert die Datei, liefert _delete_if_exists 0 und löscht sie."""
+    mod = _make_lynis("0 4 1 * *")
+    target = tmp_path / "datei"
+    target.write_text("x", encoding="utf-8")
+    assert mod._delete_if_exists(str(target), "Testdatei") == 0
+    assert not target.exists()
+
+
+def test_delete_if_exists_missing_path_is_idempotent(tmp_path: Path) -> None:
+    """Fehlt der Pfad bereits, liefert _delete_if_exists 0 ohne Fehler."""
+    mod = _make_lynis("0 4 1 * *")
+    assert mod._delete_if_exists(str(tmp_path / "fehlt"), "Testdatei") == 0
+
+
+# --- _check_lynis_version ---
+
+
+def test_check_lynis_version_reads_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Liest der Aufruf eine Version, liefert _check_lynis_version True."""
+    mod = _make_lynis("0 4 1 * *")
+    monkeypatch.setattr(Lynis, "LYNIS_BIN", "/bin/echo")
+    assert mod._check_lynis_version() is True
+
+
+def test_check_lynis_version_command_failure_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scheitert der Aufruf, liefert _check_lynis_version False."""
+    mod = _make_lynis("0 4 1 * *")
+    monkeypatch.setattr(Lynis, "LYNIS_BIN", "/bin/false")
+    assert mod._check_lynis_version() is False
+
+
+# --- _check_pruef_script_selftest ---
+
+
+def test_check_pruef_script_selftest_valid_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein ausführbares, syntaktisch gültiges Skript liefert True."""
+    mod = _make_lynis("0 4 1 * *")
+    script = tmp_path / "pruef.sh"
+    script.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    script.chmod(0o700)
+    monkeypatch.setattr(Lynis, "PRUEF_SCRIPT", str(script))
+    monkeypatch.setattr(Lynis, "BASH_BIN", "/bin/bash")
+    assert mod._check_pruef_script_selftest() is True
+
+
+def test_check_pruef_script_selftest_missing_script_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt das Prüfskript, liefert _check_pruef_script_selftest False."""
+    mod = _make_lynis("0 4 1 * *")
+    monkeypatch.setattr(Lynis, "PRUEF_SCRIPT", str(tmp_path / "fehlt.sh"))
+    assert mod._check_pruef_script_selftest() is False
+
+
+def test_check_pruef_script_selftest_not_executable_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ist das Prüfskript nicht ausführbar, liefert die Prüfung False."""
+    mod = _make_lynis("0 4 1 * *")
+    script = tmp_path / "pruef.sh"
+    script.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    script.chmod(0o600)
+    monkeypatch.setattr(Lynis, "PRUEF_SCRIPT", str(script))
+    assert mod._check_pruef_script_selftest() is False
+
+
+def test_check_pruef_script_selftest_syntax_error_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enthält das Prüfskript einen Syntaxfehler, liefert die Prüfung False."""
+    mod = _make_lynis("0 4 1 * *")
+    script = tmp_path / "pruef.sh"
+    script.write_text("#!/bin/bash\nif [ 1 -eq 1\n", encoding="utf-8")
+    script.chmod(0o700)
+    monkeypatch.setattr(Lynis, "PRUEF_SCRIPT", str(script))
+    monkeypatch.setattr(Lynis, "BASH_BIN", "/bin/bash")
+    assert mod._check_pruef_script_selftest() is False

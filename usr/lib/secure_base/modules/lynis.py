@@ -5,13 +5,16 @@ Cron-Eintrag für den regelmäßigen Audit-Lauf an. Betriebsart über den
 Schlüssel operation.
 """
 
+import os
 import re
 import stat
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
 from pifos.action import Action
 from pifos.actions.apt_action import AptAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.write_file_action import WriteFileAction
@@ -26,6 +29,11 @@ _CRON_FIELD_RE = re.compile(
 )
 
 LYNIS_PACKAGES = ("lynis",)
+
+# Ein uninstall-Schritt liefert 0 bei Erfolg, 1 bei Fehler — analog zu
+# run_action, aber auch für schrittinterne Fallunterscheidungen (z. B.
+# idempotentes Löschen) statt eines reinen Action-Aufrufs.
+_Step = Callable[[], int]
 
 
 def _pruef_script_content(berichte_dir: str) -> str:
@@ -77,6 +85,8 @@ class Lynis(Module):
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py:
     # Testunterklasse ersetzt sie, ohne dieses Modul anzufassen).
     DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
+    LYNIS_BIN: ClassVar[str] = "/usr/sbin/lynis"
+    BASH_BIN: ClassVar[str] = "/usr/bin/bash"
     PRUEF_SCRIPT: ClassVar[str] = "/usr/local/sbin/secure-base-haertungspruefung.sh"
     CRON_FILE: ClassVar[str] = "/etc/cron.d/secure-base-haertung"
     BERICHTE_DIR: ClassVar[str] = "/var/lib/secure-base/haertung"
@@ -100,6 +110,10 @@ class Lynis(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -165,6 +179,116 @@ class Lynis(Module):
                 self.send_message(LogLevel.ERROR, "lynis", f"fehlgeschlagen: {label}")
                 return 1
         return 0
+
+    def _uninstall(self) -> int:
+        """Entfernt Cron-Eintrag, Prüfskript und Paket.
+
+        Semantik wie do_uninstall des Bash-Originals: Das Berichteverzeichnis
+        (BERICHTE_DIR) bleibt unangetastet und dient weiter als
+        Prüfnachweis; nur Cron-Eintrag, Prüfskript und das lynis-Paket
+        werden entfernt. Jeder Schritt ist idempotent — ein bereits
+        fehlender Pfad gilt als Erfolg.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, _Step]] = [
+            (
+                "Cron-Eintrag entfernen",
+                lambda: self._delete_if_exists(self.CRON_FILE, "Cron-Eintrag"),
+            ),
+            (
+                "Prüfskript entfernen",
+                lambda: self._delete_if_exists(self.PRUEF_SCRIPT, "Prüfskript"),
+            ),
+            (
+                "lynis entfernen",
+                lambda: self.run_action(
+                    self.APT_ACTION_CLS(packages=list(LYNIS_PACKAGES), state="absent")
+                ),
+            ),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "lynis", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "lynis", f"fehlgeschlagen: {label}")
+                return 1
+        return 0
+
+    def _delete_if_exists(self, path: str, label: str) -> int:
+        """Löscht einen Pfad idempotent — ein fehlender Pfad gilt als Erfolg.
+
+        Args:
+            path: Zu löschender Pfad.
+            label: Beschreibung für die Meldung.
+
+        Returns:
+            0 bei Erfolg oder wenn der Pfad bereits fehlt, sonst 1.
+        """
+        target = Path(path)
+        if not target.exists() and not target.is_symlink():
+            self.send_message(
+                LogLevel.INFO, "lynis", f"{label}: nicht vorhanden — übersprungen"
+            )
+            return 0
+        return self.run_action(DeleteFileAction(path=path, safe_mode=False))
+
+    def _test(self) -> int:
+        """Führt den Funktionstest ohne Systemänderung durch.
+
+        Umfang wie do_test des Bash-Originals: Paketstand, lesbare
+        lynis-Version sowie Ausführbarkeit und Bash-Syntax des Prüfskripts.
+        Sammelt alle Befunde, statt beim ersten Fehler abzubrechen — der
+        Test verändert das System nicht.
+
+        Returns:
+            0, wenn alle Prüfungen bestehen, sonst 1.
+        """
+        ok = True
+        ok &= self._check_package_installed()
+        ok &= self._check_lynis_version()
+        ok &= self._check_pruef_script_selftest()
+        return 0 if ok else 1
+
+    def _check_lynis_version(self) -> bool:
+        """Liest die lynis-Version über LYNIS_BIN und protokolliert sie.
+
+        Returns:
+            True, wenn die Version lesbar ist, sonst False.
+        """
+        action = SysCmdAction(command=[self.LYNIS_BIN, "--version"], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "lynis", "lynis-Version: nicht lesbar")
+            return False
+        first_line = action.stdout.splitlines()[0] if action.stdout.strip() else ""
+        self.send_message(LogLevel.INFO, "lynis", f"lynis-Version: {first_line}")
+        return True
+
+    def _check_pruef_script_selftest(self) -> bool:
+        """Prüft Ausführbarkeit und Bash-Syntax des Prüfskripts.
+
+        Returns:
+            True, wenn das Prüfskript ausführbar ist und die Bash-Syntax-
+            prüfung (bash -n) fehlerfrei durchläuft, sonst False.
+        """
+        label = "Prüfskript-Selbsttest"
+        if not os.access(self.PRUEF_SCRIPT, os.X_OK):
+            self.send_message(
+                LogLevel.ERROR,
+                "lynis",
+                f"{label}: {self.PRUEF_SCRIPT} fehlt oder nicht ausführbar",
+            )
+            return False
+        action = SysCmdAction(
+            command=[self.BASH_BIN, "-n", self.PRUEF_SCRIPT], timeout=15
+        )
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "lynis", f"{label}: Syntaxfehler")
+            return False
+        self.send_message(
+            LogLevel.INFO, "lynis", f"{label}: vorhanden, ausführbar, Syntax ok"
+        )
+        return True
 
     def _verify(self) -> int:
         """Gleicht die Wirkung der install-Schritte mit dem Soll ab.
