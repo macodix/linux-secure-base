@@ -60,6 +60,33 @@ def _modprobe_content() -> str:
     )
 
 
+def _content_lines(content: str) -> list[str]:
+    """Filtert Kommentar- und Leerzeilen aus einem Dateiinhalt heraus.
+
+    Args:
+        content: Dateiinhalt, wie von _sysctl_content/_modprobe_content gebaut.
+
+    Returns:
+        Die reinen Einstellungszeilen ohne Kommentare/Leerzeilen.
+    """
+    return [line for line in content.splitlines() if line and not line.startswith("#")]
+
+
+def _doc_file(path: str, lines: list[str]) -> str:
+    """Baut einen Markdown-Dateieintrag mit eingerückten Einstellungszeilen.
+
+    Args:
+        path: Pfad der Datei.
+        lines: Einstellungszeilen, die eingerückt unter dem Pfad erscheinen.
+
+    Returns:
+        Markdown-Textblock für diese Datei.
+    """
+    entry = f"- `{path}`:\n"
+    entry += "".join(f"  - `{line}`\n" for line in lines)
+    return entry
+
+
 class Base(Module):
     """Grundkonfiguration des Systems über pifos-Aktionen."""
 
@@ -79,6 +106,10 @@ class Base(Module):
     SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
     SYSCTL_CONF: ClassVar[str] = "/etc/sysctl.d/60-secure-base.conf"
     MODPROBE_CONF: ClassVar[str] = "/etc/modprobe.d/secure-base-blacklist.conf"
+
+    # Für AppArmor installierte Pakete — eigenes Klassenattribut, damit
+    # _install und doc() dieselbe Liste verwenden (keine doppelte Pflege).
+    APPARMOR_PACKAGES: ClassVar[tuple[str, ...]] = ("apparmor", "apparmor-utils")
 
     # AppArmor-Aktionsklassen ebenso als Klassenattribute; Vorgabe sind
     # immer die echten, härtenden Aktionen. Kein Laufzeit-Schalter kann sie
@@ -185,7 +216,7 @@ class Base(Module):
             ),
             (
                 "AppArmor installieren",
-                self.APT_ACTION_CLS(packages=["apparmor", "apparmor-utils"]),
+                self.APT_ACTION_CLS(packages=list(self.APPARMOR_PACKAGES)),
             ),
             (
                 "AppArmor aktivieren",
@@ -382,3 +413,53 @@ class Base(Module):
             LogLevel.ERROR, "base", f"{label}: ist {current}, soll {expected}"
         )
         return False
+
+    # --- doc ---
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Baut den Markdown-Abschnitt dieses Moduls für den Installationsbericht.
+
+        Reine Textmontage: kein Dateizugriff, kein Prozessaufruf, keine
+        Uhrzeitabfrage. Liest ausschließlich die für dieses Modul
+        dokumentierten Konfigurationswerte fqdn und timezone aus values
+        (Whitelist-Prinzip). Geheimniswerte (z. B. relay_password,
+        main_user_password, restic_passphrase, TOTP-Werte) werden nie
+        gelesen oder ausgegeben, selbst wenn sie in values stehen.
+
+        Args:
+            values: Konfigurationswerte des Laufs (Schlüssel wie in CONFIG).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Grundkonfiguration".
+        """
+        fqdn = values.get("fqdn", "") or "(leer/Default)"
+        timezone = values.get("timezone", "") or "(leer/Default)"
+        pakete = ", ".join(cls.APPARMOR_PACKAGES)
+        sysctl_lines = _content_lines(_sysctl_content())
+        modprobe_lines = _content_lines(_modprobe_content())
+
+        return "".join(
+            [
+                "\n## Grundkonfiguration\n\n",
+                f"**Hostname:** `{fqdn}`\n\n",
+                f"**Zeitzone:** `{timezone}`\n\n",
+                f"**Pakete:** {pakete}\n\n",
+                "**Dateien/Einstellungen:**\n\n",
+                _doc_file(cls.SYSCTL_CONF, sysctl_lines),
+                _doc_file(cls.MODPROBE_CONF, modprobe_lines),
+                "\n> Hinweis: NTP-Zeitsynchronisation via systemd-timesyncd"
+                " aktiviert (timedatectl set-ntp true, konv-system.md"
+                " Abschnitt 3.5 b). sysctl-Härtung nach konv-system.md"
+                " Abschnitt 3.9. USB-Storage-Sperre nach konv-system.md"
+                " Abschnitt 3.1 c. autofs maskiert (systemctl mask autofs,"
+                " konv-system.md Abschnitt 3.1 d). AppArmor-Dienst aktiv"
+                f" (konv-system.md Abschnitt 3.10 b): {pakete} installiert,"
+                " Dienst enabled. Soll-Teilerfüllung mit Begründung"
+                " (qm-richtlinien.md Kapitel 5): sshd hat kein"
+                " Ubuntu-Standard-AppArmor-Profil; seine Eindämmung erfolgt"
+                " über den restriktiven Paketfilter (ufw) und die"
+                " SSH-Härtung. Ein eigenes sshd-Profil wird bewusst nicht"
+                " erstellt (Aussperr-Risiko).\n",
+            ]
+        )

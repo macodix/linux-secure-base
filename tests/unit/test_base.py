@@ -285,3 +285,39 @@ def test_test_returns_success_without_any_action() -> None:
     mod.operation = "test"
 
     assert mod._test() == 0
+
+
+# --- doc ---
+
+
+def test_doc_contains_title_values_and_file_path() -> None:
+    """doc() enthält den Abschnittstitel, die Konfigurationswerte und Pfade."""
+    output = Base.doc({"fqdn": "server.example.com", "timezone": "Europe/Berlin"})
+
+    assert "## Grundkonfiguration" in output
+    assert "server.example.com" in output
+    assert "Europe/Berlin" in output
+    assert Base.SYSCTL_CONF in output
+    assert Base.MODPROBE_CONF in output
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlen Werte in values, erscheinen sie als '(leer/Default)'."""
+    output = Base.doc({})
+
+    assert "(leer/Default)" in output
+
+
+def test_doc_never_leaks_secret_values() -> None:
+    """Ein als Wert übergebenes Geheimnis erscheint nicht in der Ausgabe."""
+    output = Base.doc(
+        {
+            "fqdn": "server.example.com",
+            "timezone": "Europe/Berlin",
+            "relay_password": "GEHEIM-X",
+            "main_user_password": "GEHEIM-X",
+            "restic_passphrase": "GEHEIM-X",
+        }
+    )
+
+    assert "GEHEIM-X" not in output
