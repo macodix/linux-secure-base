@@ -503,3 +503,44 @@ def test_test_returns_zero_even_when_unreadable(
     monkeypatch.setattr(mod, "_home_dir", lambda user: str(tmp_path))
     monkeypatch.setattr(Users, "RUNUSER_BIN", "/bin/false")
     assert mod._test() == 0
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Benutzer/Gruppe und Dateien."""
+    values = {"main_user": "alice"}
+
+    section = Users.doc(values)
+
+    assert section.startswith("\n## Hauptbenutzer\n\n")
+    assert f"**Pakete:** {Users.PKG_GOOGLE_AUTHENTICATOR}" in section
+    assert f"**Angelegte Benutzer:** alice (Gruppen: {Users.GROUP_NAME})" in section
+    assert "`/home/alice/.ssh/authorized_keys`" in section
+    assert "`/home/alice/.google_authenticator`" in section
+
+
+def test_doc_marks_missing_main_user_as_leer_default() -> None:
+    """Fehlt main_user in values, erscheint der Platzhalter "(leer/Default)"."""
+    section = Users.doc({})
+
+    assert "**Angelegte Benutzer:** (leer/Default)" in section
+    assert "/home/(leer/Default)/.ssh/authorized_keys" in section
+
+
+def test_doc_never_leaks_password_or_pubkey_value() -> None:
+    """main_user_password erscheint weder als Name noch als Wert; der
+    Pubkey-Wert wird wie im Bash-Original nicht dokumentiert."""
+    values = {
+        "main_user": "alice",
+        "main_user_password": "GEHEIM-X",
+        "main_user_pubkey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test",
+    }
+
+    section = Users.doc(values)
+
+    assert "GEHEIM-X" not in section
+    assert "main_user_password" not in section
+    assert "AAAAC3NzaC1lZDI1NTE5AAAA" not in section
+    assert "main_user_pubkey" not in section

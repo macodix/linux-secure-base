@@ -46,6 +46,22 @@ _YES_NO = frozenset({"yes", "no"})
 _Step = Callable[[], int]
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich main_user ab — main_user_password und
+    das TOTP-Secret werden nie über diesen Weg gelesen.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 def _shadow_hash_from_line(line: str) -> str:
     """Extrahiert das Passwort-Hash-Feld aus einer getent-shadow-Zeile.
 
@@ -241,6 +257,36 @@ class Users(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: main_user_password und das TOTP-Secret erscheinen hier
+        nie — weder Name noch Wert —, auch wenn sie in values stehen. doc()
+        liest ausschließlich main_user; der SSH-Pubkey wird wie im
+        Bash-Original nicht mit Wert dokumentiert, nur sein Ablageort.
+
+        Args:
+            values: Konfigurationswerte des Moduls (main_user,
+                main_user_password, main_user_pubkey, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Hauptbenutzer".
+        """
+        main_user = _doc_value(values, "main_user")
+        return (
+            "\n## Hauptbenutzer\n\n"
+            f"**Pakete:** {cls.PKG_GOOGLE_AUTHENTICATOR}\n\n"
+            f"\n**Angelegte Benutzer:** {main_user} (Gruppen: {cls.GROUP_NAME})\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `/home/{main_user}/.ssh/authorized_keys`:\n"
+            "  - `SSH-Public-Key hinterlegt`\n"
+            f"- `/home/{main_user}/.google_authenticator`:\n"
+            "  - `TOTP-Secret eingerichtet`\n"
+            "\n> Hinweis: Passwort und TOTP-Material werden nicht"
+            " dokumentiert (Secret).\n"
+        )
 
     def _validate(self) -> None:
         """Prüft Benutzername, Pubkey-Format und Ja/Nein-Schalter.
