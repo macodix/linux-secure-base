@@ -106,13 +106,19 @@ class StatusView:
         self._layout(self._console.size.height)
 
     def _layout(self, terminal_rows: int) -> None:
-        """Legt Meldungsfenster- und Gesamthöhe einmalig fest.
+        """Legt Meldungsfenster- und Gesamthöhe für die aktuelle Schirmhöhe fest.
 
         Passt sich der Terminalhöhe an: Ist der Schirm zu niedrig für das
         volle Meldungsfenster, schrumpft es (mindestens 3 Zeilen), und die
         Gesamthöhe bleibt unter der Schirmhöhe. Eine Live-Anzeige, die
-        höher ist als das Terminal, zeichnet sonst sichtbar springend.
+        höher ist als das Terminal, kann nicht am Ort neu zeichnen; sie
+        scrollt stattdessen — das sieht aus, als stünde nach jeder Zeile
+        eine Leerzeile, und die Anzeige wächst und springt zurück.
+
+        Wird bei jeder Änderung der Terminalhöhe erneut aufgerufen (Größe
+        zu Beginn oft noch unbekannt, später Fenstergröße geändert).
         """
+        self._term_rows = terminal_rows
         # Feste Zeilen: Rahmen+Innenabstand (4), Kopf (1), Modulliste,
         # drei Leerzeilen, Fortschritt (1).
         fixed_rows = 4 + 1 + len(self._specs) + 3 + 1
@@ -128,7 +134,15 @@ class StatusView:
     @contextlib.contextmanager
     def live(self) -> Iterator[None]:
         """Hält die Live-Anzeige für die Dauer des Laufs offen."""
-        with Live(self._render(), console=self._console, refresh_per_second=8) as live:
+        # Geometrie auf die Schirmhöhe bei Anzeigenstart festlegen: bei der
+        # Objekterzeugung ist sie oft noch unbekannt.
+        self._layout(self._console.size.height)
+        with Live(
+            self._render(),
+            console=self._console,
+            refresh_per_second=8,
+            vertical_overflow="crop",
+        ) as live:
             self._live = live
             try:
                 yield
@@ -200,9 +214,19 @@ class StatusView:
             )
 
     def _refresh(self) -> None:
-        """Zeichnet die Anzeige neu, falls die Live-Anzeige offen ist."""
-        if self._live is not None:
-            self._live.update(self._render())
+        """Zeichnet die Anzeige neu, falls die Live-Anzeige offen ist.
+
+        Vor jedem Neuzeichnen die Geometrie an die aktuelle Terminalhöhe
+        anpassen: Zu Beginn ist sie oft noch unbekannt, später kann sich
+        die Fenstergröße ändern. Nur bei tatsächlicher Änderung neu
+        auslegen, um das Meldungsfenster nicht unnötig zu kürzen.
+        """
+        if self._live is None:
+            return
+        rows = self._console.size.height
+        if rows != self._term_rows:
+            self._layout(rows)
+        self._live.update(self._render())
 
     def _glyph(self, state: State) -> RenderableType:
         """Liefert das Statussymbol; RUNNING animiert als Spinner."""

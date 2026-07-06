@@ -215,3 +215,51 @@ def test_layout_shrinks_log_window_on_small_terminal() -> None:
 
     view._layout(50)
     assert view._log_lines == 8
+
+
+class _FakeSize:
+    def __init__(self, height: int) -> None:
+        self.height = height
+
+
+class _FakeConsole:
+    """Konsole, deren gemeldete Schirmhöhe der Test steuert."""
+
+    def __init__(self, height: int) -> None:
+        self._height = height
+
+    @property
+    def size(self) -> _FakeSize:
+        return _FakeSize(self._height)
+
+
+class _CapturingLive:
+    """Live-Ersatz, der nur die letzte Übergabe festhält."""
+
+    def __init__(self) -> None:
+        self.last: object | None = None
+
+    def update(self, renderable: object) -> None:
+        self.last = renderable
+
+
+def test_refresh_relayouts_when_terminal_shrinks() -> None:
+    """Schrumpft das Terminal, passt _refresh die Geometrie neu an.
+
+    Deckt den Servertest-Befund ab: eine bei Anzeigenstart festgelegte
+    Höhe, die später über der Terminalhöhe liegt, kann nicht am Ort neu
+    zeichnen — die Anzeige scrollt (Leerzeilen-/Wachstums-Eindruck).
+    """
+    view = _silent_view()
+    view._console = _FakeConsole(40)  # type: ignore[assignment]
+    view._live = _CapturingLive()  # type: ignore[assignment]
+
+    view._refresh()
+    tall = view._height
+
+    view._console = _FakeConsole(14)  # type: ignore[assignment]
+    view._refresh()
+
+    assert view._term_rows == 14
+    assert view._height < tall
+    assert view._height <= 13
