@@ -82,6 +82,24 @@ def _aliases_block_content(admin_mail: str) -> str:
     return f"postmaster: root\nroot:       {admin_mail}\n"
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich fest benannte, unkritische Schlüssel ab
+    (relay_host, relay_port, admin_mail) — relay_password wird nie über
+    diesen Weg gelesen, ein Allowlist-Mechanismus wie im Bash-Original
+    (doc_val) ist deshalb hier nicht nötig.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 def _test_mail_content(fqdn: str, admin_mail: str, token: str) -> str:
     """Baut Kopf und Rumpf der Testmail für den Zustellungsnachweis.
 
@@ -249,6 +267,39 @@ class Postfix(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: relay_password (und jedes andere Geheimnis) erscheint
+        hier nie — weder Name noch Wert —, auch wenn es in values steht.
+        doc() liest ausschließlich die unten aufgeführten, unkritischen
+        Schlüssel; alles andere in values bleibt unberücksichtigt.
+
+        Args:
+            values: Konfigurationswerte des Moduls (fqdn, admin_mail,
+                relay_host, relay_port, relay_user, relay_password, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Mail-Versand".
+        """
+        relay_host = _doc_value(values, "relay_host")
+        relay_port = _doc_value(values, "relay_port")
+        admin_mail = _doc_value(values, "admin_mail")
+        return (
+            "\n## Mail-Versand\n\n"
+            f"**Pakete:** {', '.join(cls.PACKAGES)}\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.MAIN_CF}`:\n"
+            f"  - `relayhost = [{relay_host}]:{relay_port}`\n"
+            "  - `smtp_tls_security_level = encrypt`\n"
+            "  - `inet_interfaces = loopback-only`\n"
+            f"- `{cls.ALIASES}`:\n"
+            f"  - `root: {admin_mail}`\n"
+            "\n**Dienste:** postfix (enabled, aktiv nach install)\n"
+            "\n> Hinweis: SMTP-Passwort wird nicht dokumentiert (Secret).\n"
+        )
 
     def _validate(self) -> None:
         """Prüft alle Werte, die in Kommandos oder Dateiinhalte gehen.

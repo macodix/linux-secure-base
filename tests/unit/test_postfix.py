@@ -718,6 +718,54 @@ def test_uninstall_stops_at_first_failed_step(
     assert "Pakete entfernen" not in payloads
 
 
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Pakete, Dateien, Werte und Dienst."""
+    values = {
+        "fqdn": "server.example.com",
+        "admin_mail": "admin@example.com",
+        "relay_host": "smtp.example.com",
+        "relay_port": "587",
+        "relay_user": "relayuser",
+    }
+    section = Postfix.doc(values)
+    assert section.startswith("\n## Mail-Versand\n\n")
+    assert "**Pakete:**" in section
+    for package in Postfix.PACKAGES:
+        assert package in section
+    assert f"`{Postfix.MAIN_CF}`" in section
+    assert "relayhost = [smtp.example.com]:587" in section
+    assert "smtp_tls_security_level = encrypt" in section
+    assert "inet_interfaces = loopback-only" in section
+    assert f"`{Postfix.ALIASES}`" in section
+    assert "root: admin@example.com" in section
+    assert "**Dienste:** postfix (enabled, aktiv nach install)" in section
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Postfix.doc({})
+    assert "relayhost = [(leer/Default)]:(leer/Default)" in section
+    assert "root: (leer/Default)" in section
+
+
+def test_doc_never_leaks_relay_password() -> None:
+    """relay_password erscheint weder als Name noch als Wert in doc()."""
+    values = {
+        "fqdn": "server.example.com",
+        "admin_mail": "admin@example.com",
+        "relay_host": "smtp.example.com",
+        "relay_port": "587",
+        "relay_user": "relayuser",
+        "relay_password": "GEHEIM-X",
+    }
+    section = Postfix.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "relay_password" not in section
+
+
 # --- start()-Verzweigung ---
 
 
