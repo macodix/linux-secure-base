@@ -80,6 +80,24 @@ def _sudolog_content() -> str:
     return 'Defaults logfile="/var/log/sudo.log"\n'
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich fest benannte, unkritische Schlüssel ab
+    (journald_max_use, journald_max_retention, admin_mail) — ein
+    Allowlist-Mechanismus wie im Bash-Original (doc_val) ist deshalb hier
+    nicht nötig.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 class Logging(Module):
     """Protokollierung und Auditing des Systems über pifos-Aktionen."""
 
@@ -139,6 +157,59 @@ class Logging(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: doc() liest ausschließlich die unten aufgeführten,
+        unkritischen Schlüssel (journald_max_use, journald_max_retention,
+        admin_mail) — keine Geheimnisse gehen in diesen Abschnitt ein.
+
+        Args:
+            values: Konfigurationswerte des Moduls (fqdn, admin_mail,
+                journald_max_use, journald_max_retention, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Protokollierung und
+            Auditing".
+        """
+        journald_max_use = _doc_value(values, "journald_max_use")
+        journald_max_retention = _doc_value(values, "journald_max_retention")
+        admin_mail = _doc_value(values, "admin_mail")
+        return (
+            "\n## Protokollierung und Auditing\n\n"
+            "**Pakete:** logwatch, auditd\n\n"
+            "\n**Dienste:** auditd (enabled, aktiv nach install)\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.JOURNALD_CONF}`:\n"
+            "  - `Storage = persistent`\n"
+            f"  - `SystemMaxUse = {journald_max_use}`\n"
+            f"  - `MaxRetentionSec = {journald_max_retention}`\n"
+            f"- `{cls.LOGWATCH_CONF}`:\n"
+            f"  - `MailTo = {admin_mail}`\n"
+            "  - `Detail = Med`\n"
+            "  - `Service = All`\n"
+            "  - `Output = mail`\n"
+            f"- `{cls.LOGROTATE_CONF}`:\n"
+            "  - `logrotate-Konfig für /var/log/secure-base/secure-base.log`\n"
+            f"- `{cls.AUDIT_RULES_FILE}`:\n"
+            "  - `-w /etc/sudoers -p wa -k scope`\n"
+            "  - `-w /etc/sudoers.d -p wa -k scope`\n"
+            "  - `-w /etc/passwd -p wa -k identity`\n"
+            "  - `-w /etc/shadow -p wa -k identity`\n"
+            "  - `-w /etc/group -p wa -k identity`\n"
+            "  - `-w /var/log/lastlog -p wa -k logins`\n"
+            "  - `-e 2 (Immutable — Regeländerungen ohne Reboot gesperrt)`\n"
+            f"- `{cls.SUDOLOG_CONF}`:\n"
+            '  - `Defaults logfile="/var/log/sudo.log"`\n'
+            "\n**Timer/Cron:** logwatch: täglicher Lauf via "
+            "/etc/cron.daily/00logwatch\n"
+            "\n> Hinweis: systemd-journald wird nicht neu installiert "
+            f"(Basis-Infrastruktur); persistentes Journal wird unter "
+            f"{cls.JOURNAL_DIR} abgelegt. auditd-Regeln mit -e 2 (Immutable) "
+            "greifen erst nach dem nächsten Reboot.\n"
+        )
 
     def _validate(self) -> None:
         """Prüft alle Konfigurationswerte, die in Befehle oder Dateien gehen.

@@ -304,3 +304,54 @@ def test_remove_file_if_exists_returns_zero_for_missing_file(tmp_path: Path) -> 
     """Eine bereits fehlende Datei liefert 0, ohne einen Fehler auszulösen."""
     mod = _make_logging()
     assert mod._remove_file_if_exists(str(tmp_path / "fehlt.conf")) == 0
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Pakete, Dateien, Werte und Dienst."""
+    values = {
+        "journald_max_use": "1G",
+        "journald_max_retention": "3month",
+        "admin_mail": "admin@example.com",
+    }
+    section = Logging.doc(values)
+    assert section.startswith("\n## Protokollierung und Auditing\n\n")
+    assert "**Pakete:** logwatch, auditd" in section
+    assert "**Dienste:** auditd (enabled, aktiv nach install)" in section
+    assert f"`{Logging.JOURNALD_CONF}`" in section
+    assert "Storage = persistent" in section
+    assert "SystemMaxUse = 1G" in section
+    assert "MaxRetentionSec = 3month" in section
+    assert f"`{Logging.LOGWATCH_CONF}`" in section
+    assert "MailTo = admin@example.com" in section
+    assert f"`{Logging.LOGROTATE_CONF}`" in section
+    assert f"`{Logging.AUDIT_RULES_FILE}`" in section
+    assert "-w /etc/sudoers -p wa -k scope" in section
+    assert "-e 2 (Immutable" in section
+    assert f"`{Logging.SUDOLOG_CONF}`" in section
+    assert 'Defaults logfile="/var/log/sudo.log"' in section
+    assert "**Timer/Cron:** logwatch" in section
+    assert f"{Logging.JOURNAL_DIR} abgelegt" in section
+
+
+def test_doc_marks_missing_values_as_leer_default() -> None:
+    """Fehlende Werte in values erscheinen als "(leer/Default)"."""
+    section = Logging.doc({})
+    assert "SystemMaxUse = (leer/Default)" in section
+    assert "MaxRetentionSec = (leer/Default)" in section
+    assert "MailTo = (leer/Default)" in section
+
+
+def test_doc_never_leaks_unrelated_secret_values() -> None:
+    """Werte fremder (nicht abgefragter) Schlüssel erscheinen nie in doc()."""
+    values = {
+        "journald_max_use": "1G",
+        "journald_max_retention": "3month",
+        "admin_mail": "admin@example.com",
+        "relay_password": "GEHEIM-X",
+    }
+    section = Logging.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "relay_password" not in section
