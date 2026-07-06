@@ -252,3 +252,55 @@ def test_check_installed_false_on_command_failure(tmp_path: Path) -> None:
         assert mod._check_installed("logwatch", "Testwert") is False
     finally:
         Logging.DPKG_BIN = "/usr/bin/dpkg"
+
+
+# --- _package_installed (Vorbedingung für _uninstall-Schritte) ---
+
+
+def test_package_installed_true_for_installed_status(tmp_path: Path) -> None:
+    """Ein Status "install ok installed" liefert True."""
+    mod = _make_logging()
+    Logging.DPKG_BIN = _make_fake_dpkg(tmp_path, "Status: install ok installed\n")
+    try:
+        assert mod._package_installed("logwatch") is True
+    finally:
+        Logging.DPKG_BIN = "/usr/bin/dpkg"
+
+
+def test_package_installed_false_for_other_status(tmp_path: Path) -> None:
+    """Ein abweichender Status liefert False."""
+    mod = _make_logging()
+    Logging.DPKG_BIN = _make_fake_dpkg(tmp_path, "Status: deinstall ok config-files\n")
+    try:
+        assert mod._package_installed("logwatch") is False
+    finally:
+        Logging.DPKG_BIN = "/usr/bin/dpkg"
+
+
+def test_package_installed_false_on_command_failure(tmp_path: Path) -> None:
+    """Ein fehlschlagender Befehl liefert False."""
+    mod = _make_logging()
+    Logging.DPKG_BIN = _make_fake_dpkg(tmp_path, "unbekanntes Paket\n", returncode=1)
+    try:
+        assert mod._package_installed("logwatch") is False
+    finally:
+        Logging.DPKG_BIN = "/usr/bin/dpkg"
+
+
+# --- _remove_file_if_exists ---
+
+
+def test_remove_file_if_exists_deletes_existing_file(tmp_path: Path) -> None:
+    """Eine vorhandene Datei wird ohne Sicherung gelöscht, Rückgabe 0."""
+    path = tmp_path / "datei.conf"
+    path.write_text("Inhalt\n", encoding="utf-8")
+    mod = _make_logging()
+    assert mod._remove_file_if_exists(str(path)) == 0
+    assert not path.exists()
+    assert not path.with_name("datei.conf.bak").exists()
+
+
+def test_remove_file_if_exists_returns_zero_for_missing_file(tmp_path: Path) -> None:
+    """Eine bereits fehlende Datei liefert 0, ohne einen Fehler auszulösen."""
+    mod = _make_logging()
+    assert mod._remove_file_if_exists(str(tmp_path / "fehlt.conf")) == 0
