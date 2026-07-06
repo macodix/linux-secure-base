@@ -244,3 +244,38 @@ def test_check_pruef_script_selftest_syntax_error_returns_false(
     monkeypatch.setattr(Lynis, "PRUEF_SCRIPT", str(script))
     monkeypatch.setattr(Lynis, "BASH_BIN", "/bin/bash")
     assert mod._check_pruef_script_selftest() is False
+
+
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Paket, Dateien, Zeitplan und Timer/Cron."""
+    values = {"operation": "install", "lynis_schedule": "0 4 1 * *"}
+    section = Lynis.doc(values)
+    assert section.startswith("\n## Härtungsprüfung\n\n")
+    assert "**Pakete:** lynis" in section
+    assert f"`{Lynis.PRUEF_SCRIPT}`" in section
+    assert "lynis audit system --quiet --no-colors" in section
+    assert f"Berichte unter {Lynis.BERICHTE_DIR}/" in section
+    assert f"`{Lynis.CRON_FILE}`" in section
+    assert "Monatlicher Audit-Lauf (0 4 1 * *)" in section
+    assert f"**Timer/Cron:** monatlicher Lauf via {Lynis.CRON_FILE}" in section
+
+
+def test_doc_marks_missing_schedule_as_leer_default() -> None:
+    """Fehlt lynis_schedule in values, erscheint "(leer/Default)"."""
+    section = Lynis.doc({})
+    assert "Monatlicher Audit-Lauf ((leer/Default))" in section
+
+
+def test_doc_never_leaks_unrelated_secret() -> None:
+    """Ein Kunstgeheimnis in values erscheint weder als Name noch als Wert."""
+    values = {
+        "operation": "install",
+        "lynis_schedule": "0 4 1 * *",
+        "kunstgeheimnis": "GEHEIM-X",
+    }
+    section = Lynis.doc(values)
+    assert "GEHEIM-X" not in section
+    assert "kunstgeheimnis" not in section

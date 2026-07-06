@@ -77,6 +77,23 @@ def _cron_content(schedule: str, pruef_script: str) -> str:
     )
 
 
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich lynis_schedule ab — lynis verwaltet
+    keine Geheimnisse, ein Allowlist-Mechanismus wie im Bash-Original
+    (doc_val) ist deshalb hier nicht nötig.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
 class Lynis(Module):
     """Härtungsprüfung des Systems über pifos-Aktionen."""
 
@@ -115,6 +132,36 @@ class Lynis(Module):
         if self.operation == "test":
             return self._test()
         return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        Deckungsgleich mit module_doc im Bash-Original (installer/lib/
+        modules/lynis.sh).
+
+        SICHERHEIT: lynis verwaltet keine Geheimnisse; doc() liest aus
+        values ausschließlich lynis_schedule.
+
+        Args:
+            values: Konfigurationswerte des Moduls (operation, lynis_schedule).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Härtungsprüfung".
+        """
+        schedule = _doc_value(values, "lynis_schedule")
+        return (
+            "\n## Härtungsprüfung\n\n"
+            f"**Pakete:** {', '.join(LYNIS_PACKAGES)}\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.PRUEF_SCRIPT}`:\n"
+            "  - `lynis audit system --quiet --no-colors`\n"
+            f"  - `Berichte unter {cls.BERICHTE_DIR}/`\n"
+            f"- `{cls.CRON_FILE}`:\n"
+            f"  - `Monatlicher Audit-Lauf ({schedule})`\n"
+            f"\n**Timer/Cron:** monatlicher Lauf via {cls.CRON_FILE};"
+            f" Berichte unter {cls.BERICHTE_DIR}/\n"
+        )
 
     def _validate(self) -> None:
         """Prüft den Cron-Zeitplan und lehnt ungültige Werte ab.
