@@ -137,3 +137,47 @@ def test_expected_rules_empty_out_lists() -> None:
     mod = _make_ufw("22", "", "")
     mod._validate()
     assert mod._expected_rules() == ["ufw allow 22/tcp"]
+
+
+# --- start: Dispatch nach Betriebsart ---
+
+
+def test_start_uninstall_skips_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """uninstall ruft _validate() nicht auf — ein ungültiger Port bricht nicht ab."""
+    mod = _make_ufw("70000", "", "")  # ungültig, würde _validate() zum Absturz bringen
+    mod.operation = "uninstall"
+    called: list[bool] = []
+
+    def _fake_uninstall(self: Ufw) -> int:
+        called.append(True)
+        return 0
+
+    monkeypatch.setattr(Ufw, "_uninstall", _fake_uninstall)
+
+    assert mod.start() == 0
+    assert called == [True]
+
+
+def test_start_test_still_validates_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """test validiert die Konfiguration wie install/check vor der Ausführung."""
+    mod = _make_ufw("70000", "", "")  # ungültig
+    mod.operation = "test"
+
+    with pytest.raises(ModuleError, match="ungültigen Port"):
+        mod.start()
+
+
+def test_start_test_dispatches_to_test_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bei gültiger Konfiguration ruft start() _test() auf."""
+    mod = _make_ufw("22", "", "")
+    mod.operation = "test"
+    called: list[bool] = []
+
+    def _fake_test(self: Ufw) -> int:
+        called.append(True)
+        return 0
+
+    monkeypatch.setattr(Ufw, "_test", _fake_test)
+
+    assert mod.start() == 0
+    assert called == [True]
