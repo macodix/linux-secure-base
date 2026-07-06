@@ -181,6 +181,68 @@ class Nginx(Module):
             return self._test()
         return self._install()
 
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        Nutzt dieselbe vhost-Zerlegung wie _validate() (_parse_vhosts), damit
+        Bericht und Installation nie auseinanderlaufen. Reine Textmontage:
+        kein Dateizugriff, kein Prozessaufruf, keine Uhrzeit.
+
+        SICHERHEIT: Es geht ausschließlich nginx_vhosts, die aufgelöste
+        certbot-Mail (E-Mail-Adresse, kein Geheimnis) und der certbot-Modus
+        in die Ausgabe ein — kein Zugangsdatum, kein Zertifikatsschlüssel.
+
+        Args:
+            values: Konfigurationswerte des Moduls (nginx_vhosts,
+                nginx_certbot_mail, nginx_certbot_mode, admin_mail).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Webserver nginx (optional)".
+
+        Raises:
+            ModuleError: Wenn nginx_vhosts fehlt oder ungültig ist (siehe
+                _parse_vhosts) — analog zum Bash-Original, dessen
+                module_doc über nginx_parse_vhosts ebenfalls abbricht.
+        """
+        vhosts = cls._parse_vhosts(values.get("nginx_vhosts", ""))
+        certbot_mail = (
+            values.get("nginx_certbot_mail", "").strip()
+            or values.get("admin_mail", "").strip()
+            or "(leer/Default)"
+        )
+        certbot_mode = values.get("nginx_certbot_mode", "").strip() or "live"
+
+        vhost_lines = "".join(
+            f"- `{domain}` (root `{docroot}`)\n" for domain, docroot in vhosts
+        )
+        return (
+            "\n## Webserver nginx (optional)\n\n"
+            f"**Pakete:** {', '.join(cls.PACKAGES)}\n\n"
+            "**Virtuelle Hosts:**\n"
+            f"{vhost_lines}"
+            "\n**Firewall:** 443/tcp eingehend dauerhaft; 80/tcp nur"
+            " temporär für Zertifikatsbezug/-erneuerung.\n\n"
+            f"**certbot:** Modus `{certbot_mode}`, Mail `{certbot_mail}`\n\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `{cls.HARDENING_DROPIN}`:\n"
+            "  - `NoNewPrivileges=true`\n"
+            "  - `ProtectSystem=strict`\n"
+            "  - `ProtectHome=true`\n"
+            "  - `PrivateTmp=true`\n"
+            "  - `ReadWritePaths=/var/log/nginx /var/lib/nginx /run`\n"
+            f"- `{cls.AA_PROFILE}`\n"
+            "\n**Dienste:** nginx (enabled, aktiv nach install)\n"
+            "\n> Hinweis: TLS je Domain über certbot/HTTP-01 (Let's"
+            " Encrypt). HTTP→HTTPS-Redirect von certbot gesetzt, bleibt"
+            " als Absicherung erhalten. AppArmor-Basisprofil für nginx"
+            " per aa-autodep erzeugt und im complain-Modus (protokolliert,"
+            " blockiert nicht; kein Ubuntu-Standardprofil vorhanden,"
+            " konv-system.md 3.10). Weg zu enforce: Testbetrieb →"
+            " aa-logprof → aa-enforce (siehe Anleitung 13). server_tokens"
+            " off gesetzt.\n"
+        )
+
     # --- Validierung -----------------------------------------------------
 
     def _validate(self) -> None:
@@ -211,11 +273,13 @@ class Nginx(Module):
 
         self._vhosts = self._parse_vhosts(self.nginx_vhosts)
 
-    def _parse_vhosts(self, raw: str) -> list[tuple[str, str]]:
+    @classmethod
+    def _parse_vhosts(cls, raw: str) -> list[tuple[str, str]]:
         """Zerlegt die kommagetrennten vhost-Einträge in (domain, docroot).
 
         Format je Eintrag: "domain" oder "domain|docroot"; ohne docroot
         gilt DOCROOT_BASE/domain. Sortiert nach Domainname (Determinismus).
+        Klassenmethode, damit doc() dieselbe Logik ohne Instanz nutzen kann.
 
         Args:
             raw: Kommagetrennte vhost-Einträge.
@@ -237,9 +301,9 @@ class Nginx(Module):
             domain, sep, docroot = entry.partition("|")
             domain = domain.strip().replace(" ", "")
             docroot = docroot.strip() if sep else ""
-            self._validate_domain(domain)
+            cls._validate_domain(domain)
             if not docroot:
-                docroot = f"{self.DOCROOT_BASE}/{domain}"
+                docroot = f"{cls.DOCROOT_BASE}/{domain}"
             if not _DOCROOT_RE.match(docroot) or "/../" in docroot:
                 raise ModuleError(
                     f"nginx: ungültiger docroot: {docroot!r} (vhost {domain})"
@@ -247,7 +311,8 @@ class Nginx(Module):
             vhosts.append((domain, docroot))
         return sorted(vhosts, key=lambda item: item[0])
 
-    def _validate_domain(self, domain: str) -> None:
+    @staticmethod
+    def _validate_domain(domain: str) -> None:
         """Prüft Zeichensatz, Form und DNS-Längengrenzen eines Domainnamens.
 
         Args:

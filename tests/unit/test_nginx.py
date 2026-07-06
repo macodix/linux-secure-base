@@ -545,6 +545,80 @@ def test_check_certbot_dry_run_close_fails_even_if_renew_succeeds(
     assert mod._check_certbot_dry_run() is False
 
 
+# --- doc ---
+
+
+def test_doc_contains_section_title_and_core_fields() -> None:
+    """doc() enthält Abschnittstitel, Pakete, vhosts, Dateien und Dienst."""
+    values = {
+        "nginx_vhosts": "zebra.example.com,alpha.example.com|/srv/www/alpha",
+        "nginx_certbot_mail": "certbot@example.com",
+        "nginx_certbot_mode": "staging",
+        "admin_mail": "admin@example.com",
+    }
+    section = Nginx.doc(values)
+    assert section.startswith("\n## Webserver nginx (optional)\n\n")
+    assert "**Pakete:**" in section
+    for package in Nginx.PACKAGES:
+        assert package in section
+    # Sortiert nach Domainname, wie _parse_vhosts.
+    alpha_pos = section.index("alpha.example.com")
+    zebra_pos = section.index("zebra.example.com")
+    assert alpha_pos < zebra_pos
+    assert "- `alpha.example.com` (root `/srv/www/alpha`)" in section
+    assert "- `zebra.example.com` (root `/var/www/zebra.example.com`)" in section
+    assert "**Firewall:**" in section
+    assert "**certbot:** Modus `staging`, Mail `certbot@example.com`" in section
+    assert f"`{Nginx.HARDENING_DROPIN}`" in section
+    assert "NoNewPrivileges=true" in section
+    assert f"`{Nginx.AA_PROFILE}`" in section
+    assert "**Dienste:** nginx (enabled, aktiv nach install)" in section
+
+
+def test_doc_certbot_mail_falls_back_to_admin_mail() -> None:
+    """Ohne nginx_certbot_mail erscheint admin_mail als certbot-Mail."""
+    values = {
+        "nginx_vhosts": "example.com",
+        "admin_mail": "admin@example.com",
+    }
+    section = Nginx.doc(values)
+    assert "Mail `admin@example.com`" in section
+
+
+def test_doc_certbot_mode_defaults_to_live() -> None:
+    """Ohne nginx_certbot_mode gilt 'live' wie in _validate()."""
+    values = {"nginx_vhosts": "example.com", "admin_mail": "admin@example.com"}
+    section = Nginx.doc(values)
+    assert "Modus `live`" in section
+
+
+def test_doc_missing_mail_marked_as_leer_default() -> None:
+    """Fehlen beide Mail-Quellen, erscheint '(leer/Default)'."""
+    values = {"nginx_vhosts": "example.com"}
+    section = Nginx.doc(values)
+    assert "Mail `(leer/Default)`" in section
+
+
+def test_doc_rejects_missing_vhosts() -> None:
+    """Ohne nginx_vhosts bricht doc() ab, analog zum Bash-Original."""
+    with pytest.raises(ModuleError, match="kein vhost definiert"):
+        Nginx.doc({})
+
+
+def test_doc_never_leaks_secrets_from_unrelated_config_keys() -> None:
+    """Kunstgeheimnis in fremden Schlüsseln erscheint nie in doc()."""
+    values = {
+        "nginx_vhosts": "example.com",
+        "admin_mail": "admin@example.com",
+        "relay_password": "KUNST-GEHEIMNIS-42",
+        "totp_secret": "KUNST-GEHEIMNIS-42",
+    }
+    section = Nginx.doc(values)
+    assert "KUNST-GEHEIMNIS-42" not in section
+    assert "relay_password" not in section
+    assert "totp_secret" not in section
+
+
 # --- _test ---
 
 
