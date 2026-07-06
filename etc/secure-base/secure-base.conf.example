@@ -157,6 +157,12 @@ monit_checks = system,rootfs,sshd,postfix,fail2ban,ufw,cron,rkhunter,restic
 # Monat Wochentag). Vorgabe: monatlich am 1. um 04:00.
 lynis_schedule = 0 4 1 * *
 
+# =====================================================================
+# ================  O P T I O N A L E   M O D U L E  ==================
+# =====================================================================
+# Abschnitte ab hier gehören zu optionalen Modulen. Sie laufen nur,
+# wenn das Modul in optional_enabled steht UND der Lauf mit -o startet.
+
 [nginx]
 # Pflicht, sobald nginx aktiviert ist — virtuelle Hosts, je Eintrag
 # "domain" oder "domain|docroot", kommagetrennt. Ohne docroot gilt
