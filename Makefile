@@ -57,6 +57,9 @@ dist:
 	fi; \
 	mkdir -p "$$pkgdir/usr/lib"; \
 	cp -r "$$tmpdir/pifos/usr/lib/pifos" "$$pkgdir/usr/lib/pifos"; \
+	printf 'Bau g%s vom %s\n' \
+		"$$(git rev-parse --short HEAD)" "$$(date +%Y-%m-%d)" \
+		> "$$pkgdir/BUILD-INFO"; \
 	pip install --require-hashes --no-deps \
 		--target "$$pkgdir/usr/lib/secure_base/_vendor" -r requirements.txt; \
 	find "$$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +; \
@@ -68,10 +71,10 @@ dist:
 	tar xzf "dist/$(DIST_NAME).tar.gz" -C "$$smokedir"; \
 	got=$$(cd / && env -i PATH=/usr/bin:/bin \
 		python3 "$$smokedir/$(DIST_NAME)/bin/secure-base-installer" --version); \
-	if [ "$$got" != "secure-base-installer $(VERSION)" ]; then \
-		echo "Abbruch: Paket-Selbsttest fehlgeschlagen ($$got)"; \
-		exit 1; \
-	fi; \
+	case "$$got" in \
+		"secure-base-installer $(VERSION)"*) ;; \
+		*) echo "Abbruch: Paket-Selbsttest fehlgeschlagen ($$got)"; exit 1 ;; \
+	esac; \
 	gpg --detach-sign --armor --local-user $(SIGNING_KEY) \
 		-o "dist/$(DIST_NAME).tar.gz.asc" "dist/$(DIST_NAME).tar.gz"
 	@echo "Erzeugt: dist/$(DIST_NAME).tar.gz und dist/$(DIST_NAME).tar.gz.asc (Selbsttest bestanden)"

@@ -31,13 +31,19 @@ from secure_base.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung
 
 
 def _version() -> str:
-    """Liest die Version aus der pyproject.toml des Paketbaums.
+    """Liest Version und Bau-Kennung des Paketbaums.
 
     Die pyproject.toml ist die einzige Quelle der Version (auch der
-    Paketbau liest sie); die rc-Kennung ist Teil des Versionswerts.
+    Paketbau liest sie). Die Datei BUILD-INFO schreibt der Paketbau
+    (Commit und Datum); sie identifiziert den Testbau eindeutig und
+    fehlt im reinen Arbeitsbaum.
     """
     with (_ROOT / "pyproject.toml").open("rb") as fh:
-        return str(tomllib.load(fh)["project"]["version"])
+        version = str(tomllib.load(fh)["project"]["version"])
+    build_info = _ROOT / "BUILD-INFO"
+    if build_info.exists():
+        version += f" ({build_info.read_text(encoding='utf-8').strip()})"
+    return version
 
 
 def build_parser() -> argparse.ArgumentParser:
