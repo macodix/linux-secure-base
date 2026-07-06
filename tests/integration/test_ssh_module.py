@@ -305,3 +305,127 @@ def test_check_reports_missing_pam_bypass_protection(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("weiterhin aktiv" in str(m) for m in messages)
+
+
+# --- uninstall ---
+
+
+def test_uninstall_reverts_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall nach install nimmt alle Härtungs-Eingriffe vollständig zurück."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0, _sent_messages(conn)
+
+    sshd_config = Path(mod.SSHD_CONFIG).read_text(encoding="utf-8")
+    for key, _value in SSHD_SETTINGS:
+        assert key not in sshd_config
+    assert "ChallengeResponseAuthentication" not in sshd_config
+
+    pam_sshd = Path(mod.PAM_SSHD).read_text(encoding="utf-8")
+    assert "auth required pam_google_authenticator.so" not in pam_sshd
+    assert "pam_exec.so seteuid" not in pam_sshd
+    assert mod._pam_bypass_active() is True
+
+    assert not Path(mod.LOGIN_MAIL_SCRIPT).exists()
+
+
+def test_uninstall_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter uninstall-Lauf direkt nach dem ersten bleibt erfolgreich."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    assert mod.start() == 0
+    result = mod.start()
+
+    assert result == 0, _sent_messages(conn)
+    assert mod._pam_bypass_active() is True
+
+
+def test_uninstall_without_prior_install_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall auf einem ungehärteten Ausgangszustand bleibt erfolgreich."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0, _sent_messages(conn)
+    assert mod._pam_bypass_active() is True
+
+
+def test_uninstall_stops_on_sshd_t_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein sshd -t-Fehler verhindert den Reload beim Rückbau."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    monkeypatch.setenv("FAKE_SSHD_T_EXIT", "1")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: sshd-Konfiguration validieren und neu laden" in messages
+
+
+def test_uninstall_keeps_login_mail_hook_gone_when_disabled_at_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall bleibt erfolgreich, wenn install den Login-Mail-Hook nicht anlegt."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    mod.ssh_enable_login_mail = "no"
+    assert mod.start() == 0
+
+    mod.operation = "uninstall"
+    result = mod.start()
+
+    assert result == 0, _sent_messages(conn)
+    assert not Path(mod.LOGIN_MAIL_SCRIPT).exists()
+
+
+# --- test ---
+
+
+def test_test_returns_zero_on_valid_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test liefert 0 bei syntaktisch gültiger sshd_config, ohne Systemänderung."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    sshd_config_before = Path(mod.SSHD_CONFIG).read_text(encoding="utf-8")
+    pam_sshd_before = Path(mod.PAM_SSHD).read_text(encoding="utf-8")
+
+    mod.operation = "test"
+    result = mod.start()
+
+    assert result == 0, _sent_messages(conn)
+    assert Path(mod.SSHD_CONFIG).read_text(encoding="utf-8") == sshd_config_before
+    assert Path(mod.PAM_SSHD).read_text(encoding="utf-8") == pam_sshd_before
+    messages = _sent_messages(conn)
+    assert any("sshd -t: OK" in str(m) for m in messages)
+
+
+def test_test_returns_one_on_invalid_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """test liefert 1, wenn sshd -t fehlschlägt."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_SSHD_T_EXIT", "1")
+
+    mod.operation = "test"
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("sshd -t fehlgeschlagen" in str(m) for m in messages)

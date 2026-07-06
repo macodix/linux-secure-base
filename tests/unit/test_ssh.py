@@ -11,6 +11,8 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.ssh import (
     CHALLENGE_RESPONSE_SETTING,
+    LOGIN_MAIL_MARKER,
+    PAM_GA_MARKER,
     SSH_USERS_GROUP,
     SSHD_SETTINGS,
     Ssh,
@@ -209,6 +211,118 @@ def test_remove_setting_removes_all_matches(
     )
 
 
+# --- _step_remove_sshd_settings ---
+
+
+def test_step_remove_sshd_settings_removes_all_directives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entfernt alle SSHD_SETTINGS-Direktiven und den Challenge-Response-Alias."""
+    mod = _make_ssh()
+    sshd_config = tmp_path / "sshd_config"
+    lines = [f"{key} {value}\n" for key, value in SSHD_SETTINGS]
+    lines.append("ChallengeResponseAuthentication yes\n")
+    sshd_config.write_text("".join(lines), encoding="utf-8")
+    monkeypatch.setattr(Ssh, "SSHD_CONFIG", str(sshd_config))
+
+    assert mod._step_remove_sshd_settings() == 0
+
+    content = sshd_config.read_text(encoding="utf-8")
+    for key, _value in SSHD_SETTINGS:
+        assert key not in content
+    assert "ChallengeResponseAuthentication" not in content
+
+
+def test_step_remove_sshd_settings_missing_file_returns_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt die Zieldatei, liefert der Schritt einen Fehler."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "SSHD_CONFIG", str(tmp_path / "fehlt"))
+    assert mod._step_remove_sshd_settings() == 1
+
+
+# --- _step_remove_pam_totp_entry ---
+
+
+def test_step_remove_pam_totp_entry_removes_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entfernt den TOTP-PAM-Block vollständig."""
+    mod = _make_ssh()
+    pam_sshd = tmp_path / "sshd"
+    pam_sshd.write_text(
+        f"# BEGIN {PAM_GA_MARKER}\n{_pam_ga_block()}\n# END {PAM_GA_MARKER}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))
+    assert mod._step_remove_pam_totp_entry() == 0
+    assert mod._check_pam_google_authenticator() is False
+
+
+# --- _step_restore_pam_bypass ---
+
+
+def test_step_restore_pam_bypass_uncomments_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stellt eine auskommentierte @include common-auth-Zeile wieder aktiv her."""
+    mod = _make_ssh()
+    pam_sshd = tmp_path / "sshd"
+    pam_sshd.write_text("# @include common-auth\n", encoding="utf-8")
+    monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))
+    assert mod._step_restore_pam_bypass() == 0
+    assert mod._pam_bypass_active() is True
+
+
+def test_step_restore_pam_bypass_missing_file_returns_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt die Zieldatei, liefert der Schritt einen Fehler."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "PAM_SSHD", str(tmp_path / "fehlt"))
+    assert mod._step_restore_pam_bypass() == 1
+
+
+# --- _step_remove_login_mail_hook ---
+
+
+def test_step_remove_login_mail_hook_removes_block_and_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entfernt PAM-Block und Skriptdatei, wenn beide vorhanden sind."""
+    mod = _make_ssh()
+    pam_sshd = tmp_path / "sshd"
+    script = tmp_path / "login-mail.sh"
+    pam_sshd.write_text(
+        f"# BEGIN {LOGIN_MAIL_MARKER}\n"
+        f"{_login_mail_pam_block(str(script))}\n"
+        f"# END {LOGIN_MAIL_MARKER}\n",
+        encoding="utf-8",
+    )
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))
+    monkeypatch.setattr(Ssh, "LOGIN_MAIL_SCRIPT", str(script))
+
+    assert mod._step_remove_login_mail_hook() == 0
+
+    assert not script.exists()
+    assert mod._check_login_mail_pam_line() is False
+
+
+def test_step_remove_login_mail_hook_idempotent_without_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt die Skriptdatei bereits, bleibt der Schritt erfolgreich (idempotent)."""
+    mod = _make_ssh()
+    pam_sshd = tmp_path / "sshd"
+    pam_sshd.write_text("# nichts hier\n", encoding="utf-8")
+    monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))
+    monkeypatch.setattr(Ssh, "LOGIN_MAIL_SCRIPT", str(tmp_path / "fehlt.sh"))
+
+    assert mod._step_remove_login_mail_hook() == 0
+
+
 # --- PAM-Bypass ---
 
 
@@ -319,6 +433,45 @@ def test_check_sshd_settings_command_failure(
     mod = _make_ssh()
     monkeypatch.setattr(Ssh, "SSHD_BIN", _make_executable(tmp_path, "sshd", "exit 1"))
     assert mod._check_sshd_settings() is False
+
+
+# --- _test / _test_sshd_config_syntax ---
+
+
+def test_test_sshd_config_syntax_true_on_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Liefert sshd -t Exit 0, liefert die Prüfung True."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "SSHD_BIN", _make_executable(tmp_path, "sshd", "exit 0"))
+    assert mod._test_sshd_config_syntax() is True
+
+
+def test_test_sshd_config_syntax_false_on_exit_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Liefert sshd -t Exit ungleich 0, liefert die Prüfung False."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "SSHD_BIN", _make_executable(tmp_path, "sshd", "exit 1"))
+    assert mod._test_sshd_config_syntax() is False
+
+
+def test_test_returns_zero_on_syntax_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_test liefert 0, wenn sshd -t erfolgreich ist."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "SSHD_BIN", _make_executable(tmp_path, "sshd", "exit 0"))
+    assert mod._test() == 0
+
+
+def test_test_returns_one_on_syntax_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_test liefert 1, wenn sshd -t fehlschlägt."""
+    mod = _make_ssh()
+    monkeypatch.setattr(Ssh, "SSHD_BIN", _make_executable(tmp_path, "sshd", "exit 1"))
+    assert mod._test() == 1
 
 
 # --- _check_package_installed ---

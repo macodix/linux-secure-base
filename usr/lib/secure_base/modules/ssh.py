@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from pifos.actions.block_in_file_action import BlockInFileAction
+from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.line_in_file_action import LineInFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
@@ -202,6 +203,10 @@ class Ssh(Module):
         self._validate()
         if self.operation == "check":
             return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
         return self._install()
 
     def _validate(self) -> None:
@@ -457,6 +462,161 @@ class Ssh(Module):
         return self.run_action(
             self.SYSTEMD_ACTION_CLS(operation="reload", unit="ssh", timeout=30)
         )
+
+    # --- uninstall ---
+
+    def _uninstall(self) -> int:
+        """Nimmt die SSH-Härtung vollständig zurück.
+
+        Räumt bedingungslos auf — unabhängig vom aktuellen Wert von
+        ssh_enable_login_mail —, damit kein halb eingerichtetes
+        Zwischenstadium zurückbleibt. Die Pakete openssh-server und
+        libpam-google-authenticator werden nicht entfernt (nicht
+        Modul-Verantwortung, siehe Modul-Docstring).
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, _Step]] = [
+            ("Login-Mail-Hook zurücknehmen", self._step_remove_login_mail_hook),
+            ("sshd_config-Direktiven zurücknehmen", self._step_remove_sshd_settings),
+            ("PAM-TOTP-Eintrag entfernen", self._step_remove_pam_totp_entry),
+            ("PAM-Bypass-Schutz zurücknehmen", self._step_restore_pam_bypass),
+            (
+                "sshd-Konfiguration validieren und neu laden",
+                self._step_validate_and_reload,
+            ),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "ssh", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "ssh", f"fehlgeschlagen: {label}")
+                return 1
+
+        self.send_message(
+            LogLevel.INFO,
+            "ssh",
+            "Pakete openssh-server und libpam-google-authenticator bleiben"
+            " installiert (nicht Modul-Verantwortung)",
+        )
+        return 0
+
+    def _step_remove_login_mail_hook(self) -> int:
+        """Nimmt den Login-Mail-Hook bedingungslos zurück.
+
+        Entfernt die pam_exec-session-Zeile und, falls vorhanden, die
+        Skriptdatei — unabhängig von ssh_enable_login_mail.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = BlockInFileAction(
+            path=self.PAM_SSHD, block="", marker=LOGIN_MAIL_MARKER, state="absent"
+        )
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "ssh", "Login-Mail-PAM-Zeile entfernen")
+            return 1
+        script = Path(self.LOGIN_MAIL_SCRIPT)
+        if not script.exists():
+            return 0
+        if self.run_action(DeleteFileAction(path=str(script), safe_mode=False)) != 0:
+            self.send_message(
+                LogLevel.ERROR, "ssh", f"{self.LOGIN_MAIL_SCRIPT} entfernen"
+            )
+            return 1
+        return 0
+
+    def _step_remove_sshd_settings(self) -> int:
+        """Entfernt alle in _step_harden_sshd_config gesetzten Direktiven.
+
+        Reihenfolge umgekehrt zu SSHD_SETTINGS (bessere Diff-Lesbarkeit
+        gegenüber _step_harden_sshd_config), funktional ohne Bedeutung —
+        jeder Eingriff ist eigenständig. Entfernt ChallengeResponseAuthentication
+        unabhängig von ssh_enable_challenge_response_auth, falls vorhanden.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Entfernen.
+        """
+        ok = True
+        for key, _value in reversed(SSHD_SETTINGS):
+            ok &= self._remove_setting(key)
+        ok &= self._remove_setting(CHALLENGE_RESPONSE_SETTING)
+        return 0 if ok else 1
+
+    def _step_remove_pam_totp_entry(self) -> int:
+        """Entfernt den TOTP-PAM-Eintrag aus /etc/pam.d/sshd.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = BlockInFileAction(
+            path=self.PAM_SSHD, block="", marker=PAM_GA_MARKER, state="absent"
+        )
+        return self.run_action(action)
+
+    def _step_restore_pam_bypass(self) -> int:
+        """Stellt eine aktive @include common-auth-Zeile wieder her.
+
+        Umgekehrter Aussperr-Schutz: nach der Rücknahme muss SSH-Login
+        wieder ohne TOTP-PAM-Eintrag möglich sein, sonst bliebe der
+        Bypass-Schutz ohne den zugehörigen TOTP-Eintrag aktiv.
+
+        Returns:
+            0, wenn die Zeile danach aktiv vorhanden ist, sonst 1.
+        """
+        action = LineInFileAction(
+            path=self.PAM_SSHD,
+            line="@include common-auth",
+            match=r"^\s*#?\s*@include\s+common-auth\s*$",
+        )
+        if self.run_action(action) != 0:
+            return 1
+        if not self._pam_bypass_active():
+            self.send_message(
+                LogLevel.ERROR,
+                "ssh",
+                "PAM-Bypass-Wiederherstellung fehlgeschlagen: @include"
+                " common-auth weiterhin inaktiv",
+            )
+            return 1
+        return 0
+
+    # --- test ---
+
+    def _test(self) -> int:
+        """Führt den Funktionstest ohne Systemänderung aus.
+
+        Sitzungs-neutral: kein Restart, kein Login-Probe, kein
+        Default-Policy-Toggle. Sammelt alle Prüfungen ohne Abbruch bei
+        einem einzelnen Fehlschlag (anders als _install/_uninstall).
+
+        Returns:
+            0 bei bestandenem Test, sonst 1.
+        """
+        ok = self._test_sshd_config_syntax()
+        if ok:
+            self.send_message(
+                LogLevel.INFO,
+                "ssh",
+                "Für einen Login-Test in einer zweiten SSH-Sitzung manuell"
+                " verifizieren (Public-Key + TOTP).",
+            )
+        return 0 if ok else 1
+
+    def _test_sshd_config_syntax(self) -> bool:
+        """Prüft die sshd_config-Syntax über "sshd -t" (sitzungs-neutral).
+
+        Returns:
+            True, wenn "sshd -t" Exit 0 liefert.
+        """
+        action = SysCmdAction([self.SSHD_BIN, "-t"], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(LogLevel.ERROR, "ssh", "sshd -t fehlgeschlagen")
+            return False
+        self.send_message(
+            LogLevel.INFO, "ssh", "sshd -t: OK (syntaktischer Konfig-Test)"
+        )
+        return True
 
     # --- check ---
 
