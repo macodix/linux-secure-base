@@ -157,7 +157,11 @@ def _write_example(tmp_path: Path, logfile: Path) -> Path:
 
 def _args(conf_path: Path, command: str) -> argparse.Namespace:
     return argparse.Namespace(
-        conf=str(conf_path), modules=[], optional=False, command=command
+        conf=str(conf_path),
+        modules=[],
+        optional=False,
+        command=command,
+        dry_run=False,
     )
 
 

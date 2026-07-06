@@ -58,8 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("install", "check"),
-        help="install: Module einrichten. check: Soll-Ist-Abgleich.",
+        choices=("install", "uninstall", "check", "test"),
+        help=(
+            "install: Module einrichten. uninstall: Modul-Änderungen in "
+            "umgekehrter Reihenfolge zurücknehmen. check: Soll-Ist-"
+            "Abgleich. test: Funktionstest ohne Änderungen."
+        ),
     )
     parser.add_argument(
         "modules",
@@ -72,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--conf",
         metavar="PFAD",
         help="Konfigurationsdatei; ohne Angabe etc/secure-base/secure-base.conf.",
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Trockenlauf: Module nur auflisten, nichts ausführen.",
     )
     parser.add_argument(
         "-o",

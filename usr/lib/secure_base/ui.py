@@ -56,7 +56,12 @@ _LEVEL_STYLE = {
     LogLevel.CRITICAL: "bold red",
 }
 
-_OPERATION_TITLE = {"install": "Installation", "check": "Soll-Ist-Abgleich"}
+_OPERATION_TITLE = {
+    "install": "Installation",
+    "uninstall": "Rücknahme",
+    "check": "Soll-Ist-Abgleich",
+    "test": "Funktionstest",
+}
 
 # Zeilenzahl des Meldungsfensters; fest, damit die Anzeige nicht wächst.
 _LOG_LINES = 8

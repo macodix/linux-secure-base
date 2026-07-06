@@ -102,6 +102,7 @@ def _base_args(**overrides: object) -> argparse.Namespace:
         "modules": [],
         "optional": False,
         "command": "install",
+        "dry_run": False,
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -487,6 +488,130 @@ def test_main_check_sends_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     main(_base_args(command="check"))
 
     assert calls == []
+
+
+def test_main_uninstall_runs_in_reverse_order_and_aborts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uninstall läuft rückwärts und stoppt beim ersten Fehlschlag."""
+    _StubInstaller.fail_names = {"ssh"}
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ufw", "Firewall", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    result = main(_base_args(command="uninstall"))
+
+    assert result == 1
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == [
+        ("ufw", "uninstall"),
+        ("ssh", "uninstall"),
+    ]
+
+
+def test_main_test_continues_after_failure_and_needs_no_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """test läuft ohne root und nach einem Fehlschlag weiter."""
+    _StubInstaller.fail_names = {"base"}
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    result = main(_base_args(command="test"))
+
+    assert result == 1
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == [
+        ("base", "test"),
+        ("ssh", "test"),
+    ]
+
+
+def test_main_install_without_root_returns_2(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Ändernde Läufe ohne Systemrechte enden mit 2."""
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+
+    with caplog.at_level(logging.ERROR, logger="secure_base.installer"):
+        result = main(_base_args(command="install"))
+
+    assert result == 2
+    assert "Systemrechte" in caplog.text
+
+
+def test_main_check_without_root_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """check läuft ohne Systemrechte (rein lesend)."""
+    _StubInstaller.fail_names = set()
+    spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: [spec]
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    result = main(_base_args(command="check"))
+
+    assert result == 0
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == [("base", "check")]
+
+
+def test_main_dry_run_skips_modules_and_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Der Trockenlauf startet kein Modul, sendet keinen Bericht, braucht kein root."""
+    _StubInstaller.fail_names = set()
+    specs = [
+        ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+        ModuleSpec("ssh", "SSH-Härtung", _DummyModuleCls, optional=False),  # type: ignore[arg-type]
+    ]
+    reports: list[object] = []
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(
+        installer_module, "select_modules", lambda named, opt, cfg: specs
+    )
+    monkeypatch.setattr(
+        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module, "_send_install_report", lambda *a, **k: reports.append(a)
+    )
+
+    result = main(_base_args(dry_run=True))
+
+    assert result == 0
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == []
+    assert reports == []
 
 
 def test_main_returns_2_and_logs_when_ensure_config_raises_configerror(

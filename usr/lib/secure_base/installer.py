@@ -278,12 +278,22 @@ def main(args: argparse.Namespace) -> int:
         args: Geparste Kommandozeilenargumente.
 
     Returns:
-        0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einem Aufruf ohne
-        Systemrechte, mit fehlerhafter Auswahl oder ungültiger
-        Konfiguration.
+        0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einem ändernden
+        Aufruf ohne Systemrechte, mit fehlerhafter Auswahl oder
+        ungültiger Konfiguration.
     """
-    if os.geteuid() != 0:
-        logger.error("secure-base-installer benötigt Systemrechte (sudo).")
+    # Systemrechte nur für tatsächlich ändernde Läufe; check und test
+    # sind rein lesend, der Trockenlauf führt nichts aus (wie der
+    # Bash-Vorgänger).
+    if (
+        args.command in ("install", "uninstall")
+        and not args.dry_run
+        and os.geteuid() != 0
+    ):
+        logger.error(
+            "secure-base-installer benötigt für %s Systemrechte (sudo).",
+            args.command,
+        )
         return 2
 
     conf_path = Path(args.conf) if args.conf else DEFAULT_CONF
@@ -304,10 +314,20 @@ def main(args: argparse.Namespace) -> int:
             host = str(general.get("fqdn", "") or "")
         except (ConfigError, KeyError):
             host = ""
-        view = StatusView(specs, args.command, host)
+        # uninstall nimmt in umgekehrter Reihenfolge zurück, was install
+        # in Vorwärtsreihenfolge aufgebaut hat (wie der Bash-Vorgänger).
+        run_specs = list(reversed(specs)) if args.command == "uninstall" else specs
+        view = StatusView(run_specs, args.command, host)
         caller = LsbInstaller(view)
         caller.load_config(str(conf_path), "ini")
-        caller.configure_logging()
+        try:
+            caller.configure_logging()
+        except OSError as exc:
+            # Rein lesende Läufe ohne root dürfen an einer nicht
+            # beschreibbaren Logdatei nicht scheitern.
+            if args.command in ("install", "uninstall"):
+                raise
+            logger.warning("Logdatei nicht nutzbar (%s) — Lauf ohne Logdatei.", exc)
     except ConfigError as exc:
         logger.error("Konfiguration ungültig: %s", exc)
         return 2
@@ -318,22 +338,37 @@ def main(args: argparse.Namespace) -> int:
     ufw_ok = False
     results: list[tuple[str, bool]] = []
     with view.live():
-        for spec in specs:
+        for spec in run_specs:
+            # Trockenlauf: Module nur benennen, nichts starten (wie der
+            # Bash-Vorgänger); Bericht und ufw-Abfrage entfallen unten.
+            if args.dry_run:
+                view.set_running(spec.name)
+                view.set_status_line(
+                    spec.name, "Trockenlauf — übersprungen", LogLevel.INFO
+                )
+                caller.write_log(
+                    f"Trockenlauf — {spec.name} übersprungen", LogLevel.INFO
+                )
+                view.set_result(spec.name, True)
+                continue
             module_cfg = module_config(config, spec, args.command)
             ok = caller.run_module(spec, module_cfg, args.command)
             results.append((spec.label, ok))
             if spec.name == "ufw" and ok:
                 ufw_ok = True
-            # install baut aufeinander auf: nach einem Modul-Fehlschlag
-            # keine weiteren Systemänderungen, Gesamtabbruch (wie der
-            # Bash-Vorgänger). check ist rein lesend und läuft alles
-            # durch, damit die Abweichungsliste vollständig ist.
-            if not ok and args.command == "install":
-                caller.write_log(f"install abgebrochen bei {spec.name}", LogLevel.ERROR)
+            # install und uninstall ändern das System und bauen
+            # aufeinander auf: nach einem Modul-Fehlschlag keine weiteren
+            # Systemänderungen, Gesamtabbruch (wie der Bash-Vorgänger).
+            # check und test sind rein lesend und laufen alles durch,
+            # damit die Ergebnisliste vollständig ist.
+            if not ok and args.command in ("install", "uninstall"):
+                caller.write_log(
+                    f"{args.command} abgebrochen bei {spec.name}", LogLevel.ERROR
+                )
                 break
     view.summary()
-    if args.command == "install":
-        skipped = [s.label for s in specs[len(results) :]]
+    if args.command == "install" and not args.dry_run:
+        skipped = [s.label for s in run_specs[len(results) :]]
         _send_install_report(config, results, skipped, host)
     # Aktivierung nur nach vollständig erfolgreichem Installationslauf:
     # nach einem Abbruch wird erst behoben und neu gelaufen.
