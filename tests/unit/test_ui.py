@@ -1,6 +1,7 @@
 """Unit-Tests für secure_base.ui."""
 
 import io
+import re
 
 from pifos.ipc import LogLevel
 from rich.console import Console
@@ -205,32 +206,73 @@ def test_layout_shrinks_log_window_on_small_terminal() -> None:
     """
     view = _silent_view()
     # Feste Zeilen bei 2 Modulen: 4+1+2+3+1 = 11.
-    view._layout(20)
+    view._layout(20, 100)
     assert view._log_lines == 6
     assert view._height <= 19
 
-    view._layout(16)
+    view._layout(16, 100)
     assert view._log_lines == 3
     assert view._height <= 15
 
-    view._layout(50)
+    view._layout(50, 100)
     assert view._log_lines == 8
 
 
+def test_layout_keeps_panel_narrower_than_terminal() -> None:
+    """Die Panel-Breite bleibt strikt unter der Terminalbreite.
+
+    Deckt den Servertest-Befund ab: eine Zeile bis in die letzte Spalte
+    löst Umbruch/Autowrap aus — hinter jeder Zeile stünde eine Leerzeile.
+    """
+    view = _silent_view()
+    view._layout(50, 209)
+    assert view._width == 208
+
+    # Kein sinnvoller Wert (nicht erkennbares Terminal): keine feste Breite,
+    # damit die Anzeige wie bisher die verfügbare Breite nutzt.
+    view._layout(50, 0)
+    assert view._width is None
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def test_render_stays_within_terminal_width() -> None:
+    """Keine gerenderte Zeile erreicht die letzte Spalte des Terminals.
+
+    Sichtbare Breite messen (Farbcodes entfernen); die Panel-Breite muss
+    strikt unter der Terminalbreite bleiben.
+    """
+    view = _silent_view()
+    cols = 120
+    view._layout(50, cols)
+    # Auf einer breiteren Konsole rendern, damit die Panel-Breite die Grenze
+    # setzt und nicht die Konsolenbreite.
+    console = Console(file=io.StringIO(), width=200)
+    console.print(view._render())
+    out = console.file
+    assert isinstance(out, io.StringIO)
+    widths = [len(_ANSI.sub("", line)) for line in out.getvalue().splitlines() if line]
+    assert widths
+    assert max(widths) == cols - 1
+
+
 class _FakeSize:
-    def __init__(self, height: int) -> None:
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
         self.height = height
 
 
 class _FakeConsole:
-    """Konsole, deren gemeldete Schirmhöhe der Test steuert."""
+    """Konsole, deren gemeldete Schirmgröße der Test steuert."""
 
-    def __init__(self, height: int) -> None:
+    def __init__(self, height: int, width: int = 100) -> None:
         self._height = height
+        self._width = width
 
     @property
     def size(self) -> _FakeSize:
-        return _FakeSize(self._height)
+        return _FakeSize(self._width, self._height)
 
 
 class _CapturingLive:

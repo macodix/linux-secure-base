@@ -9,8 +9,9 @@ Aufbau der Live-Anzeige:
   Meldungen eintreffen.
 - Fortschritt: Balken, Modulzähler, Gesamtlaufzeit.
 
-Alle Breiten und Höhen stehen ab dem Start fest; die Anzeige behält über
-den ganzen Lauf dieselbe Geometrie.
+Spaltenbreiten der Modulliste stehen ab dem Start fest. Panel-Breite und
+-Höhe folgen der aktuellen Terminalgröße und bleiben strikt darunter,
+damit die Anzeige weder umbricht noch scrollt.
 """
 
 import contextlib
@@ -103,22 +104,28 @@ class StatusView:
         self._label_width = max(len(s.label) for s in specs) if specs else 10
         self._name_width = max(len(s.name) for s in specs) if specs else 8
         self._state_width = max(len(state.value) for state in State)
-        self._layout(self._console.size.height)
+        size = self._console.size
+        self._layout(size.height, size.width)
 
-    def _layout(self, terminal_rows: int) -> None:
-        """Legt Meldungsfenster- und Gesamthöhe für die aktuelle Schirmhöhe fest.
+    def _layout(self, terminal_rows: int, terminal_cols: int) -> None:
+        """Legt Breite, Meldungsfenster- und Gesamthöhe für den Schirm fest.
 
-        Passt sich der Terminalhöhe an: Ist der Schirm zu niedrig für das
-        volle Meldungsfenster, schrumpft es (mindestens 3 Zeilen), und die
-        Gesamthöhe bleibt unter der Schirmhöhe. Eine Live-Anzeige, die
-        höher ist als das Terminal, kann nicht am Ort neu zeichnen; sie
-        scrollt stattdessen — das sieht aus, als stünde nach jeder Zeile
-        eine Leerzeile, und die Anzeige wächst und springt zurück.
+        Höhe: Ist der Schirm zu niedrig für das volle Meldungsfenster,
+        schrumpft es (mindestens 3 Zeilen), und die Gesamthöhe bleibt
+        unter der Schirmhöhe. Eine Live-Anzeige, die höher ist als das
+        Terminal, kann nicht am Ort neu zeichnen; sie scrollt stattdessen.
 
-        Wird bei jeder Änderung der Terminalhöhe erneut aufgerufen (Größe
+        Breite: Das Panel bleibt strikt eine Spalte schmaler als das
+        Terminal. Reicht eine Zeile bis in die letzte Spalte, bricht das
+        Terminal um (Autowrap) oder die zu breite Zeile wird hart
+        umbrochen — der Rest erscheint als Leerzeile hinter jeder Zeile,
+        der Rahmen wirkt zerrissen (Servertest-Befund).
+
+        Wird bei jeder Änderung der Terminalgröße erneut aufgerufen (Größe
         zu Beginn oft noch unbekannt, später Fenstergröße geändert).
         """
         self._term_rows = terminal_rows
+        self._term_cols = terminal_cols
         # Feste Zeilen: Rahmen+Innenabstand (4), Kopf (1), Modulliste,
         # drei Leerzeilen, Fortschritt (1).
         fixed_rows = 4 + 1 + len(self._specs) + 3 + 1
@@ -130,13 +137,15 @@ class StatusView:
         self._height = fixed_rows + log_lines + 2
         if terminal_rows > 0:
             self._height = min(self._height, terminal_rows - 1)
+        self._width = terminal_cols - 1 if terminal_cols > 0 else None
 
     @contextlib.contextmanager
     def live(self) -> Iterator[None]:
         """Hält die Live-Anzeige für die Dauer des Laufs offen."""
-        # Geometrie auf die Schirmhöhe bei Anzeigenstart festlegen: bei der
+        # Geometrie auf die Schirmgröße bei Anzeigenstart festlegen: bei der
         # Objekterzeugung ist sie oft noch unbekannt.
-        self._layout(self._console.size.height)
+        size = self._console.size
+        self._layout(size.height, size.width)
         with Live(
             self._render(),
             console=self._console,
@@ -223,9 +232,9 @@ class StatusView:
         """
         if self._live is None:
             return
-        rows = self._console.size.height
-        if rows != self._term_rows:
-            self._layout(rows)
+        size = self._console.size
+        if size.height != self._term_rows or size.width != self._term_cols:
+            self._layout(size.height, size.width)
         self._live.update(self._render())
 
     def _glyph(self, state: State) -> RenderableType:
@@ -310,4 +319,10 @@ class StatusView:
             Text(),
             self._footer(),
         )
-        return Panel(body, border_style="grey50", padding=(1, 2), height=self._height)
+        return Panel(
+            body,
+            border_style="grey50",
+            padding=(1, 2),
+            height=self._height,
+            width=self._width,
+        )
