@@ -10,12 +10,13 @@ Der Installer liegt als einzelnes, signiertes Ein-Schritt-Paket vor (Installer, 
 ## Aufruf
 
 ```sh
-sudo bin/secure-base-installer {install|check} [MODUL ...] [-c PFAD] [-o]
+sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PFAD] [-n] [-o]
 ```
 
-- `install` richtet die ausgewählten Module ein; `check` gleicht Ist- und Soll-Zustand ab, ohne zu ändern.
+- `install` richtet die ausgewählten Module ein; `uninstall` nimmt die Modul-Änderungen in umgekehrter Reihenfolge zurück; `check` gleicht Ist- und Soll-Zustand ab, ohne zu ändern; `test` prüft die Funktion ohne Änderung.
 - `MODUL ...` verarbeitet nur die genannten Module (Kurznamen, siehe Konfiguration); ohne Angabe laufen die in der Konfiguration aktivierten Pflichtmodule.
 - `-c PFAD` / `--conf PFAD` gibt eine abweichende Konfigurationsdatei an; ohne Angabe `etc/secure-base/secure-base.conf`.
+- `-n` / `--dry-run` listet die Module nur auf und führt nichts aus.
 - `-o` / `--optional` verarbeitet zusätzlich die aktivierten optionalen Module.
 
 Der Installer benötigt Systemrechte (`sudo`) und bricht ohne sie ab, bevor er etwas ändert.
@@ -28,7 +29,7 @@ Fehlt die Konfigurationsdatei beim ersten Aufruf ganz, führt der Installer den 
 
 ## Module
 
-Aktuell ist das Referenzmodul `base` umgesetzt (Rechnername, Zeitzone, NTP, sysctl-Härtung, Kernel-Modul-Sperrliste, autofs-Maskierung, AppArmor). Die weiteren Module (`postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit`, `lynis`, optional `nginx`) folgen als eigene Pläne, nach demselben Muster.
+Umgesetzt sind die Pflichtmodule `base` (Rechnername, Zeitzone, NTP, sysctl-Härtung, Kernel-Modul-Sperrliste, autofs-Maskierung, AppArmor), `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit` und `lynis` sowie das optionale Modul `nginx`. Alle folgen demselben Muster.
 
 ## Konzept
 
