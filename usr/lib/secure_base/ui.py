@@ -146,10 +146,18 @@ class StatusView:
         # Objekterzeugung ist sie oft noch unbekannt.
         size = self._console.size
         self._layout(size.height, size.width)
+        # Alternativer Bildschirm (screen=True): rich positioniert absolut,
+        # schreibt nie in den Rollpuffer und scrollt nicht. Ohne ihn stapelt
+        # die Live-Anzeige bei jedem Takt ein neues Frame, sobald ihr Inhalt
+        # höher als das Terminal wird (etwa weil zu breite Zeilen umbrechen)
+        # — die Anzeige wächst und springt (Servertest-Befund). Nach dem Lauf
+        # stellt der Kontext den vorigen Bildschirm wieder her; die
+        # Abschlussbilanz gibt summary() danach im normalen Puffer aus.
         with Live(
             self._render(),
             console=self._console,
             refresh_per_second=8,
+            screen=True,
             vertical_overflow="crop",
         ) as live:
             self._live = live
