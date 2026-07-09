@@ -21,7 +21,7 @@ set log /var/log/monit.log
 set mailserver localhost
 
 set mail-format {
-    from:    monit@meine-domain.de
+    from:    monit@<meine-domain.de>
     subject: monit [$HOST] $EVENT — $SERVICE
     message: $EVENT — $SERVICE auf $HOST ($DATE)
              $DESCRIPTION

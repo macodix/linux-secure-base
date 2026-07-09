@@ -14,7 +14,7 @@ Dieses Dokument beschreibt das Monitoring des Grundsystems:
 
 ## 1. Überwachte Größen
 
-`monit` überwacht Plattenplatz, Systemlast, Speicher und kritische Dienste und alarmiert per Mail an die Administrator Email Adresse. Der Status ist mit `monit status` als `root` abrufbar. Der Prüfzyklus beträgt 60 s (`set daemon 60`). Bei Ausfall eines überwachten Dienst-Prozesses versucht das Monitoring den Diest neu zu starten (`systemctl`)  und sendet ein EMail an die Administrator Email Adresse.
+`monit` überwacht Plattenplatz, Systemlast, Speicher und kritische Dienste und alarmiert per Mail an die Administrator Email Adresse. Der Status ist mit `monit status` als `root` abrufbar. Der Prüfzyklus beträgt 60 s (`set daemon 60`). Bei Ausfall eines überwachten Dienst-Prozesses versucht das Monitoring den Dienst neu zu starten (`systemctl`) und sendet eine EMail an die Administrator Email Adresse.
 
 | Prüfgegenstand | Schwellwert/Bedingung | Reaktion |
 |---|---|---|

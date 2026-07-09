@@ -1,12 +1,11 @@
 # Systembeschreibung
 
-Dieses Dokument beschreibt den Aufbau eines gehärteten Linux-Grundsystems auf einem einzelnen Server: 
+Dieses Dokument beschreibt den Aufbau eines gehärteten Linux-Grundsystems auf einem einzelnen Server:
 
 - Betriebssystem,
 - die Zuordnung der Dienste,
 - das Verzeichnis- und Dienst-Layout,
-- die Vertrauenszonen, den
-- Port-Plan und die ausgehende Firewall-Zielliste.
+- den Port-Plan und die ausgehende Firewall-Zielliste.
 
 # Inhaltsverzeichnis
 1. Betriebssystem
@@ -62,7 +61,7 @@ Dateien mit Zugangsdaten (z. B. Zugangsdaten für SFTP Backuppfad), die nur Root
 
 ## 4. Port-Plan
 
-Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden erst mit dem Webserver geöffnet, Port 80 nur temporär zur Zertifikatsausstellung und -erneuerung (Konzept-Dokument nginx-Grundsatz). Loopback-Verkehr passiert die Host-Firewall nicht, daher sind lokal gebundene Dienste in der Firewall nicht freigegeben.
+Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden erst mit dem Webserver geöffnet, Port 80 nur temporär zur Zertifikatsausstellung und -erneuerung ([nginx-Grundsatz](07-nginx.md), Kapitel 3). Loopback-Verkehr passiert die Host-Firewall nicht, daher sind lokal gebundene Dienste in der Firewall nicht freigegeben.
 
 | Port | Protokoll | Richtung | Bindung | Zweck | Firewall-Status |
 |---|---|---|---|---|---|

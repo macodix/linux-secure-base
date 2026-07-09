@@ -4,7 +4,7 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 ## A. Systembeschreibung
 
-01 [systembeschreibung/01-systembeschreibung.md](systembeschreibung/01-systembeschreibung.md) — Aufbau des Grundsystems: Betriebssystem, Dienste, Verzeichnis-Layout, Vertrauenszonen, Port-Plan, ausgehende Firewall-Zielliste (in Bearbeitung)
+01 [systembeschreibung/01-systembeschreibung.md](systembeschreibung/01-systembeschreibung.md) — Aufbau des Grundsystems: Betriebssystem, Dienste, Verzeichnis-Layout, Port-Plan, ausgehende Firewall-Zielliste (in Bearbeitung)
 
 02 [systembeschreibung/02-haertung.md](systembeschreibung/02-haertung.md) — Sicherheitsanforderungen und Härtung: Maßstab, Schutzziele, Authentifizierung, Angriffsfläche, Brute-Force-Schutz, Zugangsdaten, Dienst-Isolation, Härtungsprüfung (in Bearbeitung)
 

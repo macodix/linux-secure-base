@@ -1,6 +1,6 @@
 # Webserver nginx (optional)
 
-Einrichtung des multidomain-fähigen nginx als Webserver für statische Inhalte. Je Domain ein eigener Server-Block mit eigenem Let's-Encrypt-Zertifikat. Die Begründung der Festlegungen steht im Konzept-Dokument nginx-Grundsatz.
+Einrichtung des multidomain-fähigen nginx als Webserver für statische Inhalte. Je Domain ein eigener Server-Block mit eigenem Let's-Encrypt-Zertifikat. Die Begründung der Festlegungen steht in der [Systembeschreibung nginx-Grundsatz](../systembeschreibung/07-nginx.md).
 
 Die Einrichtung folgt je Domain demselben Ablauf. Die Schritte sind hier für eine Domain `<domain>` beschrieben und für jede weitere Domain zu wiederholen. Erwartet werden zwei bis vier Domains.
 
@@ -77,9 +77,9 @@ Je Domain ein eigenes Zertifikat über die HTTP-01-Challenge beziehen. certbot e
 certbot --nginx -d <domain>
 ```
 
-Für jede weitere Domain den Befehl mit dem jeweiligen Namen wiederholen. Kein Wildcard, kein DNS-01-Verfahren — die Umgebung hat keine DNS-Provider-API (Konzept-Dokument nginx-Grundsatz, Kapitel 3).
+Für jede weitere Domain den Befehl mit dem jeweiligen Namen wiederholen. Kein Wildcard, kein DNS-01-Verfahren — die Umgebung hat keine DNS-Provider-API ([Systembeschreibung nginx-Grundsatz](../systembeschreibung/07-nginx.md), Kapitel 2).
 
-Den HTTP-zu-HTTPS-Redirect-Block, den certbot anlegt, bewusst bestehen lassen. Er bleibt als Absicherung erhalten, falls Port 80 versehentlich offen bleibt (Konzept-Dokument nginx-Grundsatz, Kapitel 5). Der Block auf Port 80 hat die Form:
+Den HTTP-zu-HTTPS-Redirect-Block, den certbot anlegt, bewusst bestehen lassen. Er bleibt als Absicherung erhalten, falls Port 80 versehentlich offen bleibt ([Systembeschreibung nginx-Grundsatz](../systembeschreibung/07-nginx.md), Kapitel 4). Der Block auf Port 80 hat die Form:
 
 ```
 server {

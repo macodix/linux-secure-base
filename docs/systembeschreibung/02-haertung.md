@@ -16,7 +16,7 @@ Dieses Dokument legt die Anforderungen an die Härtung des Linux Grundsystems fe
 
 ## 1. Maßstab und Geltung
 
-Die Härtung folgt dem BSI-IT-Grundschutz als Referenz für die Auswahl der Maßnahmen. Die technische Konfiguration wird mit dem CIS-Benchmark für Ubuntu Server (Level 1) geprüft. CIS Level 1 liefert die konkrete, testbare Konfigurations-Checkliste.
+Die Härtung folgt dem BSI-Grundschutz als Referenz für die Auswahl der Maßnahmen. Die technische Konfiguration wird mit dem CIS-Benchmark für Ubuntu Server (Level 1) geprüft. CIS Level 1 liefert die konkrete, testbare Konfigurations-Checkliste.
 
 Der Maßstab ist verbindlicher Soll-Maßstab, d. h. *begründete* Abweichungen können möglich sein.
 
@@ -77,7 +77,7 @@ Die Härtungsprüfung erfolgt mit `lynis` (`lynis audit system`) als Standard-Au
 
 Der Befund je BSI-Maßnahmenklasse wird mit Schweregrad und Handlungsempfehlung festgehalten. Der Prüflauf erfolgt monatlich.
 
-Ein Schutzvor Schadsoftware wird von `rkhunter`, mit täglichem Lauf aus `cron.daily` und Mail-Bericht an die Administrator Email Adresse, geleistet. Die Baseline-Datenbank wird bei der Einrichtung initialisiert (`rkhunter --propupd`). Das Monitoring prüft die Aktualität des Scan-Logs.
+Ein Schutz vor Schadsoftware wird von `rkhunter`, mit täglichem Lauf aus `cron.daily` und Mail-Bericht an die Administrator Email Adresse, geleistet. Die Baseline-Datenbank wird bei der Einrichtung initialisiert (`rkhunter --propupd`). Das Monitoring prüft die Aktualität des Scan-Logs.
 
 ## Versionshistorie
 
