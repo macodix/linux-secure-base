@@ -39,7 +39,7 @@ smtp_tls_loglevel = 1
 inet_interfaces = loopback-only
 mydestination = $myhostname, localhost.$mydomain, localhost
 
-# Alle ausgehenden Mails an die Admin-Adresse umlenken
+# Alle ausgehenden Mails an die Administrator Email Adresse umlenken
 recipient_canonical_maps = regexp:/etc/postfix/recipient_canonical
 ```
 
@@ -62,7 +62,7 @@ chmod 600 /etc/postfix/sasl_passwd*
 
 Die Datei mit echtem Passwort gehört in keine Versionsverwaltung. Bei Bedarf vorher `umask 077` setzen.
 
-## 4. Mail-Umleitung an die Admin-Adresse
+## 4. Mail-Umleitung an die Administrator Email Adresse
 
 In `/etc/aliases` die Zieladresse als Alias festlegen und bekannt machen:
 
@@ -76,7 +76,7 @@ root:       <admin@meine-domain.de>
 newaliases
 ```
 
-Cron, systemd und mailto-Direktiven landen damit bei der Admin-Adresse. Damit darüber hinaus jede ausgehende Mail unabhängig vom Empfänger dort landet, in `/etc/postfix/recipient_canonical` (existiert noch nicht) eine Zieladresse vorgeben — die zugehörige Direktive in `main.cf` ist bereits gesetzt (Abschnitt 2):
+Cron, systemd und mailto-Direktiven landen damit bei der Administrator Email Adresse. Damit darüber hinaus jede ausgehende Mail unabhängig vom Empfänger dort landet, in `/etc/postfix/recipient_canonical` (existiert noch nicht) eine Zieladresse vorgeben — die zugehörige Direktive in `main.cf` ist bereits gesetzt (Abschnitt 2):
 
 ```
 # /etc/postfix/recipient_canonical
