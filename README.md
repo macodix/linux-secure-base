@@ -65,7 +65,7 @@ Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es e
 ```sh
 curl -LO https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.0-dev.tar.gz
 curl -LO https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.0-dev.tar.gz.asc
-curl -LO https://raw.githubusercontent.com/macodix/linux-secure-base/python-umstellung/SIGNING-KEY.asc
+curl -LO https://raw.githubusercontent.com/macodix/linux-secure-base/main/SIGNING-KEY.asc
 ```
 
 Danach prüfen, entpacken, starten:
@@ -100,9 +100,9 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 
 ## Umstellung auf Python
 
-Der Installer wird von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos, der als eigenes Projekt geführt wird: [github.com/macodix/pifos](https://github.com/macodix/pifos).
+Der Installer wurde von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos, der als eigenes Projekt geführt wird: [github.com/macodix/pifos](https://github.com/macodix/pifos).
 
-Auslöser sind Probleme der Bash-Umsetzung mit nebenläufiger Terminal-Ausgabe und externem Befehlsaufruf: `ufw enable` aus dem Installer stört die SSH-Verbindung und die Live-Anzeige, die Statusanzeige über SSH ist fragil, und die Trennung von Befehls-Ausgabe und Bedienoberfläche ist in Bash umständlich.
+Auslöser waren Probleme der Bash-Umsetzung mit nebenläufiger Terminal-Ausgabe und externem Befehlsaufruf: `ufw enable` aus dem Installer störte die SSH-Verbindung und die Live-Anzeige, die Statusanzeige über SSH war fragil, und die Trennung von Befehls-Ausgabe und Bedienoberfläche war in Bash umständlich.
 
 Die Python-Fassung trennt stdout und stderr je Befehl sauber über `subprocess`, macht die Statusanzeige robuster und die Fehler- und Ablaufsteuerung klarer.
 
