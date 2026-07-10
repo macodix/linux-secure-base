@@ -13,7 +13,8 @@ class ModuleSpec:
         name: Kurzname des Moduls, auch Schlüssel in der Konfiguration.
         label: Anzeige-Beschreibung für die Statusliste.
         module_cls: pifos-Modulklasse.
-        optional: True für optionale Module (Schalter -o).
+        optional: True für optionale Module (laufen mit, sobald sie in
+            optional_enabled stehen).
         optional_keys: CONFIG-Schlüssel, die leer bleiben dürfen; sie
             werden vom Konfigurationsdialog nicht abgefragt.
     """

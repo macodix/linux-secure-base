@@ -83,12 +83,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trockenlauf: Module nur auflisten, nichts ausführen.",
     )
-    parser.add_argument(
-        "-o",
-        "--optional",
-        action="store_true",
-        help="Zusätzlich die aktivierten optionalen Module verarbeiten.",
-    )
     return parser
 
 

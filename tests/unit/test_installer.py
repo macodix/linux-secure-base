@@ -100,7 +100,6 @@ def _base_args(**overrides: object) -> argparse.Namespace:
     defaults: dict[str, object] = {
         "conf": None,
         "modules": [],
-        "optional": False,
         "command": "install",
         "dry_run": False,
     }
@@ -244,7 +243,7 @@ def test_main_returns_2_when_no_modules_selected(
     """Ohne ausgewählte Module bricht main mit Exitcode 2 ab."""
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(installer_module, "select_modules", lambda named, opt, cfg: [])
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [])
     assert main(_base_args()) == 2
 
 
@@ -256,9 +255,7 @@ def test_main_runs_selected_modules_and_returns_0(
     spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -277,9 +274,7 @@ def test_main_returns_1_when_a_module_fails(monkeypatch: pytest.MonkeyPatch) -> 
     spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -301,9 +296,7 @@ def test_main_install_aborts_after_first_failed_module(
     ]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -327,9 +320,7 @@ def test_main_check_continues_after_failed_module(
     ]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -354,9 +345,7 @@ def test_main_install_offers_ufw_enable_after_success(
     offered: list[bool] = []
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -380,9 +369,7 @@ def test_main_check_never_offers_ufw_enable(
     offered: list[bool] = []
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -447,9 +434,7 @@ def test_main_install_sends_report_with_results_and_skipped(
     calls: list[tuple[list[tuple[str, bool]], list[str]]] = []
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -474,9 +459,7 @@ def test_main_check_sends_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -504,9 +487,7 @@ def test_main_uninstall_runs_in_reverse_order_and_aborts(
     ]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -533,9 +514,7 @@ def test_main_test_continues_after_failure_and_needs_no_root(
     ]
     monkeypatch.setattr("os.geteuid", lambda: 1000)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -570,9 +549,7 @@ def test_main_check_without_root_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
     monkeypatch.setattr("os.geteuid", lambda: 1000)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -597,9 +574,7 @@ def test_main_dry_run_skips_modules_and_report(
     reports: list[object] = []
     monkeypatch.setattr("os.geteuid", lambda: 1000)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: specs
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
         installer_module, "module_config", lambda cfg, spec, op: MagicMock()
     )
@@ -786,9 +761,7 @@ def test_main_returns_2_and_logs_when_configure_logging_raises_configerror(
     spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
     monkeypatch.setattr("os.geteuid", lambda: 0)
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
 
     class _FailingConfigureInstaller(_StubInstaller):
         def configure_logging(self) -> None:

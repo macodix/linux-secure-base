@@ -374,7 +374,7 @@ def main(args: argparse.Namespace) -> int:
         if config is None:
             return 2
 
-        specs = select_modules(args.modules, args.optional, config)
+        specs = select_modules(args.modules, config)
         if not specs:
             logger.error("Keine Module ausgewählt.")
             return 2

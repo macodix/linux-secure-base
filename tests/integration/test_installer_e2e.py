@@ -159,7 +159,6 @@ def _args(conf_path: Path, command: str) -> argparse.Namespace:
     return argparse.Namespace(
         conf=str(conf_path),
         modules=[],
-        optional=False,
         command=command,
         dry_run=False,
     )
@@ -174,9 +173,7 @@ def _use_test_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     übergeben und dort über den regulären Import gefunden.
     """
     spec = ModuleSpec("base", "Grundkonfiguration (Test)", _TestBase, optional=False)
-    monkeypatch.setattr(
-        installer_module, "select_modules", lambda named, opt, cfg: [spec]
-    )
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr("os.geteuid", lambda: 0)
     (_ARTIFACT_DIR / "sysctl.conf").unlink(missing_ok=True)
     (_ARTIFACT_DIR / "modprobe.conf").unlink(missing_ok=True)

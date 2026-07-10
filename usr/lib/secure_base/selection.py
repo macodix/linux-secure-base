@@ -23,14 +23,16 @@ def _split(value: object) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def select_modules(
-    named: list[str], with_optional: bool, config: Config
-) -> list[ModuleSpec]:
+def select_modules(named: list[str], config: Config) -> list[ModuleSpec]:
     """Wählt die auszuführenden Module in fester Reihenfolge.
+
+    Ein normaler Lauf (ohne benannte Module) verarbeitet die Pflichtmodule
+    aus modules_enabled zusammen mit allen in optional_enabled gelisteten
+    optionalen Modulen — ein optionales Modul läuft mit, sobald es dort
+    eingetragen ist, ohne einen weiteren Schalter.
 
     Args:
         named: Ausdrücklich benannte Module; leer für die aktiven.
-        with_optional: True, wenn optionale Module mitlaufen sollen.
         config: Geladene Konfiguration mit den Aktivierungslisten.
 
     Returns:
@@ -45,7 +47,7 @@ def select_modules(
     result: list[ModuleSpec] = []
     for spec in REGISTRY:
         if spec.optional:
-            if with_optional and spec.name in optional_enabled:
+            if spec.name in optional_enabled:
                 result.append(spec)
         elif spec.name in enabled:
             result.append(spec)

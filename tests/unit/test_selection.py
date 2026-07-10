@@ -45,7 +45,7 @@ def test_select_modules_named_returns_only_named_in_registry_order(
     monkeypatch.setattr(selection_module, "REGISTRY", _FAKE_REGISTRY)
     config = _config(modules_enabled="", optional_enabled="")
 
-    result = select_modules(["mandatory_c", "mandatory_a"], False, config)
+    result = select_modules(["mandatory_c", "mandatory_a"], config)
 
     assert [s.name for s in result] == ["mandatory_a", "mandatory_c"]
 
@@ -57,7 +57,7 @@ def test_select_modules_default_returns_enabled_mandatory_only(
     monkeypatch.setattr(selection_module, "REGISTRY", _FAKE_REGISTRY)
     config = _config(modules_enabled="mandatory_a, mandatory_c")
 
-    result = select_modules([], False, config)
+    result = select_modules([], config)
 
     assert [s.name for s in result] == ["mandatory_a", "mandatory_c"]
 
@@ -69,30 +69,30 @@ def test_select_modules_excludes_disabled_mandatory(
     monkeypatch.setattr(selection_module, "REGISTRY", _FAKE_REGISTRY)
     config = _config(modules_enabled="mandatory_a")
 
-    result = select_modules([], False, config)
+    result = select_modules([], config)
 
     assert [s.name for s in result] == ["mandatory_a"]
 
 
-def test_select_modules_with_optional_flag_adds_enabled_optional(
+def test_select_modules_runs_optional_module_listed_in_optional_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Der Schalter -o ergänzt die aktivierten optionalen Module."""
+    """Ein optionales Modul läuft mit, sobald es in optional_enabled steht."""
     monkeypatch.setattr(selection_module, "REGISTRY", _FAKE_REGISTRY)
     config = _config(modules_enabled="mandatory_a", optional_enabled="optional_b")
 
-    result = select_modules([], True, config)
+    result = select_modules([], config)
 
     assert [s.name for s in result] == ["mandatory_a", "optional_b"]
 
 
-def test_select_modules_without_optional_flag_excludes_optional(
+def test_select_modules_excludes_optional_module_not_in_optional_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ohne den Schalter -o laufen aktivierte optionale Module nicht mit."""
+    """Ein nicht gelistetes optionales Modul läuft nicht mit."""
     monkeypatch.setattr(selection_module, "REGISTRY", _FAKE_REGISTRY)
-    config = _config(modules_enabled="mandatory_a", optional_enabled="optional_b")
+    config = _config(modules_enabled="mandatory_a", optional_enabled="")
 
-    result = select_modules([], False, config)
+    result = select_modules([], config)
 
     assert [s.name for s in result] == ["mandatory_a"]

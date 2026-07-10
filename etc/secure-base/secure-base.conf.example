@@ -15,7 +15,7 @@ loglevel = INFO
 # diese Liste legt nur fest, welche Module mitlaufen.
 modules_enabled = base,postfix,users,ssh,ufw,fail2ban,rkhunter,logging,unattended,restic,monit,lynis
 
-# Aktive optionale Module, kommagetrennt; nur mit dem Schalter -o
+# Aktive optionale Module, kommagetrennt; werden bei jedem Lauf mit-
 # verarbeitet (verfügbar: nginx, postgresql). Leer lassen, wenn keine.
 optional_enabled =
 
@@ -166,7 +166,7 @@ lynis_schedule = 0 4 1 * *
 # ================  O P T I O N A L E   M O D U L E  ==================
 # =====================================================================
 # Abschnitte ab hier gehören zu optionalen Modulen. Sie laufen nur,
-# wenn das Modul in optional_enabled steht UND der Lauf mit -o startet.
+# wenn das Modul in optional_enabled steht.
 
 [nginx]
 # Pflicht, sobald nginx aktiviert ist — virtuelle Hosts, je Eintrag
