@@ -29,7 +29,7 @@ Fehlt die Konfigurationsdatei beim ersten Aufruf ganz, führt der Installer den 
 
 ## Module
 
-Umgesetzt sind die Pflichtmodule `base` (Rechnername, Zeitzone, NTP, sysctl-Härtung, Kernel-Modul-Sperrliste, autofs-Maskierung, AppArmor), `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit` und `lynis` sowie das optionale Modul `nginx`. Alle folgen demselben Muster.
+Umgesetzt sind die Pflichtmodule `base` (Rechnername, Zeitzone, NTP, sysctl-Härtung, Kernel-Modul-Sperrliste, autofs-Maskierung, AppArmor), `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit` und `lynis` sowie die optionalen Module `nginx` und `postgresql`. Alle folgen demselben Muster.
 
 ## Konzept
 

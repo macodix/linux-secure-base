@@ -1,6 +1,6 @@
 # Linux Secure Base
 
-Dokumentation und Installer für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx), auf der Basis von Ubuntu 26.04 LTS (minimal).
+Dokumentation und Installer für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx) und Datenbankserver (PostgreSQL), auf der Basis von Ubuntu 26.04 LTS (minimal).
 
 ## Zweck
 
@@ -15,6 +15,7 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Datensicherung,
 - Monitoring (via EMail)
 - optional nginx Webserver
+- optional PostgreSQL Datenbankserver
 
 Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden müssen. Alle Benachrichtigungen werden per EMail an eine festzulegende Adresse gesandt.
 

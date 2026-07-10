@@ -15,3 +15,5 @@
 [06 Monitoring](06-monitoring.md)
 
 [07 nginx-Grundsatz](07-nginx.md)
+
+[08 postgresql-Grundsatz](08-postgresql.md)

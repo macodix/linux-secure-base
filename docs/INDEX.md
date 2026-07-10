@@ -18,9 +18,11 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 07 [systembeschreibung/07-nginx.md](systembeschreibung/07-nginx.md) — Webserver-Grundsatz: Multidomain, TLS je Name über certbot/HTTP-01, Port-Strategie, Redirect, Härtung (in Bearbeitung)
 
+08 [systembeschreibung/08-postgresql.md](systembeschreibung/08-postgresql.md) — Datenbankserver-Grundsatz: nur Loopback, scram-sha-256, restriktive pg_hba, Verbindungs-Logging, Rechte (in Bearbeitung)
+
 ## B. Anleitung
 
-01 [anleitung/INDEX.md](anleitung/INDEX.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems und des optionalen nginx-Webservers (in Bearbeitung)
+01 [anleitung/INDEX.md](anleitung/INDEX.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems, des optionalen nginx-Webservers und des optionalen PostgreSQL-Datenbankservers (in Bearbeitung)
 
 ## C. Installer
 

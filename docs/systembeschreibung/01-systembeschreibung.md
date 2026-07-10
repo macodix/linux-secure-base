@@ -21,7 +21,7 @@ Die Dokumentation beschreibt die Einrichtung eines Linux-Server mit Ubuntu Serve
 
 ## 2. Dienste
 
-Die Dienste gliedern sich in zwei Gruppen: das gehärtete Grundsystem und die optionalen Komponenten wie Webserver.
+Die Dienste gliedern sich in zwei Gruppen: das gehärtete Grundsystem und die optionalen Komponenten wie Webserver und Datenbankserver.
 
 | Gruppe | Dienst | Bindung | Benutzer | Auto-Restart |
 |---|---|---|---|---|
@@ -41,6 +41,7 @@ Die Dienste gliedern sich in zwei Gruppen: das gehärtete Grundsystem und die op
 | Gruppe | Dienst | Bindung | Benutzer | Auto-Restart |
 |---|---|---|---|---|
 | Webserver | nginx (TLS-Terminierung, statische Auslieferung) | extern, Ports 80/443 | www-data | systemd |
+| Datenbankserver | PostgreSQL (lokal beschränkt) | Loopback | postgres | systemd |
 
 Dienste ohne Netzwerkzugriff/-port laufen unter einem eigenen System-Benutzer ohne Login-Shell und ohne administrative Gruppenrechte. Alle Daemons starten nach Reboot und nach Absturz automatisch wieder.
 
@@ -69,6 +70,7 @@ Im Grundzustand ist eingehend nur SSH offen. Die Web-Ports 80 und 443 werden ers
 | 80 | TCP | eingehend | extern | ACME-HTTP-01 (TLS-Zertifikat) | nur temporär mit Webserver |
 | 443 | TCP | eingehend | extern | HTTPS Webserver | offen mit Webserver |
 | 2812 | TCP | lokal | 127.0.0.1 | Monitoring-Status | nicht freigegeben (Loopback) |
+| 5432 | TCP | lokal | 127.0.0.1 | PostgreSQL (optional) | nicht freigegeben (Loopback) |
 
 Auf die optionale Verschärfung, den SSH-Port zusätzlich auf bekannte Quell-Netze zu beschränken, wird bewusst verzichtet. Bei wechselndem Standort des SSH-Nutzers führt eine Quell-Netz-Regel zur Aussperrung. Der Zugang ist über Public-Key, TOTP und `fail2ban` dreifach gesichert.
 

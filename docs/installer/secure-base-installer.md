@@ -32,7 +32,7 @@ Der Rückgabewert ist 0 bei Erfolg, 1 bei einem Modulfehler, 2 bei fehlenden Rec
 
 Jedes Modul ist eine pifos-`Module`-Klasse mit einer `CONFIG`-Liste seiner Konfigurationsschlüssel. Die Registratur (`secure_base.modules.REGISTRY`) hält je Modul einen `ModuleSpec` mit Kurzname, Anzeige-Label, Modulklasse und Optional-Kennzeichen; die Reihenfolge in der Registratur ist die Ausführungsreihenfolge.
 
-Pflichtmodule: `base`, `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit`, `lynis`. Optionales Modul: `nginx`, nur mit dem Schalter `-o` und einem Eintrag in `optional_enabled`.
+Pflichtmodule: `base`, `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit`, `lynis`. Optionale Module: `nginx` und `postgresql`, nur mit dem Schalter `-o` und einem Eintrag in `optional_enabled`.
 
 Ein Modul kann eine Klassenmethode `doc` bereitstellen, die seinen Abschnitt für den Installationsbericht liefert (Kapitel 7).
 

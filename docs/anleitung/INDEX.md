@@ -1,6 +1,6 @@
 # Installationsanleitung
 
-Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von Ubuntu Server 26.04 LTS mit optionaler Installation des Webserver `nginx`.
+Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von Ubuntu Server 26.04 LTS mit optionaler Installation des Webservers `nginx` und des Datenbankservers `postgresql`.
 
 
 ## Inhaltsverzeichnis
@@ -32,3 +32,5 @@ Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von
 [12 Härtungsprüfung](12-haertungspruefung.md)
 
 [13 Webserver nginx](13-webserver-nginx.md)
+
+[14 Datenbankserver postgresql](14-datenbankserver-postgresql.md)
