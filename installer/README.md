@@ -10,14 +10,15 @@ Der Installer liegt als einzelnes, signiertes Ein-Schritt-Paket vor (Installer, 
 ## Aufruf
 
 ```sh
-sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PFAD] [-n] [-o]
+sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PFAD] [-n]
 ```
 
 - `install` richtet die ausgewählten Module ein; `uninstall` nimmt die Modul-Änderungen in umgekehrter Reihenfolge zurück; `check` gleicht Ist- und Soll-Zustand ab, ohne zu ändern; `test` prüft die Funktion ohne Änderung.
 - `MODUL ...` verarbeitet nur die genannten Module (Kurznamen, siehe Konfiguration); ohne Angabe laufen die in der Konfiguration aktivierten Pflichtmodule.
 - `-c PFAD` / `--conf PFAD` gibt eine abweichende Konfigurationsdatei an; ohne Angabe `etc/secure-base/secure-base.conf`.
 - `-n` / `--dry-run` listet die Module nur auf und führt nichts aus.
-- `-o` / `--optional` verarbeitet zusätzlich die aktivierten optionalen Module.
+
+Optionale Module (`nginx`, `postgresql`) laufen in einem regulären Lauf mit, sobald sie in `optional_enabled` der Konfiguration stehen; ohne Eintrag bleiben sie aus.
 
 Der Installer benötigt Systemrechte (`sudo`) und bricht ohne sie ab, bevor er etwas ändert.
 

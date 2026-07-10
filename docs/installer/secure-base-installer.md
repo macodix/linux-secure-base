@@ -32,7 +32,7 @@ Der Rückgabewert ist 0 bei Erfolg, 1 bei einem Modulfehler, 2 bei fehlenden Rec
 
 Jedes Modul ist eine pifos-`Module`-Klasse mit einer `CONFIG`-Liste seiner Konfigurationsschlüssel. Die Registratur (`secure_base.modules.REGISTRY`) hält je Modul einen `ModuleSpec` mit Kurzname, Anzeige-Label, Modulklasse und Optional-Kennzeichen; die Reihenfolge in der Registratur ist die Ausführungsreihenfolge.
 
-Pflichtmodule: `base`, `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit`, `lynis`. Optionale Module: `nginx` und `postgresql`, nur mit dem Schalter `-o` und einem Eintrag in `optional_enabled`.
+Pflichtmodule: `base`, `postfix`, `users`, `ssh`, `ufw`, `fail2ban`, `rkhunter`, `logging`, `unattended`, `restic`, `monit`, `lynis`. Optionale Module: `nginx` und `postgresql`, aktiviert über einen Eintrag in `optional_enabled`.
 
 Ein Modul kann eine Klassenmethode `doc` bereitstellen, die seinen Abschnitt für den Installationsbericht liefert (Kapitel 7).
 
@@ -51,7 +51,7 @@ Fehlt die Datei beim Aufruf, kopiert der Installer die Vorlage mitsamt Abschnitt
 | `check` | gleicht Ist- und Soll-Zustand ab, ohne zu ändern | rein lesend |
 | `test` | prüft die Funktion, ohne zu ändern | rein lesend |
 
-Der Trockenlauf (`-n`) benennt die Module nur und führt nichts aus; Bericht und ufw-Abfrage entfallen. Mit `-c` lässt sich eine abweichende Konfigurationsdatei angeben, mit `-o` laufen zusätzlich die aktivierten optionalen Module.
+Der Trockenlauf (`-n`) benennt die Module nur und führt nichts aus; Bericht und ufw-Abfrage entfallen. Mit `-c` lässt sich eine abweichende Konfigurationsdatei angeben. Die optionalen Module laufen mit, sobald sie in `optional_enabled` stehen (Kapitel 3).
 
 ## 6. Bedienoberfläche
 
