@@ -13,7 +13,7 @@ Die Protokollierung besteht aus mehreren Komponenten aus den Distro-Paketquellen
 
 `journald` läuft persistent (`Storage=persistent`), begrenzt auf 1 GB Plattenverbrauch (`SystemMaxUse=1G`) und drei Monate Aufbewahrung (`MaxRetentionSec=3month`). Damit überleben Logs den Reboot und die Mindest-Aufbewahrung sicherheitsrelevanter Ereignisse von drei Monaten ist erfüllt.
 
-`logwatch` erzeugt täglich aus `cron.daily` eine Mail-Zusammenfassung des Vortags und versendet diese an die Administrator EMail Adresse. Der Detailgrad ist mittel (`Detail = Med`).
+`logwatch` erzeugt täglich aus `cron.daily` eine Mail-Zusammenfassung des Vortags und versendet diese an die Administrator Email Adresse. Der Detailgrad ist mittel (`Detail = Med`).
 
 `auditd` protokolliert sicherheitskritische Aktivitäten; das Regelset ist auf administrative Vorgänge beschränkt und nach dem Laden bis zum Reboot unveränderlich (`-e 2`).
 
@@ -25,7 +25,7 @@ Sicherheitsupdates werden durch die Installatio von `unattended-upgrades` automa
 
 Die Default-Sequenz für Update ist 23:15 Paketlisten aktualisieren (`apt update ), 23:30 Upgrade (`apt upgrade`), 23:45 Reboot (bei Bedarf). Dafür werden `apt-daily.timer` und `apt-daily-upgrade.timer` auf feste Zeiten gesetzt und ihr Streuwert (`RandomizedDelaySec`) auf 0 gestellt. Die periodische Ausführung wird über `/etc/apt/apt.conf.d/20auto-upgrades` aktiviert.
 
-Ein fehlgeschlagenes Upgrade meldet `unattended-upgrades` per Mail (`MailReport "only-on-error"`) an die Administrator EMail Adresse. Ein erfolgreicher Reboot wird nicht gemeldet.
+Ein fehlgeschlagenes Upgrade meldet `unattended-upgrades` per Mail (`MailReport "only-on-error"`) an die Administrator Email Adresse. Ein erfolgreicher Reboot wird nicht gemeldet.
 
 ## Versionshistorie
 

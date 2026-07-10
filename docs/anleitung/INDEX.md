@@ -31,4 +31,4 @@ Schritt-für-Schritt-Anleitung für einen gehärteten Linux Server auf Basis von
 
 [12 Härtungsprüfung](12-haertungspruefung.md)
 
-[13 Webserver nginx (optional)](13-webserver-nginx.md)
+[13 Webserver nginx](13-webserver-nginx.md)

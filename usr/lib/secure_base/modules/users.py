@@ -1,0 +1,1577 @@
+"""Modul users — Hauptbenutzer, ssh-users-Gruppe, TOTP.
+
+Legt den Hauptbenutzer und die Gruppe ssh-users an, setzt dessen
+Login-Passwort und SSH-Pubkey und richtet TOTP (google-authenticator) ein.
+Verschickt anschließend eine TOTP-Einrichtungsmail (Secret, otpauth-URL,
+QR-Code-Anhang, Notfall-Codes) an admin_mail und weist deren Zustellung im
+Mail-Log nach — ohne diese Mail wäre der Betreiber nach der SSH-Härtung
+(publickey+TOTP, root gesperrt) ausgesperrt. Abweichung vom Bash-Original
+(totp_per_mail): der Schalter TOTP_DELIVERY (terminal/mail) entfällt, der
+Versand läuft fest per Mail — eine Terminal-Zustellung passt nicht zum
+nicht-interaktiven Modulmodell. Setzt das root-Passwort NICHT — prüft es
+nur als Vorbedingung. Betriebsart über den Schlüssel operation.
+"""
+
+import grp
+import os
+import pwd
+import re
+import stat
+import subprocess
+import tempfile
+import time
+from collections.abc import Callable
+from email.message import EmailMessage
+from pathlib import Path
+from typing import ClassVar
+
+from pifos.action import Action
+from pifos.actions.apt_action import AptAction
+from pifos.actions.make_dir_action import MakeDirAction
+from pifos.actions.permissions_action import PermissionsAction
+from pifos.actions.sys_cmd_action import SysCmdAction
+from pifos.actions.write_file_action import WriteFileAction
+from pifos.errors import ActionError, ModuleError
+from pifos.ipc import LogLevel
+from pifos.module import Module
+
+from secure_base import mail_check
+
+# Benutzername nach den üblichen Login-Namensregeln (useradd/NAME_REGEX):
+# a-z/_ am Anfang, danach a-z, 0-9, _ und -, Gesamtlänge höchstens 32 Zeichen.
+_USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+# SSH-Pubkey-Zeile: bekannter Schlüsseltyp gefolgt von mindestens einem
+# Leerzeichen/Tab vor dem Base64-Teil. Nur der Typ wird geprüft
+# (Aussperr-Schutz vor einer leeren oder syntaktisch defekten Zeile) — der
+# Schlüsselinhalt selbst bleibt Sache von sshd.
+_PUBKEY_RE = re.compile(r"^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-nistp[0-9]+)[ \t]")
+
+# fqdn: nur [A-Za-z0-9.-], wie im postfix-Modul — geht in die otpauth-URL
+# und den Mailbetreff.
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
+# admin_mail: einfache name@domain-Prüfung, wie im postfix-Modul.
+_MAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$")
+
+# Notfall-Codes in ~/.google_authenticator: achtstellige Ziffernzeilen
+# (wie im Bash-Original: grep -E '^[0-9]{8}$').
+_EMERGENCY_CODE_RE = re.compile(r"^[0-9]{8}$")
+
+# Passwort-Hash-Werte, die "kein Passwort gesetzt" bedeuten
+# (getent shadow, Feld 2): leer, gesperrt (!) oder deaktiviert (*).
+_UNSET_HASHES = frozenset({"", "!", "*"})
+
+# Erlaubte Werte für den Ja/Nein-Schalter uninstall_remove_user.
+_YES_NO = frozenset({"yes", "no"})
+
+_Step = Callable[[], int]
+
+
+def _totp_mail_content(
+    user: str,
+    fqdn: str,
+    admin_mail: str,
+    secret: str,
+    url: str,
+    emergency_codes: list[str],
+    qr_png_path: str,
+) -> bytes:
+    """Baut die TOTP-Einrichtungsmail als MIME multipart/mixed mit QR-Anhang.
+
+    SICHERHEIT: secret, url und emergency_codes landen ausschließlich im
+    Mailinhalt — nie in einer send_message-Meldung, Exception oder im Log.
+
+    Args:
+        user: Login des Hauptbenutzers.
+        fqdn: Vollständiger Rechnername (Mailbetreff, otpauth-Issuer).
+        admin_mail: Empfängeradresse.
+        secret: TOTP-Secret (erste Zeile der .google_authenticator-Datei).
+        url: otpauth-URL für die Authenticator-App.
+        emergency_codes: Notfall-Codes (achtstellige Ziffernzeilen).
+        qr_png_path: Pfad des QR-Code-PNG, wird als Anhang eingelesen.
+
+    Returns:
+        Die vollständige Mail (Kopf, Rumpf, Anhang) als Bytes.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = f"secure-base {fqdn}: TOTP-Einrichtung für {user}"
+    msg["To"] = admin_mail
+    emergency_text = "\n".join(emergency_codes)
+    body = (
+        f"Zwei-Faktor-Einrichtung für {user}@{fqdn}.\n\n"
+        "QR-Code im Anhang mit der Authenticator-App scannen,\n"
+        "oder das Secret manuell eintragen:\n\n"
+        f"  Secret: {secret}\n"
+        f"  URL:    {url}\n\n"
+        f"Notfall-Codes (getrennt und sicher aufbewahren):\n{emergency_text}\n\n"
+        "Diese Mail nach der Einrichtung löschen.\n"
+    )
+    # cte="quoted-printable": ASCII-sicher auf der Leitung, sonst erzwingt
+    # ein Umlaut im Text SMTPUTF8, das nicht jeder Relay anbietet (siehe
+    # postfix._test_mail_content). Der Anhang ist ohnehin Base64-kodiert.
+    msg.set_content(body, cte="quoted-printable")
+    png_data = Path(qr_png_path).read_bytes()
+    msg.add_attachment(
+        png_data, maintype="image", subtype="png", filename="totp-qr.png"
+    )
+    return msg.as_bytes()
+
+
+def _doc_value(values: dict[str, str], key: str) -> str:
+    """Liest einen Wert für den Installationsbericht aus values.
+
+    doc() fragt hier ausschließlich main_user ab — main_user_password und
+    das TOTP-Secret werden nie über diesen Weg gelesen.
+
+    Args:
+        values: Konfigurationswerte des Moduls.
+        key: Abzufragender Schlüssel.
+
+    Returns:
+        Wert aus values, oder "(leer/Default)" wenn leer oder nicht gesetzt.
+    """
+    return values.get(key) or "(leer/Default)"
+
+
+def _shadow_hash_from_line(line: str) -> str:
+    """Extrahiert das Passwort-Hash-Feld aus einer getent-shadow-Zeile.
+
+    Args:
+        line: Ausgabe von `getent shadow <user>` (eine Zeile).
+
+    Returns:
+        Feld 2 (Passwort-Hash) oder Leerstring, wenn die Zeile kein
+        zweites Feld hat.
+    """
+    fields = line.strip().split(":")
+    return fields[1] if len(fields) > 1 else ""
+
+
+def _is_password_set(hash_value: str) -> bool:
+    """Prüft, ob ein shadow-Hash ein gesetztes Passwort bedeutet.
+
+    Args:
+        hash_value: Passwort-Hash-Feld aus getent shadow.
+
+    Returns:
+        True, wenn der Hash weder leer noch '!' noch '*' ist.
+    """
+    return hash_value not in _UNSET_HASHES
+
+
+class _ChpasswdStdinAction(Action):
+    """Setzt ein Login-Passwort über chpasswd, Übergabe nur per stdin.
+
+    SysCmdAction unterstützt keine Standardeingabe für den Kindprozess
+    (konv-scripting-python.md Abschnitt 4.4: Geheimnisse nie in
+    Argumentliste oder Meldung). Diese modul-eigene Aktion reicht
+    Benutzername und Passwort ausschließlich über die stdin-Pipe von
+    chpasswd durch; beides taucht nie in argv, stdout, stderr-Auswertung
+    oder einer ActionError-Meldung auf.
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        user: Benutzername.
+        password: Neues Login-Passwort (Klartext, nur für die stdin-Pipe).
+        chpasswd_bin: Pfad zum chpasswd-Programm.
+        timeout: Zeitgrenze in Sekunden.
+        returncode: Rückgabewert von chpasswd nach run(); -1 vor der
+            Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["user", "password", "chpasswd_bin", "timeout"]
+
+    def __init__(
+        self,
+        user: str,
+        password: str,
+        chpasswd_bin: str,
+        timeout: float = 30.0,
+    ) -> None:
+        """Initialisiert die Passwort-Setz-Aktion.
+
+        Args:
+            user: Benutzername.
+            password: Neues Login-Passwort (Klartext).
+            chpasswd_bin: Pfad zum chpasswd-Programm.
+            timeout: Zeitgrenze in Sekunden für chpasswd (SIC-05).
+        """
+        super().__init__()
+        self.user = user
+        self.password = password
+        self.chpasswd_bin = chpasswd_bin
+        self.timeout = timeout
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt chpasswd aus und liefert den Ausführungsstatus.
+
+        Das Format je Zeile ist "user:password"; chpasswd trennt am
+        ersten Doppelpunkt, ein Doppelpunkt im Passwort selbst bleibt
+        also unschädlich.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler.
+                Die Meldung enthält nie das Passwort.
+        """
+        self.status = "running"
+        stdin_data = f"{self.user}:{self.password}\n".encode()
+        try:
+            with subprocess.Popen(
+                [self.chpasswd_bin],
+                shell=False,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ) as proc:
+                try:
+                    proc.communicate(input=stdin_data, timeout=self.timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.returncode = (
+                        proc.returncode if proc.returncode is not None else -1
+                    )
+                    self.status = "failed"
+                    raise ActionError(
+                        f"Zeitgrenze ({self.timeout}s) überschritten: chpasswd"
+                    ) from None
+                self.returncode = proc.returncode if proc.returncode is not None else -1
+                if self.returncode != 0:
+                    self.status = "failed"
+                    raise ActionError(f"chpasswd endete mit Code {self.returncode}")
+        except ActionError:
+            raise
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"chpasswd konnte nicht gestartet werden: {exc}") from exc
+        finally:
+            stdin_data = b""
+
+        self.status = "finished"
+        return self.status
+
+
+class _QrEncodeStdinAction(Action):
+    """Erzeugt einen QR-Code über qrencode, Dateninhalt ausschließlich per stdin.
+
+    Anders als im Bash-Original (`qrencode -o "$qr_png" "$url"`) landet die
+    otpauth-URL — sie enthält das TOTP-Secret — hier nie in argv: qrencode
+    liest den Dateninhalt von stdin, wenn kein Positionsargument angegeben
+    wird (konv-scripting-python.md Abschnitt 4.4/4.14: Geheimnisse nie in
+    der Argumentliste eines Kindprozesses).
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        data: Kodierter Dateninhalt (otpauth-URL), nur über die stdin-Pipe.
+        output_path: Zielpfad des QR-Code-PNG.
+        qrencode_bin: Pfad zum qrencode-Programm.
+        timeout: Zeitgrenze in Sekunden.
+        returncode: Rückgabewert von qrencode nach run(); -1 vor der
+            Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["data", "output_path", "qrencode_bin", "timeout"]
+
+    def __init__(
+        self,
+        data: str,
+        output_path: str,
+        qrencode_bin: str,
+        timeout: float = 15.0,
+    ) -> None:
+        """Initialisiert die QR-Code-Erzeugung.
+
+        Args:
+            data: Dateninhalt für den QR-Code (otpauth-URL).
+            output_path: Zielpfad des QR-Code-PNG.
+            qrencode_bin: Pfad zum qrencode-Programm.
+            timeout: Zeitgrenze in Sekunden für qrencode (SIC-05).
+        """
+        super().__init__()
+        self.data = data
+        self.output_path = output_path
+        self.qrencode_bin = qrencode_bin
+        self.timeout = timeout
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt qrencode aus und liefert den Ausführungsstatus.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler. Die
+                Meldung enthält nie den Dateninhalt (SIC-04).
+        """
+        self.status = "running"
+        stdin_data = self.data.encode("utf-8")
+        try:
+            with subprocess.Popen(
+                [self.qrencode_bin, "-o", self.output_path],
+                shell=False,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ) as proc:
+                try:
+                    proc.communicate(input=stdin_data, timeout=self.timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.returncode = (
+                        proc.returncode if proc.returncode is not None else -1
+                    )
+                    self.status = "failed"
+                    raise ActionError(
+                        f"Zeitgrenze ({self.timeout}s) überschritten: qrencode"
+                    ) from None
+                self.returncode = proc.returncode if proc.returncode is not None else -1
+                if self.returncode != 0:
+                    self.status = "failed"
+                    raise ActionError(f"qrencode endete mit Code {self.returncode}")
+        except ActionError:
+            raise
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"qrencode konnte nicht gestartet werden: {exc}") from exc
+        finally:
+            stdin_data = b""
+
+        self.status = "finished"
+        return self.status
+
+
+class _SendMailAction(Action):
+    """Sendet eine MIME-Mail über ein sendmail-kompatibles Programm.
+
+    Modul-lokal wie postfix._SendMailAction (SysCmdAction unterstützt keine
+    stdin-Eingabe); content ist hier bytes (fertig kodierte MIME-Mail
+    inkl. PNG-Anhang), nicht str.
+
+    Attributes:
+        PARAMS: Parameternamen der Aktion.
+        command: Sendmail-Aufruf als Liste einzelner Elemente.
+        content: Vollständige Mail (Kopf, Rumpf, Anhang), über stdin.
+        timeout: Zeitgrenze in Sekunden.
+        stderr: Fehlerausgabe des Befehls nach run().
+        returncode: Rückgabewert des Befehls nach run(); -1 vor der Ausführung.
+    """
+
+    PARAMS: ClassVar[list[str]] = ["command", "content", "timeout"]
+
+    def __init__(self, command: list[str], content: bytes, timeout: float) -> None:
+        """Initialisiert die Sendmail-Aktion.
+
+        Args:
+            command: Programmpfad und Argumente (SIC-04); der Empfänger
+                steht als Argument, nicht im Mailinhalt allein.
+            content: Vollständige Mail als Bytes, über stdin.
+            timeout: Zeitgrenze in Sekunden (SIC-05).
+        """
+        super().__init__()
+        self.command = command
+        self.content = content
+        self.timeout = timeout
+        self.stderr: str = ""
+        self.returncode: int = -1
+
+    def run(self) -> str:
+        """Führt den Sendmail-Aufruf aus und liefert den Ausführungsstatus.
+
+        Returns:
+            Aktueller Status nach der Ausführung ("finished" oder "failed").
+
+        Raises:
+            ActionError: Bei Timeout, Returncode != 0 oder Startfehler. Die
+                Meldung enthält nie den Mailinhalt, nur stderr und Returncode.
+        """
+        self.status = "running"
+        try:
+            result = subprocess.run(
+                self.command,
+                input=self.content,
+                shell=False,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            self.status = "failed"
+            raise ActionError(
+                f"Zeitgrenze ({self.timeout}s) überschritten: {self.command[0]!r}"
+            ) from exc
+        except OSError as exc:
+            self.status = "failed"
+            raise ActionError(f"Befehl konnte nicht gestartet werden: {exc}") from exc
+        self.stderr = result.stderr.decode("utf-8", errors="replace")
+        self.returncode = result.returncode
+        if self.returncode != 0:
+            self.status = "failed"
+            raise ActionError(
+                f"Befehl {self.command[0]!r} endete mit Code {self.returncode};"
+                f" stderr: {self.stderr.strip()!r}"
+            )
+        self.status = "finished"
+        return self.status
+
+
+class Users(Module):
+    """Hauptbenutzer, ssh-users-Gruppe und TOTP über pifos-Aktionen."""
+
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "fqdn",
+        "admin_mail",
+        "main_user",
+        "main_user_password",
+        "main_user_pubkey",
+        "uninstall_remove_user",
+    ]
+
+    # Fachliche Konstanten: von außen nie überschreibbar, keine
+    # umgebungsspezifischen Hardcodes (konv-scripting-python.md 4.4).
+    GROUP_NAME: ClassVar[str] = "ssh-users"
+    SHELL: ClassVar[str] = "/bin/bash"
+    PKG_GOOGLE_AUTHENTICATOR: ClassVar[str] = "libpam-google-authenticator"
+    # qrencode: QR-Code-Anhang der TOTP-Einrichtungsmail (siehe _step_totp_mail).
+    PKG_QRENCODE: ClassVar[str] = "qrencode"
+    CONTROLLED_PATH: ClassVar[str] = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+    # Programmpfade als Klassenattribute statt Literale in den Schritten
+    # (siehe Begründung in base.py): feste Vorgaben, die eine
+    # Testunterklasse außerhalb dieses Moduls überschreiben kann, um
+    # Systembefehle in einem echten Modul-Subprozess durch harmlose
+    # Platzhalter zu ersetzen — ohne dieses Modul anzufassen.
+    GETENT_BIN: ClassVar[str] = "/usr/bin/getent"
+    ID_BIN: ClassVar[str] = "/usr/bin/id"
+    DPKG_BIN: ClassVar[str] = "/usr/bin/dpkg"
+    GROUPADD_BIN: ClassVar[str] = "/usr/sbin/groupadd"
+    USERADD_BIN: ClassVar[str] = "/usr/sbin/useradd"
+    USERMOD_BIN: ClassVar[str] = "/usr/sbin/usermod"
+    CHPASSWD_BIN: ClassVar[str] = "/usr/sbin/chpasswd"
+    RUNUSER_BIN: ClassVar[str] = "/usr/sbin/runuser"
+    GOOGLE_AUTHENTICATOR_BIN: ClassVar[str] = "/usr/bin/google-authenticator"
+    GPASSWD_BIN: ClassVar[str] = "/usr/bin/gpasswd"
+    GROUPDEL_BIN: ClassVar[str] = "/usr/sbin/groupdel"
+    USERDEL_BIN: ClassVar[str] = "/usr/sbin/userdel"
+    PKILL_BIN: ClassVar[str] = "/usr/bin/pkill"
+    TEST_BIN: ClassVar[str] = "/usr/bin/test"
+    QRENCODE_BIN: ClassVar[str] = "/usr/bin/qrencode"
+    SENDMAIL_BIN: ClassVar[str] = "/usr/sbin/sendmail"
+
+    # Mail-Log-Zustellungsnachweis der TOTP-Einrichtungsmail (mail_check-
+    # Helfer, gemeinsam mit dem postfix-Modul). Eigene Klassenattribute
+    # (kein Zugriff auf Postfix.MAIL_LOG) — beide Module sind unabhängig
+    # konfigurier- und testbar.
+    MAIL_LOG: ClassVar[str] = "/var/log/mail.log"
+    JOURNALCTL_BIN: ClassVar[str] = "/usr/bin/journalctl"
+    DELIVERY_LOG_CHECK_ATTEMPTS: ClassVar[int] = 3
+    DELIVERY_LOG_CHECK_INTERVAL: ClassVar[float] = 2.0
+
+    # Wartezeit zwischen SIGTERM und SIGKILL beim Entfernen des
+    # Hauptbenutzers (uninstall_remove_user=yes) — als Klassenattribut
+    # testbar (Tests setzen sie auf 0, kein echtes Warten im Testlauf).
+    PKILL_WAIT_SECONDS: ClassVar[float] = 2.0
+
+    # apt-Aktionsklasse als Klassenattribut wie base — für Testumlenkung
+    # per Unterklasse (kein systemd-Bezug in diesem Modul).
+    APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
+
+    # Von check_config per setattr gesetzt (siehe Module.check_config);
+    # hier nur als Typdeklaration für mypy --strict, ohne eigenen __init__.
+    operation: str
+    fqdn: str
+    admin_mail: str
+    main_user: str
+    main_user_password: str
+    main_user_pubkey: str
+    uninstall_remove_user: str
+
+    # Nicht aus CONFIG, sondern vom install-Lauf selbst gesetzt: True, wenn
+    # _step_totp in diesem Lauf ein neues Secret erzeugt hat (siehe
+    # _install/_step_totp/_step_totp_mail).
+    _totp_secret_created: bool
+
+    def start(self) -> int:
+        """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
+
+        Returns:
+            0 bei Erfolg, ungleich 0 bei Fehler.
+
+        Raises:
+            ModuleError: Bei ungültigem Benutzernamen, Pubkey-Format oder
+                einem Ja/Nein-Schalter außerhalb von yes/no.
+        """
+        self._validate()
+        if self.operation == "check":
+            return self._verify()
+        if self.operation == "uninstall":
+            return self._uninstall()
+        if self.operation == "test":
+            return self._test()
+        return self._install()
+
+    @classmethod
+    def doc(cls, values: dict[str, str]) -> str:
+        """Markdown-Abschnitt für den Installationsbericht.
+
+        SICHERHEIT: main_user_password und das TOTP-Secret erscheinen hier
+        nie — weder Name noch Wert —, auch wenn sie in values stehen. doc()
+        liest ausschließlich main_user; der SSH-Pubkey wird wie im
+        Bash-Original nicht mit Wert dokumentiert, nur sein Ablageort.
+
+        Args:
+            values: Konfigurationswerte des Moduls (main_user,
+                main_user_password, main_user_pubkey, …).
+
+        Returns:
+            Markdown-Abschnitt, beginnend mit "## Hauptbenutzer".
+        """
+        main_user = _doc_value(values, "main_user")
+        return (
+            "\n## Hauptbenutzer\n\n"
+            f"**Pakete:** {cls.PKG_GOOGLE_AUTHENTICATOR}, {cls.PKG_QRENCODE}\n\n"
+            f"\n**Angelegte Benutzer:** {main_user} (Gruppen: {cls.GROUP_NAME})\n"
+            "**Dateien/Einstellungen:**\n\n"
+            f"- `/home/{main_user}/.ssh/authorized_keys`:\n"
+            "  - `SSH-Public-Key hinterlegt`\n"
+            f"- `/home/{main_user}/.google_authenticator`:\n"
+            "  - `TOTP-Secret eingerichtet`\n"
+            "\n> Hinweis: Passwort und TOTP-Material werden nicht"
+            " dokumentiert (Secret).\n"
+        )
+
+    def _validate(self) -> None:
+        """Prüft Benutzername, Pubkey-Format und Ja/Nein-Schalter.
+
+        Alle Werte gehen in Systembefehle bzw. eine Datei. SysCmdAction hat
+        bewusst keinen Optionsterminator, deshalb prüft das Modul die Werte
+        vor der Verwendung (konv-scripting-python.md Abschnitt 4.2). Eine
+        leere oder syntaktisch defekte Pubkey-Zeile darf nicht durchgehen —
+        sonst landet der Hauptbenutzer unter SSH-Härtung ohne brauchbaren
+        Pubkey (Aussperr-Schutz).
+
+        Raises:
+            ModuleError: Wenn fqdn oder admin_mail vom erwarteten Format
+                abweichen, main_user kein gültiger Benutzername ist,
+                main_user_pubkey leer ist oder keinem bekannten Schlüsseltyp
+                entspricht, oder uninstall_remove_user weder yes noch no ist.
+        """
+        if not _HOST_RE.match(self.fqdn):
+            raise ModuleError(f"Ungültiger Rechnername: {self.fqdn!r}")
+        if not _MAIL_RE.match(self.admin_mail):
+            raise ModuleError(f"Ungültige Admin-E-Mail-Adresse: {self.admin_mail!r}")
+        if not _USERNAME_RE.match(self.main_user):
+            raise ModuleError(f"Ungültiger Benutzername: {self.main_user!r}")
+        pubkey = self.main_user_pubkey.strip()
+        if not pubkey:
+            raise ModuleError(
+                "Kein SSH-Pubkey für Hauptbenutzer konfiguriert (Aussperr-Schutz)"
+            )
+        if not _PUBKEY_RE.match(pubkey):
+            raise ModuleError(
+                f"Pubkey-Format unbekannt: {pubkey[:40]!r} (Aussperr-Schutz)"
+            )
+        if self.uninstall_remove_user not in _YES_NO:
+            raise ModuleError(
+                f"uninstall_remove_user muss yes oder no sein:"
+                f" {self.uninstall_remove_user!r}"
+            )
+
+    # --- install ---
+
+    def _install(self) -> int:
+        """Richtet Hauptbenutzer, Gruppe, Passwort, Pubkey und TOTP ein.
+
+        Versendet danach die TOTP-Einrichtungsmail; ohne sie ist der
+        Betreiber nach der SSH-Härtung ausgesperrt (Aussperr-Schutz), ein
+        Versandfehler oder fehlender Zustellbeweis lässt install daher
+        fehlschlagen.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        self._totp_secret_created = False
+        steps: list[tuple[str, _Step]] = [
+            ("root-Passwort-Vorbedingung prüfen", self._step_check_root_password),
+            ("Paket installieren", self._step_install_package),
+            ("Gruppe ssh-users anlegen", self._step_ensure_group),
+            ("Hauptbenutzer anlegen", self._step_ensure_user),
+            ("Mitgliedschaft in ssh-users sicherstellen", self._step_ensure_membership),
+            ("Login-Shell setzen", self._step_ensure_shell),
+            ("Passwort setzen", self._step_set_password),
+            (".ssh-Verzeichnis anlegen", self._step_ssh_dir),
+            ("SSH-Pubkey hinterlegen", self._step_authorized_keys),
+            ("TOTP-Secret einrichten", self._step_totp),
+            ("TOTP-Einrichtungsmail versenden", self._step_totp_mail),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "users", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "users", f"fehlgeschlagen: {label}")
+                return 1
+        return 0
+
+    def _step_check_root_password(self) -> int:
+        """Prüft die Vorbedingung: root-Passwort ist bereits gesetzt.
+
+        Das Modul setzt das root-Passwort bewusst NICHT — nur die Prüfung.
+
+        Returns:
+            0, wenn root ein gesetztes Passwort hat, sonst 1.
+        """
+        if self._shadow_password_set("root"):
+            return 0
+        self.send_message(LogLevel.ERROR, "users", "root-Passwort ist nicht gesetzt")
+        return 1
+
+    def _step_install_package(self) -> int:
+        """Installiert libpam-google-authenticator und qrencode.
+
+        qrencode erzeugt den QR-Code-Anhang der TOTP-Einrichtungsmail
+        (siehe _step_totp_mail). Abweichung vom Original: dort nur bedingt
+        bei TOTP_DELIVERY=mail installiert — hier unbedingt, da der Versand
+        fest per Mail läuft.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = self.APT_ACTION_CLS(
+            packages=[self.PKG_GOOGLE_AUTHENTICATOR, self.PKG_QRENCODE]
+        )
+        return self.run_action(action)
+
+    def _step_ensure_group(self) -> int:
+        """Legt die Gruppe ssh-users an; idempotent über groupadd -f.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = SysCmdAction(
+            command=[self.GROUPADD_BIN, "-f", "--", self.GROUP_NAME], timeout=30
+        )
+        return self.run_action(action)
+
+    def _step_ensure_user(self) -> int:
+        """Legt den Hauptbenutzer an, wenn er noch nicht existiert.
+
+        Returns:
+            0 bei Erfolg oder wenn der Benutzer bereits existiert, 1 bei Fehler.
+        """
+        if self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Benutzer {self.main_user} existiert bereits — übersprungen",
+            )
+            return 0
+        action = SysCmdAction(
+            command=[
+                self.USERADD_BIN,
+                "-m",
+                "-s",
+                self.SHELL,
+                "-G",
+                self.GROUP_NAME,
+                "--",
+                self.main_user,
+            ],
+            timeout=30,
+        )
+        if self.run_action(action) != 0:
+            return 1
+        self.send_message(LogLevel.INFO, "users", f"Benutzer {self.main_user} angelegt")
+        return 0
+
+    def _step_ensure_membership(self) -> int:
+        """Stellt die Mitgliedschaft in ssh-users sicher; idempotent.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = SysCmdAction(
+            command=[
+                self.USERMOD_BIN,
+                "-a",
+                "-G",
+                self.GROUP_NAME,
+                "--",
+                self.main_user,
+            ],
+            timeout=30,
+        )
+        return self.run_action(action)
+
+    def _step_ensure_shell(self) -> int:
+        """Setzt die Login-Shell des Hauptbenutzers; idempotent.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = SysCmdAction(
+            command=[self.USERMOD_BIN, "-s", self.SHELL, "--", self.main_user],
+            timeout=30,
+        )
+        return self.run_action(action)
+
+    def _step_set_password(self) -> int:
+        """Setzt das Login-Passwort, wenn noch keins gesetzt ist.
+
+        Returns:
+            0 bei Erfolg oder wenn bereits gesetzt, 1 bei Fehler.
+        """
+        if self._shadow_password_set(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Passwort für {self.main_user} bereits gesetzt — übersprungen",
+            )
+            return 0
+        if not self.main_user_password:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Kein Passwort für {self.main_user} konfiguriert",
+            )
+            return 1
+        action = _ChpasswdStdinAction(
+            user=self.main_user,
+            password=self.main_user_password,
+            chpasswd_bin=self.CHPASSWD_BIN,
+        )
+        if self.run_action(action) != 0:
+            return 1
+        self.send_message(
+            LogLevel.INFO, "users", f"Passwort für {self.main_user} gesetzt"
+        )
+        return 0
+
+    def _step_ssh_dir(self) -> int:
+        """Legt ~/.ssh an und setzt Rechte/Eigentümer defensiv.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+        ssh_dir = str(Path(home) / ".ssh")
+        if self.run_action(MakeDirAction(path=ssh_dir, mode=0o700)) != 0:
+            return 1
+        perm_action = PermissionsAction(
+            path=ssh_dir, mode=0o700, owner=self.main_user, group=self.main_user
+        )
+        return self.run_action(perm_action)
+
+    def _step_authorized_keys(self) -> int:
+        """Hinterlegt den SSH-Pubkey in authorized_keys.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+        authkeys = Path(home) / ".ssh" / "authorized_keys"
+        pubkey = self.main_user_pubkey.strip()
+
+        if authkeys.exists():
+            try:
+                existing = authkeys.read_text(encoding="utf-8")
+            except OSError:
+                self.send_message(LogLevel.ERROR, "users", f"{authkeys}: nicht lesbar")
+                return 1
+            if pubkey in existing.splitlines():
+                self.send_message(
+                    LogLevel.INFO,
+                    "users",
+                    f"Pubkey für {self.main_user} bereits hinterlegt — übersprungen",
+                )
+                return self._fix_authorized_keys_owner(authkeys)
+            new_content = existing
+            if new_content and not new_content.endswith("\n"):
+                new_content += "\n"
+            new_content += pubkey + "\n"
+        else:
+            new_content = pubkey + "\n"
+
+        write_action = WriteFileAction(
+            dst=str(authkeys),
+            content=new_content,
+            mode=0o600,
+            overwrite=True,
+            safe_mode=False,
+        )
+        if self.run_action(write_action) != 0:
+            return 1
+        if self._fix_authorized_keys_owner(authkeys) != 0:
+            return 1
+        self.send_message(
+            LogLevel.INFO, "users", f"Pubkey für {self.main_user} hinterlegt"
+        )
+        return 0
+
+    def _fix_authorized_keys_owner(self, authkeys: Path) -> int:
+        """Setzt Eigentümer/Rechte von authorized_keys defensiv.
+
+        Args:
+            authkeys: Pfad der authorized_keys-Datei.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        action = PermissionsAction(
+            path=str(authkeys), mode=0o600, owner=self.main_user, group=self.main_user
+        )
+        return self.run_action(action)
+
+    def _step_totp(self) -> int:
+        """Richtet TOTP (google-authenticator) für den Hauptbenutzer ein.
+
+        Läuft nicht-interaktiv über Kommandozeilenoptionen; Secret, QR-Code
+        und Notfall-Codes werden nie ausgegeben oder geloggt — die Meldung
+        nennt nur den Ablageort der Secret-Datei.
+
+        Returns:
+            0 bei Erfolg oder wenn bereits eingerichtet, 1 bei Fehler.
+        """
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+        ga_file = Path(home) / ".google_authenticator"
+        if ga_file.exists() and ga_file.stat().st_size > 0:
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"TOTP-Secret für {self.main_user} bereits vorhanden — übersprungen",
+            )
+            self._totp_secret_created = False
+            return 0
+        command = [
+            self.RUNUSER_BIN,
+            "-u",
+            self.main_user,
+            "--",
+            self.GOOGLE_AUTHENTICATOR_BIN,
+            "-t",
+            "-d",
+            "-f",
+            "-C",
+            "-q",
+            "-Q",
+            "NONE",
+            "-r",
+            "3",
+            "-R",
+            "30",
+            "-W",
+        ]
+        env = {
+            "PATH": self.CONTROLLED_PATH,
+            "HOME": home,
+            "USER": self.main_user,
+            "LOGNAME": self.main_user,
+        }
+        action = SysCmdAction(command=command, timeout=60, env=env)
+        if self.run_action(action) != 0:
+            return 1
+        self._totp_secret_created = True
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"TOTP-Secret für {self.main_user} abgelegt unter {ga_file}",
+        )
+        return 0
+
+    def _step_totp_mail(self) -> int:
+        """Versendet die TOTP-Einrichtungsmail und weist die Zustellung nach.
+
+        Läuft nur, wenn _step_totp in diesem Lauf ein neues Secret erzeugt
+        hat (self._totp_secret_created) — bei einem bereits vorhandenen
+        Secret entfällt der erneute Versand, wie im Bash-Original
+        (totp_per_mail wurde dort ebenfalls nur beim Erstanlegen aufgerufen).
+
+        Abweichung vom Original: Der Schalter TOTP_DELIVERY (terminal/mail)
+        entfällt, der Versand läuft fest per Mail — eine Terminal-Zustellung
+        (QR-Code/Secret am Bildschirm) passt nicht zum nicht-interaktiven
+        Modulmodell. Secret, otpauth-URL und Notfall-Codes stehen wie im
+        Original ausschließlich in Mailinhalt und QR-Code (hier: einer
+        0600-Tmpdatei, die im finally-Block entfernt wird) — nie in einer
+        send_message-Meldung, Exception, argv oder im Log.
+
+        Ein Versandfehler oder ein fehlender Zustellbeweis (status=sent im
+        Mail-Log) lässt den Schritt fehlschlagen — install bricht dann vor
+        dem ssh-Modul ab (Aussperr-Schutz: ohne diese Mail ist der Betreiber
+        nach der SSH-Härtung ausgesperrt).
+
+        Returns:
+            0 bei nachgewiesener Zustellung oder wenn kein neues Secret
+            erzeugt wurde, sonst 1.
+        """
+        if not self._totp_secret_created:
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "TOTP-Einrichtungsmail übersprungen — Secret bereits vorhanden",
+            )
+            return 0
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+        ga_file = Path(home) / ".google_authenticator"
+        try:
+            lines = ga_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            self.send_message(LogLevel.ERROR, "users", f"{ga_file}: nicht lesbar")
+            return 1
+        if not lines:
+            self.send_message(LogLevel.ERROR, "users", f"{ga_file}: ist leer")
+            return 1
+        secret = lines[0]
+        emergency_codes = [line for line in lines if _EMERGENCY_CODE_RE.match(line)]
+        url = (
+            f"otpauth://totp/{self.main_user}@{self.fqdn}"
+            f"?secret={secret}&issuer={self.fqdn}"
+        )
+
+        fd, qr_png = tempfile.mkstemp(suffix=".png", prefix="secure-base-totp-qr-")
+        os.close(fd)
+        try:
+            os.chmod(qr_png, 0o600)
+            qr_action = _QrEncodeStdinAction(
+                data=url, output_path=qr_png, qrencode_bin=self.QRENCODE_BIN
+            )
+            if self.run_action(qr_action) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "users", "TOTP-QR-Code: qrencode fehlgeschlagen"
+                )
+                return 1
+            content = _totp_mail_content(
+                user=self.main_user,
+                fqdn=self.fqdn,
+                admin_mail=self.admin_mail,
+                secret=secret,
+                url=url,
+                emergency_codes=emergency_codes,
+                qr_png_path=qr_png,
+            )
+            anchor = mail_check.log_anchor()
+            send_action = _SendMailAction(
+                command=[self.SENDMAIL_BIN, self.admin_mail],
+                content=content,
+                timeout=30,
+            )
+            if self.run_action(send_action) != 0:
+                self.send_message(
+                    LogLevel.ERROR,
+                    "users",
+                    f"TOTP-Einrichtungsmail an {self.admin_mail} fehlgeschlagen",
+                )
+                return 1
+        finally:
+            Path(qr_png).unlink(missing_ok=True)
+
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"TOTP-Einrichtungsmail an {self.admin_mail} versendet",
+        )
+        result = mail_check.check_delivery_log(
+            recipient=self.admin_mail,
+            anchor=anchor,
+            mail_log=self.MAIL_LOG,
+            journalctl_bin=self.JOURNALCTL_BIN,
+            attempts=self.DELIVERY_LOG_CHECK_ATTEMPTS,
+            interval=self.DELIVERY_LOG_CHECK_INTERVAL,
+        )
+        if not result.ok:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"TOTP-Einrichtungsmail an {self.admin_mail}:"
+                " Zustellung nicht nachweisbar",
+            )
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"TOTP-Einrichtungsmail an {self.admin_mail} zugestellt",
+        )
+        return 0
+
+    # --- uninstall ---
+
+    def _uninstall(self) -> int:
+        """Nimmt die vom Modul gesetzten Härtungsartefakte zurück.
+
+        Standardmäßig (uninstall_remove_user=no) bleiben Hauptbenutzer,
+        Home, Login-Passwort, TOTP-Secret und Pubkey unverändert — nur
+        Mitgliedschaft und Gruppe ssh-users werden zurückgenommen. Bei
+        uninstall_remove_user=yes wird der Hauptbenutzer zusätzlich samt
+        Home entfernt (TOTP-Secret und authorized_keys gehen damit
+        verloren). Das root-Passwort bleibt in jedem Fall unverändert,
+        ebenso das Paket libpam-google-authenticator (Bedarf des
+        ssh-Moduls).
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
+        steps: list[tuple[str, _Step]] = [
+            ("Mitgliedschaft in ssh-users lösen", self._step_drop_membership),
+            ("Gruppe ssh-users entfernen", self._step_remove_group),
+            (
+                "Hauptbenutzer behandeln (uninstall_remove_user)",
+                self._step_handle_main_user,
+            ),
+        ]
+        for label, step in steps:
+            self.send_message(LogLevel.INFO, "users", label)
+            if step() != 0:
+                self.send_message(LogLevel.ERROR, "users", f"fehlgeschlagen: {label}")
+                return 1
+        self.send_message(LogLevel.INFO, "users", "root-Passwort bleibt unverändert")
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Paket {self.PKG_GOOGLE_AUTHENTICATOR} bleibt installiert"
+            " (gehört zum ssh-Modul-Bedarf)",
+        )
+        return 0
+
+    def _step_drop_membership(self) -> int:
+        """Löst die Mitgliedschaft des Hauptbenutzers in ssh-users; idempotent.
+
+        Returns:
+            0 bei Erfolg oder wenn keine Mitgliedschaft (mehr) besteht,
+            1 bei Fehler.
+        """
+        if not self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Benutzer {self.main_user} existiert nicht — übersprungen",
+            )
+            return 0
+        action = SysCmdAction(command=[self.ID_BIN, "-nG", self.main_user], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Gruppenzugehörigkeit von {self.main_user}: nicht lesbar",
+            )
+            return 1
+        if self.GROUP_NAME not in action.stdout.split():
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"{self.main_user} ist nicht Mitglied von {self.GROUP_NAME}"
+                " — übersprungen",
+            )
+            return 0
+        drop_action = SysCmdAction(
+            command=[self.GPASSWD_BIN, "-d", "--", self.main_user, self.GROUP_NAME],
+            timeout=30,
+        )
+        if self.run_action(drop_action) != 0:
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Mitgliedschaft {self.main_user} in {self.GROUP_NAME} gelöst",
+        )
+        return 0
+
+    def _step_remove_group(self) -> int:
+        """Entfernt die Gruppe ssh-users, falls vorhanden; idempotent.
+
+        Returns:
+            0 bei Erfolg oder wenn die Gruppe nicht (mehr) existiert,
+            1 bei Fehler.
+        """
+        if not self._group_exists(self.GROUP_NAME):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Gruppe {self.GROUP_NAME} existiert nicht — übersprungen",
+            )
+            return 0
+        action = SysCmdAction(
+            command=[self.GROUPDEL_BIN, "--", self.GROUP_NAME], timeout=30
+        )
+        if self.run_action(action) != 0:
+            return 1
+        self.send_message(LogLevel.INFO, "users", f"Gruppe {self.GROUP_NAME} entfernt")
+        return 0
+
+    def _step_handle_main_user(self) -> int:
+        """Entfernt den Hauptbenutzer oder belässt ihn, je nach Konfigwert.
+
+        Bei uninstall_remove_user=no bleiben Benutzer, Home, Passwort,
+        TOTP-Secret und Pubkey unverändert. Bei yes werden zuerst laufende
+        Prozesse des Benutzers beendet (sonst schlägt userdel -r fehl),
+        dann Benutzer samt Home entfernt.
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehler.
+        """
+        if self.uninstall_remove_user != "yes":
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "Hauptbenutzer, Home, Passwörter, TOTP, Pubkey bleiben"
+                " unverändert (uninstall_remove_user=no)",
+            )
+            return 0
+        if not self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                f"Benutzer {self.main_user} existiert nicht — userdel übersprungen",
+            )
+            return 0
+        # Aktive Prozesse des Hauptbenutzers beenden — sonst schlägt
+        # userdel -r fehl. Rückgabewert absichtlich ignoriert (Original:
+        # "pkill ... || true") — kein laufender Prozess ist kein Fehler.
+        self.run_action(
+            SysCmdAction(
+                command=[self.PKILL_BIN, "-TERM", "-u", self.main_user], timeout=15
+            )
+        )
+        time.sleep(self.PKILL_WAIT_SECONDS)
+        self.run_action(
+            SysCmdAction(
+                command=[self.PKILL_BIN, "-KILL", "-u", self.main_user], timeout=15
+            )
+        )
+        userdel_action = SysCmdAction(
+            command=[self.USERDEL_BIN, "-r", "--", self.main_user], timeout=60
+        )
+        if self.run_action(userdel_action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"userdel -r {self.main_user} fehlgeschlagen — laufende Prozesse"
+                " oder Mountpoints im Home prüfen und manuell entfernen",
+            )
+            return 1
+        self.send_message(
+            LogLevel.INFO,
+            "users",
+            f"Benutzer {self.main_user} mit Home-Verzeichnis entfernt"
+            " (uninstall_remove_user=yes)",
+        )
+        return 0
+
+    # --- test ---
+
+    def _test(self) -> int:
+        """Prüft die Lesbarkeit der Login-Dateien aus Sicht des Hauptbenutzers.
+
+        Reine Beobachtung ohne Systemänderung: beide Prüfungen laufen
+        unabhängig voneinander (sammelnd, kein Abbruch beim ersten
+        Fehlschlag); ein Fehlschlag löst nur eine WARN-Meldung aus.
+        Liefert wie das Original immer 0 — test ist Beobachtung, kein
+        Abbruch-Tor.
+
+        Returns:
+            0 (immer).
+        """
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar"
+                " — Test übersprungen",
+            )
+            return 0
+        ok = True
+        ga_file = str(Path(home) / ".google_authenticator")
+        if not self._readable_as_user(self.main_user, ga_file):
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"TOTP-Secret aus Sicht von {self.main_user} nicht lesbar",
+            )
+            ok = False
+        authkeys = str(Path(home) / ".ssh" / "authorized_keys")
+        if not self._readable_as_user(self.main_user, authkeys):
+            self.send_message(
+                LogLevel.WARN,
+                "users",
+                f"authorized_keys aus Sicht von {self.main_user} nicht lesbar",
+            )
+            ok = False
+        if ok:
+            self.send_message(
+                LogLevel.INFO,
+                "users",
+                "users test: Hauptbenutzer kann seine Login-Dateien lesen",
+            )
+        return 0
+
+    def _readable_as_user(self, user: str, path: str) -> bool:
+        """Prüft über runuser, ob path aus Sicht von user lesbar ist.
+
+        Args:
+            user: Benutzername, dessen Perspektive geprüft wird.
+            path: Zu prüfender Pfad.
+
+        Returns:
+            True, wenn der Test-Aufruf mit Returncode 0 endet.
+        """
+        action = SysCmdAction(
+            command=[self.RUNUSER_BIN, "-u", user, "--", self.TEST_BIN, "-r", path],
+            timeout=15,
+        )
+        return self.run_action(action) == 0
+
+    # --- check ---
+
+    def _verify(self) -> int:
+        """Gleicht den Ist-Zustand mit dem Soll ab.
+
+        Läuft alle Prüfungen durch und sammelt das Ergebnis. Existiert der
+        Hauptbenutzer nicht, brechen die folgenden Pfad-Prüfungen sofort ab
+        (sie lassen sich ohne Benutzer nicht auflösen).
+
+        Returns:
+            0 bei vollständiger Übereinstimmung, sonst 1.
+        """
+        ok = True
+        ok &= self._check_package_installed(self.PKG_GOOGLE_AUTHENTICATOR)
+        ok &= self._check_group_exists(self.GROUP_NAME)
+
+        if not self._user_exists(self.main_user):
+            self.send_message(
+                LogLevel.ERROR, "users", f"Benutzer {self.main_user} existiert nicht"
+            )
+            return 1
+
+        ok &= self._check_shell(self.main_user, self.SHELL)
+        ok &= self._check_group_membership(self.main_user, self.GROUP_NAME)
+        ok &= self._check_password_set(self.main_user)
+
+        home = self._home_dir(self.main_user)
+        if home is None:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Home-Verzeichnis von {self.main_user} nicht ermittelbar",
+            )
+            return 1
+
+        ok &= self._check_ssh_dir(home)
+        ok &= self._check_authorized_keys(home)
+        ok &= self._check_totp(home)
+        return 0 if ok else 1
+
+    def _check_package_installed(self, pkg: str) -> bool:
+        """Prüft über dpkg, ob pkg installiert ist.
+
+        Args:
+            pkg: Paketname.
+
+        Returns:
+            True, wenn installiert.
+        """
+        action = SysCmdAction(command=[self.DPKG_BIN, "-s", pkg], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR, "users", f"Paket {pkg}: nicht installiert"
+            )
+            return False
+        self.send_message(LogLevel.INFO, "users", f"Paket {pkg}: installiert — OK")
+        return True
+
+    def _check_group_exists(self, group: str) -> bool:
+        """Prüft über getent, ob group existiert.
+
+        Args:
+            group: Gruppenname.
+
+        Returns:
+            True, wenn die Gruppe existiert.
+        """
+        if not self._group_exists(group):
+            self.send_message(
+                LogLevel.ERROR, "users", f"Gruppe {group}: existiert nicht"
+            )
+            return False
+        self.send_message(LogLevel.INFO, "users", f"Gruppe {group}: existiert — OK")
+        return True
+
+    def _check_shell(self, user: str, shell: str) -> bool:
+        """Prüft die Login-Shell von user gegen shell.
+
+        Args:
+            user: Benutzername.
+            shell: Soll-Shell.
+
+        Returns:
+            True bei Übereinstimmung.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "passwd", user], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR, "users", f"{user}: passwd-Eintrag nicht lesbar"
+            )
+            return False
+        fields = action.stdout.strip().split(":")
+        current = fields[6] if len(fields) > 6 else ""
+        if current == shell:
+            self.send_message(
+                LogLevel.INFO, "users", f"Login-Shell {user}: {current} — OK"
+            )
+            return True
+        self.send_message(
+            LogLevel.ERROR, "users", f"Login-Shell {user}: ist {current}, soll {shell}"
+        )
+        return False
+
+    def _check_group_membership(self, user: str, group: str) -> bool:
+        """Prüft, ob user Mitglied von group ist.
+
+        Args:
+            user: Benutzername.
+            group: Gruppenname.
+
+        Returns:
+            True bei Mitgliedschaft.
+        """
+        action = SysCmdAction(command=[self.ID_BIN, "-nG", user], timeout=15)
+        if self.run_action(action) != 0:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"Gruppenzugehörigkeit von {user}: nicht lesbar",
+            )
+            return False
+        if group in action.stdout.split():
+            self.send_message(LogLevel.INFO, "users", f"{user} in Gruppe {group} — OK")
+            return True
+        self.send_message(
+            LogLevel.ERROR, "users", f"{user} ist nicht in Gruppe {group}"
+        )
+        return False
+
+    def _check_password_set(self, user: str) -> bool:
+        """Prüft, ob user ein gesetztes Login-Passwort hat.
+
+        Args:
+            user: Benutzername.
+
+        Returns:
+            True, wenn ein Passwort gesetzt ist.
+        """
+        if self._shadow_password_set(user):
+            self.send_message(
+                LogLevel.INFO, "users", f"Login-Passwort {user}: gesetzt — OK"
+            )
+            return True
+        self.send_message(
+            LogLevel.ERROR, "users", f"{user} hat kein gesetztes Login-Passwort"
+        )
+        return False
+
+    def _check_ssh_dir(self, home: str) -> bool:
+        """Prüft Rechte/Eigentümer von ~/.ssh.
+
+        Args:
+            home: Home-Verzeichnis des Hauptbenutzers.
+
+        Returns:
+            True bei exaktem Soll-Zustand (0700, Eigentümer main_user).
+        """
+        return self._check_file_mode(Path(home) / ".ssh", 0o700, self.main_user)
+
+    def _check_authorized_keys(self, home: str) -> bool:
+        """Prüft Rechte, Eigentümer und Inhalt von ~/.ssh/authorized_keys.
+
+        Args:
+            home: Home-Verzeichnis des Hauptbenutzers.
+
+        Returns:
+            True bei exaktem Soll-Zustand (0600, Eigentümer main_user,
+            nicht leer).
+        """
+        authkeys = Path(home) / ".ssh" / "authorized_keys"
+        ok = self._check_file_mode(authkeys, 0o600, self.main_user)
+        if ok and authkeys.stat().st_size == 0:
+            self.send_message(LogLevel.ERROR, "users", f"{authkeys}: ist leer")
+            ok = False
+        return ok
+
+    def _check_totp(self, home: str) -> bool:
+        """Prüft Rechte, Eigentümer und Inhalt von ~/.google_authenticator.
+
+        Args:
+            home: Home-Verzeichnis des Hauptbenutzers.
+
+        Returns:
+            True bei Soll-Zustand (kein Gruppen-/Welt-Zugriff, Eigentümer
+            main_user, nicht leer).
+        """
+        ga_file = Path(home) / ".google_authenticator"
+        ok = self._check_owner_only_mode(ga_file, self.main_user)
+        if ok and ga_file.stat().st_size == 0:
+            self.send_message(LogLevel.ERROR, "users", f"{ga_file}: ist leer")
+            ok = False
+        return ok
+
+    def _check_file_mode(self, path: Path, expected_mode: int, owner: str) -> bool:
+        """Prüft exakte Rechte und Eigentümer:Gruppe (== owner:owner) von path.
+
+        Args:
+            path: Zu prüfender Pfad.
+            expected_mode: Erwartete Rechte.
+            owner: Erwarteter Eigentümer (Gruppe wird gleichnamig erwartet).
+
+        Returns:
+            True, wenn Rechte und Eigentümer exakt dem Soll entsprechen.
+        """
+        try:
+            st = path.stat()
+        except OSError:
+            self.send_message(LogLevel.ERROR, "users", f"{path}: existiert nicht")
+            return False
+        mode = stat.S_IMODE(st.st_mode)
+        owner_name = pwd.getpwuid(st.st_uid).pw_name
+        group_name = grp.getgrgid(st.st_gid).gr_name
+        ok = True
+        if mode != expected_mode:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"{path}: Rechte {oct(mode)}, soll {oct(expected_mode)}",
+            )
+            ok = False
+        if owner_name != owner or group_name != owner:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"{path}: Eigentümer {owner_name}:{group_name}, soll {owner}:{owner}",
+            )
+            ok = False
+        if ok:
+            self.send_message(LogLevel.INFO, "users", f"{path}: Rechte/Eigentümer — OK")
+        return ok
+
+    def _check_owner_only_mode(self, path: Path, owner: str) -> bool:
+        """Prüft, dass Gruppe und andere keinen Zugriff auf path haben.
+
+        Args:
+            path: Zu prüfender Pfad.
+            owner: Erwarteter Eigentümer (Gruppe wird gleichnamig erwartet).
+
+        Returns:
+            True, wenn Rechte keinen Gruppen-/Welt-Zugriff erlauben
+            (Maske & 0o077 == 0) und der Eigentümer stimmt.
+        """
+        try:
+            st = path.stat()
+        except OSError:
+            self.send_message(LogLevel.ERROR, "users", f"{path}: existiert nicht")
+            return False
+        mode = stat.S_IMODE(st.st_mode)
+        owner_name = pwd.getpwuid(st.st_uid).pw_name
+        group_name = grp.getgrgid(st.st_gid).gr_name
+        ok = True
+        if mode & 0o077:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"{path}: Rechte {oct(mode)} erlauben Gruppen-/Welt-Zugriff",
+            )
+            ok = False
+        if owner_name != owner or group_name != owner:
+            self.send_message(
+                LogLevel.ERROR,
+                "users",
+                f"{path}: Eigentümer {owner_name}:{group_name}, soll {owner}:{owner}",
+            )
+            ok = False
+        if ok:
+            self.send_message(LogLevel.INFO, "users", f"{path}: Rechte/Eigentümer — OK")
+        return ok
+
+    # --- Helfer ---
+
+    def _shadow_password_set(self, user: str) -> bool:
+        """Prüft per getent shadow, ob user einen gesetzten Passwort-Hash hat.
+
+        Args:
+            user: Benutzername.
+
+        Returns:
+            True, wenn ein Passwort gesetzt ist; False auch, wenn der
+            Shadow-Eintrag nicht gelesen werden kann.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "shadow", user], timeout=15)
+        if self.run_action(action) != 0:
+            return False
+        return _is_password_set(_shadow_hash_from_line(action.stdout))
+
+    def _user_exists(self, user: str) -> bool:
+        """Prüft per getent passwd, ob user existiert.
+
+        Args:
+            user: Benutzername.
+
+        Returns:
+            True, wenn der Benutzer existiert.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "passwd", user], timeout=15)
+        return self.run_action(action) == 0
+
+    def _group_exists(self, group: str) -> bool:
+        """Prüft still per getent group, ob group existiert (ohne Meldung).
+
+        Args:
+            group: Gruppenname.
+
+        Returns:
+            True, wenn die Gruppe existiert.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "group", group], timeout=15)
+        return self.run_action(action) == 0
+
+    def _home_dir(self, user: str) -> str | None:
+        """Ermittelt das Home-Verzeichnis von user über getent passwd.
+
+        Args:
+            user: Benutzername.
+
+        Returns:
+            Home-Verzeichnis, oder None, wenn nicht ermittelbar.
+        """
+        action = SysCmdAction(command=[self.GETENT_BIN, "passwd", user], timeout=15)
+        if self.run_action(action) != 0:
+            return None
+        fields = action.stdout.strip().split(":")
+        return fields[5] if len(fields) > 5 and fields[5] else None

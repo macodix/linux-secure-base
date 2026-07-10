@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-base-installer"
+version = "0.1.0-dev"
+description = "Linux Secure Base — Installer für ein gehärtetes Grundsystem"
+requires-python = ">=3.13"
+
+[tool.setuptools.packages.find]
+where = ["usr/lib"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+extend-include = ["bin/*"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "B", "BLE", "C4", "UP", "SIM", "TID", "S", "RUF"]
+ignore = ["S603"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.13"
+files = ["usr/lib", "tests"]
+strict = true
+
+# pifos ist im Entwicklungs-venv eine installierte Abhängigkeit (pip -e) ohne
+# py.typed-Marker; pifos selbst wird für diesen Plan nicht geändert. Statt
+# ignore_missing_imports (das pifos-Symbole auf Any abbildet und z. B. beim
+# Erben von Module einen eigenen Folgefehler erzeugt) prüft mypy die echten
+# Inline-Annotationen von pifos mit (konv-scripting-python.md Abschnitt 5.4,
+# selektiver Override statt global).
+[[tool.mypy.overrides]]
+module = "pifos.*"
+follow_untyped_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

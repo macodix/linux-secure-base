@@ -14,7 +14,7 @@ Dieses Dokument beschreibt das Monitoring des Grundsystems:
 
 ## 1. Überwachte Größen
 
-`monit` überwacht Plattenplatz, Systemlast, Speicher und kritische Dienste und alarmiert per Mail an die Administrator EMail Adresse. Der Status ist mit `monit status` als `root` abrufbar. Der Prüfzyklus beträgt 60 s (`set daemon 60`). Bei Ausfall eines überwachten Dienst-Prozesses versucht das Monitoring den Diest neu zu starten (`systemctl`)  und sendet ein EMail an die Administrator EMail Adresse.
+`monit` überwacht Plattenplatz, Systemlast, Speicher und kritische Dienste und alarmiert per Mail an die Administrator Email Adresse. Der Status ist mit `monit status` als `root` abrufbar. Der Prüfzyklus beträgt 60 s (`set daemon 60`). Bei Ausfall eines überwachten Dienst-Prozesses versucht das Monitoring den Dienst neu zu starten (`systemctl`) und sendet eine EMail an die Administrator Email Adresse.
 
 | Prüfgegenstand | Schwellwert/Bedingung | Reaktion |
 |---|---|---|
@@ -34,7 +34,7 @@ Auf einem Einzelserver ohne Hochverfügbarkeit kann das lokale Monitoring einen 
 
 ## 3. Benachrichtigung
 
-Das System ist so angelegt, dass im Alarmfall eine Mail an die Administrator EMail Adresse versandt wird. Auslöser einer Mail sind SSH-Login, Backup-Fehlschlag, Ressourcen-Alarm des Monitorings, fehlgeschlagenes automatisches Update und der tägliche Log-Bericht.
+Das System ist so angelegt, dass im Alarmfall eine Mail an die Administrator Email Adresse versandt wird. Auslöser einer Mail sind SSH-Login, Backup-Fehlschlag, Ressourcen-Alarm des Monitorings, fehlgeschlagenes automatisches Update und der tägliche Log-Bericht.
 
 ## Versionshistorie
 

@@ -1,6 +1,6 @@
   # Schadsoftware-Schutz (rkhunter)
 
-`rkhunter` läuft täglich aus `cron.daily` mit Mail-Bericht an die Admin-Adresse.
+`rkhunter` läuft täglich aus `cron.daily` mit Mail-Bericht an die Administrator Email Adresse.
 
 ```
 apt install rkhunter
@@ -19,10 +19,10 @@ APT_AUTOGEN="yes"
 Damit die Report-Mail einen domänen-gültigen Absender hat, in `/etc/rkhunter.conf` die `MAIL_CMD`-Direktive ergänzen:
 
 ```
-MAIL_CMD=mail -r root@<server-domain> -s "[rkhunter] Warnings found for ${HOST_NAME}"
+MAIL_CMD=mail -r root@<FQDN> -s "[rkhunter] Warnings found for ${HOST_NAME}"
 ```
 
-`${HOST_NAME}` ist eine rkhunter-interne Variable und bleibt unverändert. Der Empfänger wird durch die `recipient_canonical`-Umleitung (Kapitel 2 der Installationsanleitung) ohnehin auf die Admin-Adresse gelenkt.
+`${HOST_NAME}` ist eine rkhunter-interne Variable und bleibt unverändert. Der Empfänger wird durch die `recipient_canonical`-Umleitung (Kapitel 2 der Installationsanleitung) ohnehin auf die Administrator Email Adresse gelenkt.
 
 Baseline-Datenbank initialisieren und initialen Check ausführen:
 

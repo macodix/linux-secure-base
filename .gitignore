@@ -13,3 +13,23 @@ Thumbs.db
 # Temporär
 *.tmp
 *.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# Test-/Typ-/Lint-Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+
+# Ein-Schritt-Paket (make dist): gebauter Baum, vendorte Bibliotheken, Artefakte
+usr/lib/pifos/
+usr/lib/secure_base/_vendor/
+dist/

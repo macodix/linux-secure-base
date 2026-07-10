@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Einstiegspunkt des LSB-Installers.
+
+Aufruf: secure-base-installer [OPTIONEN] {install|check} [MODUL ...]
+"""
+
+import argparse
+import os
+import sys
+import tomllib
+from pathlib import Path
+
+# Keine Bytecode-Ablagen (__pycache__) im Paketbaum — der Baum bleibt so,
+# wie er entpackt wurde. Umgebungsvariable zusätzlich, damit auch
+# Modul-Kindprozesse keine schreiben.
+sys.dont_write_bytecode = True
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+# Die frühere Prüfung des Entpackbaums (root-Eigentum, keine Fremd-
+# Schreibrechte) ist auf Entscheidung des Betreibers entfernt (2026-07-04):
+# Auf einem Einzeladmin-System behindert sie mehr, als sie schützt.
+
+# Suchpfad des mitgelieferten Baums setzen, bevor Installer-Code geladen wird.
+# Dokumentierte Ausnahme von konv-scripting-python.md 5.6 (Plan 2.3).
+sys.path.insert(0, str(_ROOT / "usr" / "lib"))
+sys.path.insert(0, str(_ROOT / "usr" / "lib" / "secure_base" / "_vendor"))
+
+from secure_base.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
+
+
+def _version() -> str:
+    """Liest Version und Bau-Kennung des Paketbaums.
+
+    Die pyproject.toml ist die einzige Quelle der Version (auch der
+    Paketbau liest sie). Die Datei BUILD-INFO schreibt der Paketbau
+    (Commit und Datum); sie identifiziert den Testbau eindeutig und
+    fehlt im reinen Arbeitsbaum.
+    """
+    with (_ROOT / "pyproject.toml").open("rb") as fh:
+        version = str(tomllib.load(fh)["project"]["version"])
+    build_info = _ROOT / "BUILD-INFO"
+    if build_info.exists():
+        version += f" ({build_info.read_text(encoding='utf-8').strip()})"
+    return version
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Baut den Argumentparser des Kommandos."""
+    parser = argparse.ArgumentParser(
+        description="Installer für ein gehärtetes Linux-Grundsystem."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"secure-base-installer {_version()}",
+    )
+    parser.add_argument(
+        "command",
+        choices=("install", "uninstall", "check", "test"),
+        help=(
+            "install: Module einrichten. uninstall: Modul-Änderungen in "
+            "umgekehrter Reihenfolge zurücknehmen. check: Soll-Ist-"
+            "Abgleich. test: Funktionstest ohne Änderungen."
+        ),
+    )
+    parser.add_argument(
+        "modules",
+        nargs="*",
+        metavar="MODUL",
+        help="Nur die genannten Module verarbeiten; ohne Angabe alle aktiven.",
+    )
+    parser.add_argument(
+        "-c",
+        "--conf",
+        metavar="PFAD",
+        help="Konfigurationsdatei; ohne Angabe etc/secure-base/secure-base.conf.",
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Trockenlauf: Module nur auflisten, nichts ausführen.",
+    )
+    parser.add_argument(
+        "-o",
+        "--optional",
+        action="store_true",
+        help="Zusätzlich die aktivierten optionalen Module verarbeiten.",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    sys.exit(main(build_parser().parse_args()))

@@ -1,6 +1,6 @@
 # Linux Secure Base
 
-Dokumentation und Installations-Scripte für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx), auf der Basis von Ubuntu 26.04 LTS (minimal).
+Dokumentation und Installer für ein gehärtetes Linux Server Grundsystem, optional mit Webserver (nginx), auf der Basis von Ubuntu 26.04 LTS (minimal).
 
 ## Zweck
 
@@ -16,13 +16,9 @@ Zur schnellen und einfachen Installation einer sicheren Serverumgebung mit
 - Monitoring (via EMail)
 - optional nginx Webserver
 
-Optionale Pakete (zurzeit nginx) werden über eine eigene Konfigurationsdatei
-(`conf/secure-base-optional.conf`) und den Schalter `-o` installiert, getrennt
-vom gehärteten Grundsystem.
+Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden müssen. Alle Benachrichtigungen werden per EMail an eine festzulegende Adresse gesandt.
 
-Die Installation ist so angelegt, dass keine Drittanbieter (z. B. für Monitoring) genutzt werden muss. Alle Benachrichtgungen werden per EMail an eine festzulegende Adresse gesandt.
-
-Die Installations-Scripte werden komplett über Konfigurationsverezichnisse gesteuert.
+Die Installation wird vollständig über Konfiguration gesteuert.
 
 
 ## Grenzen & Warnung
@@ -31,7 +27,7 @@ Aufgrund der Ausgestaltung von Backup und Monitoring ist diese Installation insb
 
 **Die Nutzung dieser Anleitung und der Scripte entbindet ausdrücklich NICHT das eigene Hirn vom selbständigen Nachdenken!**
 
-Auch wenn Dokumentation Scripte nach bestem Wissen und Gewissen erstellt wurden, wird für die Anwendung keineerlei Gewährleistung übernommen. Niemand muss diese Anleitung und Scripte nutzen. Und wer für die Beurteilung dieser Dokumente und Scripte nicht hinreichend sachkundig ist, sollte besser die Finger davon lassen!
+Auch wenn Dokumentation und Scripte nach bestem Wissen und Gewissen erstellt wurden, wird für die Anwendung keinerlei Gewährleistung übernommen. Niemand muss diese Anleitung und Scripte nutzen. Und wer für die Beurteilung dieser Dokumente und Scripte nicht hinreichend sachkundig ist, sollte besser die Finger davon lassen!
 
 
 ## Echtheit prüfen (Signatur)
@@ -51,6 +47,39 @@ Den Fingerabdruck zusätzlich über einen unabhängigen Kanal bestätigen — ei
 
 Eine gültige Signatur bestätigt **ausschließlich Herkunft und Unverändertheit**. Sie ist **keine** Aussage über Reife, Qualität oder Eignung für den Produktivbetrieb; es gelten unverändert „Grenzen & Warnung" und der Projektstatus *In Aufbau*.
 
+Dasselbe Verfahren gilt für das Auslieferungspaket des Python-Installers (`secure-base-installer-<version>.tar.gz`): Es liegt eine abgesetzte Signatur `secure-base-installer-<version>.tar.gz.asc` bei, mit demselben Schlüssel und demselben Fingerabdruck-Abgleich zu prüfen, bevor das Archiv entpackt wird:
+
+```sh
+gpg --import SIGNING-KEY.asc
+gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
+gpg --verify secure-base-installer-<version>.tar.gz.asc secure-base-installer-<version>.tar.gz
+```
+
+
+## Installation in einem Schritt
+
+Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es enthält den Installer, den Bausatz pifos und die benötigten Fremdbibliotheken bereits fertig zusammengestellt — kein `pip`, kein Netzzugang und keine vorherige pifos-Einrichtung auf dem Zielsystem nötig.
+
+**Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts. In der Entwicklungsphase gibt es dort den rollierenden **Testbau** (`testbau`) — er wird bei jedem Entwicklungsstand ersetzt; `secure-base-installer --version` und die Datei `BUILD-INFO` im Paket nennen Commit und Datum des Baus. Versionierte Release-Stände (rc/final) erscheinen erst wieder, wenn ein Stand den Servertest vollständig bestanden hat.
+
+```sh
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.0-dev.tar.gz
+curl -LO https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.0-dev.tar.gz.asc
+curl -LO https://raw.githubusercontent.com/macodix/linux-secure-base/main/SIGNING-KEY.asc
+```
+
+Danach prüfen, entpacken, starten:
+
+```sh
+gpg --import SIGNING-KEY.asc
+gpg --fingerprint cert@martinhenkel.net   # mit dem Fingerabdruck oben vergleichen
+gpg --verify secure-base-installer-<version>.tar.gz.asc secure-base-installer-<version>.tar.gz
+tar xzf secure-base-installer-<version>.tar.gz
+sudo secure-base-installer-<version>/bin/secure-base-installer install
+```
+
+Details zur Bedienung: [`installer/README.md`](installer/README.md).
+
 
 ## Lizenz
 
@@ -63,9 +92,19 @@ Wie in der GPL festgehalten, erfolgt die Bereitstellung ohne jede Gewährleistun
 
 ## Repository Aufbau
 
-- `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
 - `docs/systembeschreibung/` — Systembeschreibung, Härtungskonzept.
+- `docs/installer/` — Konzept des Installers, der pifos nutzt.
+- `docs/anleitung/` — Installationsanleitung, Schritt für Schritt.
 - `docs/INDEX.md` — Navigation.
+
+
+## Umstellung auf Python
+
+Der Installer wurde von Bash auf Python umgestellt, um die Ausgaben und Prozesse der aufgerufenen Befehle besser zu kontrollieren. Grundlage ist der wiederverwendbare Bausatz pifos, der als eigenes Projekt geführt wird: [github.com/macodix/pifos](https://github.com/macodix/pifos).
+
+Auslöser waren Probleme der Bash-Umsetzung mit nebenläufiger Terminal-Ausgabe und externem Befehlsaufruf: `ufw enable` aus dem Installer störte die SSH-Verbindung und die Live-Anzeige, die Statusanzeige über SSH war fragil, und die Trennung von Befehls-Ausgabe und Bedienoberfläche war in Bash umständlich.
+
+Die Python-Fassung trennt stdout und stderr je Befehl sauber über `subprocess`, macht die Statusanzeige robuster und die Fehler- und Ablaufsteuerung klarer.
 
 
 ## Status

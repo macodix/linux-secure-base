@@ -53,7 +53,7 @@ AuthenticationMethods publickey,keyboard-interactive
 
 ## 3. E-Mail-Benachrichtigung bei SSH-Login
 
-Jeder SSH-Login löst eine Mail an die Admin-Adresse aus. Unter `/etc/ssh/login-mail-notification.sh` folgendes Skript anlegen:
+Jeder SSH-Login löst eine Mail an die Administrator Email Adresse aus. Unter `/etc/ssh/login-mail-notification.sh` folgendes Skript anlegen:
 
 ```
 #!/bin/sh

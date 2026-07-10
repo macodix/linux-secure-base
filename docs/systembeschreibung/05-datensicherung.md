@@ -1,6 +1,6 @@
 # Datensicherung
 
-Dieses Dokument beschreibt die Datensicherung des Grundsystems: -
+Dieses Dokument beschreibt die Datensicherung des Grundsystems:
 - Sicherungsverfahren und Ziel, 
 - Wiederanlaufzeit (RPO/RTO) und Aufbewahrung,
 - Backup-Überwachung, Wiederherstellung und RTO-Probe.

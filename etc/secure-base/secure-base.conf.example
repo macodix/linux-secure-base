@@ -1,0 +1,179 @@
+# secure-base.conf.example — Vorlage für etc/secure-base/secure-base.conf (Zwei-Datei-Muster).
+#
+# Auf dem Zielsystem nach etc/secure-base/secure-base.conf kopieren und die leeren
+# Pflichtwerte setzen. Die echte secure-base.conf wird nie eingecheckt.
+# Herkunft des Musters: konv-dateien-verzeichnisse.md Abschnitt 3.1.
+
+[installer]
+# Logdatei des Installers; enge Rechte (0600) setzt der Aufrufer.
+logfile = /var/log/secure-base/secure-base-installer.log
+
+# Logstufe: INFO, WARN, ERROR oder CRITICAL.
+loglevel = INFO
+
+# Aktive Pflichtmodule, kommagetrennt. Feste Ausführungsreihenfolge;
+# diese Liste legt nur fest, welche Module mitlaufen.
+modules_enabled = base,postfix,users,ssh,ufw,fail2ban,rkhunter,logging,unattended,restic,monit,lynis
+
+# Aktive optionale Module, kommagetrennt; nur mit dem Schalter -o
+# verarbeitet (verfügbar: nginx). Leer lassen, wenn keine.
+optional_enabled =
+
+# Installationsbericht nach jedem install-Lauf: lokal unter
+# /var/log/secure-base/ ablegen und an admin_mail senden (yes/no).
+install_report = yes
+
+[general]
+# Pflicht — vollständiger Rechnername des Servers.
+fqdn =
+
+# Pflicht — administrative E-Mail-Adresse für Benachrichtigungen
+# (Mail-, Überwachungs- und Prüfmodule).
+admin_mail =
+
+[base]
+# Zeitzone des Systems (tzdata-Schreibweise).
+timezone = Europe/Berlin
+
+[postfix]
+# Pflicht — SMTP-Smarthost (Relay), an den Postfix als Satellit ausliefert.
+relay_host =
+
+# Port des Smarthosts (Submission/STARTTLS üblich 587).
+relay_port = 587
+
+# Pflicht — Benutzername für die SMTP-Authentifizierung am Smarthost.
+relay_user =
+
+# Pflicht — Passwort für die SMTP-Authentifizierung am Smarthost.
+# Landet ausschließlich in /etc/postfix/sasl_passwd (0600).
+relay_password =
+
+[users]
+# Pflicht — Login des Hauptbenutzers (nicht-root-Konto; wird vom
+# users-Modul angelegt, das ssh-Modul prüft ihn beim Härten).
+main_user =
+
+# Login-Passwort des Hauptbenutzers. Wird nur beim ersten Lauf verwendet;
+# ist bereits ein Passwort gesetzt, bleibt es unverändert.
+main_user_password =
+
+# Pflicht — SSH-Public-Key des Hauptbenutzers (Inhalt der .pub-Datei,
+# eine Zeile). Aussperr-Schutz: ein leerer oder unbekannter Wert bricht
+# install vor jeder Änderung ab.
+# Beispiel: ssh-ed25519 AAAA... user@laptop
+main_user_pubkey =
+
+# Steuert die Betriebsart uninstall: no (Vorgabe) belässt Hauptbenutzer,
+# Home, Passwort, TOTP-Secret und Pubkey und nimmt nur Mitgliedschaft/
+# Gruppe ssh-users zurück; yes entfernt den Hauptbenutzer samt Home
+# (TOTP-Secret und authorized_keys gehen verloren).
+uninstall_remove_user = no
+
+[ssh]
+# Login-Mail-Benachrichtigung: yes legt ein pam_exec-Skript an, das bei
+# jedem SSH-Login eine Mail an admin_mail schickt; no lässt einen
+# vorhandenen Bestand unverändert.
+ssh_enable_login_mail = yes
+
+# Setzt den Kompatibilitäts-Alias ChallengeResponseAuthentication in der
+# sshd_config (OpenSSH < 8.7; auf aktuellen Systemen redundant,
+# aber unschädlich).
+ssh_enable_challenge_response_auth = yes
+
+[ufw]
+# Eingehend erlaubte TCP-Ports (kommagetrennt). Muss 22 (SSH) enthalten,
+# sonst bricht das Modul ab — die Default-Deny-Policy würde sonst den
+# Verwaltungszugang aussperren.
+allow_in_tcp = 22
+
+# Ausgehend erlaubte TCP-Ports (kommagetrennt):
+#   587 Submission/STARTTLS (Postfix-Relay, muss zu relay_port passen),
+#   80/443 HTTP/HTTPS (apt, ACME), 53 DNS, 22 SSH (Git, restic-SFTP).
+allow_out_tcp = 587,80,443,53,22
+
+# Ausgehend erlaubte UDP-Ports (kommagetrennt): 53 DNS.
+allow_out_udp = 53
+
+[fail2ban]
+# IP-/CIDR-Whitelist, kommagetrennt, die fail2ban nie bannt. Hier die
+# eigene Management-IP eintragen, um sich nach wiederholten Fehl-Logins
+# nicht selbst auszusperren. Loopback bleibt immer erhalten.
+# Leer = keine zusätzliche Whitelist.
+# Beispiel: ignoreip = 203.0.113.7, 198.51.100.0/24
+ignoreip =
+
+[rkhunter]
+# Keine eigenen Schlüssel — nutzt fqdn und admin_mail aus [general].
+
+[logging]
+# Maximaler Plattenverbrauch des persistenten Journals (journald
+# SystemMaxUse), systemd-Größenmaß. Beispiel: 500M, 2G.
+journald_max_use = 1G
+
+# Aufbewahrungsfrist des persistenten Journals (journald
+# MaxRetentionSec), systemd-Zeitspanne. Beispiel: 6month, 4week.
+journald_max_retention = 3month
+
+[unattended]
+# Automatischer Neustart nach Updates, die ihn verlangen (z. B. Kernel).
+auto_reboot = yes
+
+# Uhrzeit des automatischen Neustarts (HH:MM).
+auto_reboot_time = 23:45
+
+# Uhrzeit der täglichen Paketlisten-Aktualisierung (apt-daily.timer, HH:MM).
+apt_daily_time = 23:15
+
+# Uhrzeit des täglichen Upgrade-Laufs (apt-daily-upgrade.timer, HH:MM).
+# Sollte zwischen apt_daily_time und auto_reboot_time liegen, damit
+# Updates vor dem Neustart installiert sind.
+apt_daily_upgrade_time = 23:30
+
+[restic]
+# Pflicht — Host-Alias aus /root/.ssh/config (muss dort konfiguriert
+# sein). Geht in die Repo-Adresse (sftp:<alias>:<pfad>).
+sftp_host_alias =
+
+# Pflicht — Zielpfad des Repos auf dem SFTP-Server. install legt ihn bei
+# Bedarf an; der Elternpfad muss für den SFTP-Benutzer beschreibbar sein.
+sftp_path =
+
+# Pflicht — Passphrase zur Verschlüsselung des Backup-Repos (nicht der
+# SSH-Key). Landet ausschließlich in /root/config/restic-passphrase (0600).
+restic_passphrase =
+
+[monit]
+# Pflicht — Absenderadresse der monit-Alarm-Mails.
+monit_mail_from =
+
+# Aktive Prüfungen unter /etc/monit/conf.d/, kommagetrennt. Erlaubte
+# Werte: system, rootfs, sshd, postfix, fail2ban, ufw, cron, rkhunter,
+# restic.
+monit_checks = system,rootfs,sshd,postfix,fail2ban,ufw,cron,rkhunter,restic
+
+[lynis]
+# Cron-Zeitplan der Härtungsprüfung (5 Cron-Felder: Minute Stunde Tag
+# Monat Wochentag). Vorgabe: monatlich am 1. um 04:00.
+lynis_schedule = 0 4 1 * *
+
+# =====================================================================
+# ================  O P T I O N A L E   M O D U L E  ==================
+# =====================================================================
+# Abschnitte ab hier gehören zu optionalen Modulen. Sie laufen nur,
+# wenn das Modul in optional_enabled steht UND der Lauf mit -o startet.
+
+[nginx]
+# Pflicht, sobald nginx aktiviert ist — virtuelle Hosts, je Eintrag
+# "domain" oder "domain|docroot", kommagetrennt. Ohne docroot gilt
+# /var/www/<domain>.
+# Beispiel: nginx_vhosts = example.com,shop.example.com|/srv/www/shop
+nginx_vhosts =
+
+# E-Mail für die Zertifikatsregistrierung (certbot). Leer lässt
+# admin_mail aus [general] greifen.
+nginx_certbot_mail =
+
+# certbot-Betriebsmodus: staging (Testzertifikate, für den ersten
+# Probelauf) oder live (echte Zertifikate).
+nginx_certbot_mode = live
