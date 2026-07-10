@@ -100,8 +100,8 @@ def test_parsed_checks_ignores_empty_entries() -> None:
 # --- KNOWN_CHECKS / CHECK_CONTENT ---
 
 
-def test_known_checks_has_ten_entries() -> None:
-    """KNOWN_CHECKS enthält die neun Checks aus dem Bash-Original plus postgresql."""
+def test_known_checks_has_eleven_entries() -> None:
+    """KNOWN_CHECKS enthält die neun Bash-Original-Checks plus postgresql/-_dump."""
     expected = {
         "system",
         "rootfs",
@@ -113,8 +113,16 @@ def test_known_checks_has_ten_entries() -> None:
         "rkhunter",
         "restic",
         "postgresql",
+        "postgresql_dump",
     }
     assert expected == KNOWN_CHECKS
+
+
+def test_check_content_postgresql_dump_checks_sentinel_mtime() -> None:
+    """Der postgresql_dump-Check prüft das Alter des Dump-Sentinels."""
+    content = CHECK_CONTENT["postgresql_dump"]
+    assert "/var/lib/secure-base/pg-dumpall-last-success" in content
+    assert "mtime > 26 hours" in content
 
 
 def test_check_content_covers_all_known_checks() -> None:

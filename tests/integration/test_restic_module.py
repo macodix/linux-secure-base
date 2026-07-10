@@ -94,6 +94,7 @@ def _make_module(
     mod.sftp_host_alias = "backup-alias"
     mod.sftp_path = "/backup/server"
     mod.restic_passphrase = "correct-horse-battery-staple"  # noqa: S105 — Testwert
+    mod.restic_backup_time = "02:30"
     return mod, conn
 
 
@@ -136,6 +137,20 @@ def test_install_all_steps_succeed(
 
     # Die Passphrase selbst darf in keiner gesendeten Meldung auftauchen.
     assert not any("correct-horse-battery-staple" in str(m) for m in messages)
+
+
+def test_install_writes_cron_with_configured_backup_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Die Cron-Datei nutzt die aus restic_backup_time umgesetzten Cron-Felder."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    mod.restic_backup_time = "23:15"
+
+    assert mod.start() == 0
+
+    cron_content = Path(mod._cron_file_path()).read_text(encoding="utf-8")
+    assert "15 23 * * *  root " in cron_content
+    assert mod._backup_script_path() in cron_content
 
 
 def test_install_stops_at_first_failed_step(

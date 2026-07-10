@@ -143,13 +143,18 @@ sftp_path =
 # SSH-Key). Landet ausschließlich in /root/config/restic-passphrase (0600).
 restic_passphrase =
 
+# Uhrzeit der täglichen restic-Sicherung (HH:MM). Muss NACH pg_dump_time
+# (Modul postgresql, falls aktiviert) liegen, damit ein frischer
+# Datenbank-Dump noch mit gesichert wird.
+restic_backup_time = 02:30
+
 [monit]
 # Pflicht — Absenderadresse der monit-Alarm-Mails.
 monit_mail_from =
 
 # Aktive Prüfungen unter /etc/monit/conf.d/, kommagetrennt. Erlaubte
 # Werte: system, rootfs, sshd, postfix, fail2ban, ufw, cron, rkhunter,
-# restic, postgresql.
+# restic, postgresql, postgresql_dump.
 monit_checks = system,rootfs,sshd,postfix,fail2ban,ufw,cron,rkhunter,restic
 
 [lynis]
@@ -179,4 +184,7 @@ nginx_certbot_mail =
 nginx_certbot_mode = live
 
 [postgresql]
-# Keine eigenen Schlüssel — nutzt timezone aus [base] (log_timezone).
+# Uhrzeit des täglichen Datenbank-Dumps (pg_dumpall, HH:MM). Muss VOR
+# restic_backup_time (Abschnitt [restic]) liegen, damit der frische Dump
+# noch mit gesichert wird.
+pg_dump_time = 02:00

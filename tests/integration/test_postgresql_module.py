@@ -75,14 +75,31 @@ def _make_module(
     monkeypatch.setattr(Postgresql, "RUNUSER_BIN", "/usr/bin/true")
     monkeypatch.setattr(Postgresql, "APT_ACTION_CLS", _NoOpAptAction)
     monkeypatch.setattr(Postgresql, "SYSTEMD_ACTION_CLS", _NoOpSystemdAction)
-    # Eigentümerwechsel auf postgres verlangt Systemrechte; im Test auf den
-    # aufrufenden Benutzer umgelenkt (PermissionsAction bleibt unverändert).
+    # Eigentümerwechsel auf postgres/root verlangt Systemrechte; im Test auf
+    # den aufrufenden Benutzer umgelenkt (PermissionsAction bleibt unverändert).
     monkeypatch.setattr(Postgresql, "PG_OWNER", pwd.getpwuid(os.getuid()).pw_name)
     monkeypatch.setattr(Postgresql, "PG_GROUP", grp.getgrgid(os.getgid()).gr_name)
+    monkeypatch.setattr(Postgresql, "DUMP_OWNER", pwd.getpwuid(os.getuid()).pw_name)
+    monkeypatch.setattr(Postgresql, "DUMP_GROUP", grp.getgrgid(os.getgid()).gr_name)
 
     monkeypatch.setattr(Postgresql, "PG_ETC_BASE", str(tmp_path / "etc-postgresql"))
     monkeypatch.setattr(
         Postgresql, "PG_DATA_BASE", str(tmp_path / "var-lib-postgresql")
+    )
+    # Reale Zielpfade (/root/postgresql-dump, /usr/local/sbin, /etc/cron.d,
+    # /var/lib/secure-base) sind ohne Systemrechte nicht beschreibbar — im
+    # Test auf tmp_path umgelenkt.
+    monkeypatch.setattr(Postgresql, "DUMP_DIR", str(tmp_path / "root-pg-dump"))
+    monkeypatch.setattr(
+        Postgresql, "DUMP_SCRIPT_PATH", str(tmp_path / "secure-base-pg-dumpall.sh")
+    )
+    monkeypatch.setattr(
+        Postgresql, "DUMP_CRON_PATH", str(tmp_path / "secure-base-pg-dumpall.cron")
+    )
+    sentinel_dir = tmp_path / "var-lib-secure-base"
+    monkeypatch.setattr(Postgresql, "SENTINEL_DIR", str(sentinel_dir))
+    monkeypatch.setattr(
+        Postgresql, "SENTINEL_FILE", str(sentinel_dir / "pg-dumpall-last-success")
     )
     _prepare_cluster(tmp_path)
 
@@ -90,6 +107,7 @@ def _make_module(
     mod = Postgresql(conn=conn, loglevel=LogLevel.INFO)
     mod.operation = "install"
     mod.timezone = "Europe/Berlin"
+    mod.pg_dump_time = "02:00"
     return mod, conn
 
 
@@ -155,6 +173,24 @@ def test_install_all_steps_succeed(
 
     assert _data_dir(mod).stat().st_mode & 0o777 == 0o700
 
+    dump_dir = Path(mod.DUMP_DIR)
+    assert dump_dir.is_dir()
+    assert dump_dir.stat().st_mode & 0o777 == 0o700
+
+    dump_script = Path(mod.DUMP_SCRIPT_PATH)
+    assert dump_script.is_file()
+    assert dump_script.stat().st_mode & 0o777 == 0o700
+    assert dump_script.read_text(encoding="utf-8") == mod._build_dump_script_content()
+
+    dump_cron = Path(mod.DUMP_CRON_PATH)
+    assert dump_cron.is_file()
+    assert dump_cron.stat().st_mode & 0o777 == 0o644
+    assert dump_cron.read_text(encoding="utf-8") == mod._build_dump_cron_content()
+    assert "0 2 * * *  root " in dump_cron.read_text(encoding="utf-8")
+
+    sentinel_file = Path(mod.SENTINEL_FILE)
+    assert sentinel_file.is_file()
+
 
 def test_install_stops_at_first_failed_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -183,6 +219,20 @@ def test_install_raises_when_no_cluster_created(
 
     with pytest.raises(ModuleError, match="kein Cluster"):
         mod.start()
+
+
+def test_install_converts_pg_dump_time_into_cron_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pg_dump_time HH:MM wird korrekt in Cron-Minute/-Stunde umgesetzt."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    mod.pg_dump_time = "23:45"
+
+    assert mod.start() == 0
+
+    dump_cron = Path(mod.DUMP_CRON_PATH).read_text(encoding="utf-8")
+    assert "45 23 * * *  root " in dump_cron
+    assert mod.DUMP_SCRIPT_PATH in dump_cron
 
 
 # --- Betriebsart check ---
@@ -263,6 +313,31 @@ def test_uninstall_removes_own_conf_but_keeps_pg_hba_and_data(
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
 
 
+def test_uninstall_removes_dump_script_and_cron_but_keeps_dump_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uninstall entfernt Dump-Skript/-Cron; DUMP_DIR und vorhandene Dumps bleiben."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    old_dump = Path(mod.DUMP_DIR) / mod.DUMP_FILE_NAME
+    old_dump.write_text("-- vorheriger Dump --\n", encoding="utf-8")
+
+    conn.reset_mock()
+    mod.operation = "uninstall"
+
+    result = mod.start()
+
+    assert result == 0
+    assert not Path(mod.DUMP_SCRIPT_PATH).exists()
+    assert not Path(mod.DUMP_CRON_PATH).exists()
+    assert Path(mod.DUMP_DIR).is_dir()
+    assert old_dump.exists()
+    assert old_dump.read_text(encoding="utf-8") == "-- vorheriger Dump --\n"
+    messages = _sent_messages(conn)
+    assert any(mod.DUMP_DIR in str(m) and "bleibt bestehen" in str(m) for m in messages)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+
+
 def test_uninstall_returns_zero_without_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -303,7 +378,7 @@ def test_uninstall_short_circuits_when_own_file_already_removed(
 def test_test_operation_all_checks_succeed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mit aktivem Dienst und erfolgreicher Verbindung meldet test Erfolg."""
+    """Mit aktivem Dienst, Verbindung und ausführbarem Skript meldet test Erfolg."""
     mod, conn = _make_module(tmp_path, monkeypatch)
     fake_systemctl = tmp_path / "fake-systemctl-active"
     fake_systemctl.write_text("#!/bin/sh\nprintf 'active'\n", encoding="utf-8")
@@ -313,6 +388,8 @@ def test_test_operation_all_checks_succeed(
     fake_runuser.write_text("#!/bin/sh\nprintf '1'\n", encoding="utf-8")
     fake_runuser.chmod(0o755)
     monkeypatch.setattr(Postgresql, "RUNUSER_BIN", str(fake_runuser))
+    Path(mod.DUMP_SCRIPT_PATH).write_text("#!/bin/sh\n", encoding="utf-8")
+    Path(mod.DUMP_SCRIPT_PATH).chmod(0o700)
     mod.operation = "test"
 
     result = mod.start()
@@ -320,12 +397,13 @@ def test_test_operation_all_checks_succeed(
     assert result == 0
     messages = _sent_messages(conn)
     assert "lokale Verbindung (SELECT 1): ok" in messages
+    assert any("Dump-Skript vorhanden und ausführbar" in str(m) for m in messages)
 
 
 def test_test_operation_reports_failure_without_running_service(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ohne aktiven Dienst und ohne Verbindung meldet test einen Fehlschlag."""
+    """Ohne aktiven Dienst, Verbindung und Dump-Skript meldet test einen Fehlschlag."""
     mod, conn = _make_module(tmp_path, monkeypatch)
     monkeypatch.setattr(Postgresql, "SYSTEMCTL_BIN", "/usr/bin/false")
     monkeypatch.setattr(Postgresql, "RUNUSER_BIN", "/usr/bin/false")
@@ -338,3 +416,4 @@ def test_test_operation_reports_failure_without_running_service(
     assert any(
         "lokale Verbindung" in str(m) and "fehlgeschlagen" in str(m) for m in messages
     )
+    assert any("Dump-Skript fehlt" in str(m) for m in messages)

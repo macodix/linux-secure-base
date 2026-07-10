@@ -13,6 +13,9 @@ from secure_base.modules.postgresql import (
     _HARDENING_GUC_LINES,
     _PG_HBA_LINES,
     Postgresql,
+    _cron_fields,
+    _dump_cron_content,
+    _dump_script_content,
     _pg_hba_content,
 )
 
@@ -26,12 +29,16 @@ def _write_script(tmp_path: Path, name: str, body: str) -> str:
 
 
 def _make_module(
-    *, operation: str = "install", timezone: str = "Europe/Berlin"
+    *,
+    operation: str = "install",
+    timezone: str = "Europe/Berlin",
+    pg_dump_time: str = "02:00",
 ) -> Postgresql:
     """Baut ein Postgresql-Modul mit gesetzten Werten, ohne Prozess/IPC."""
     mod = Postgresql(conn=MagicMock(), loglevel=LogLevel.INFO)
     mod.operation = operation
     mod.timezone = timezone
+    mod.pg_dump_time = pg_dump_time
     return mod
 
 
@@ -54,9 +61,9 @@ def _current_owner() -> tuple[str, str]:
 # --- CONFIG ---
 
 
-def test_config_declares_operation_and_timezone() -> None:
-    """CONFIG nennt nur operation und timezone (kein eigener pg_-Schlüssel nötig)."""
-    assert Postgresql.CONFIG == ["operation", "timezone"]
+def test_config_declares_operation_timezone_and_pg_dump_time() -> None:
+    """CONFIG nennt operation, timezone und pg_dump_time in dieser Reihenfolge."""
+    assert Postgresql.CONFIG == ["operation", "timezone", "pg_dump_time"]
 
 
 # --- _validate ---
@@ -72,6 +79,19 @@ def test_validate_rejects_unknown_timezone() -> None:
     """Eine unbekannte Zeitzone erzeugt ModuleError."""
     mod = _make_module(timezone="Nirgendwo/Erfunden")
     with pytest.raises(ModuleError, match="unbekannte Zeitzone"):
+        mod._validate()
+
+
+def test_validate_accepts_valid_pg_dump_time() -> None:
+    """Eine gültige HH:MM-Uhrzeit löst keine Ausnahme aus."""
+    mod = _make_module(pg_dump_time="02:00")
+    mod._validate()
+
+
+def test_validate_rejects_invalid_pg_dump_time() -> None:
+    """Eine ungültige Uhrzeit erzeugt ModuleError."""
+    mod = _make_module(pg_dump_time="25:99")
+    with pytest.raises(ModuleError, match="pg_dump_time"):
         mod._validate()
 
 
@@ -209,6 +229,108 @@ def test_pg_hba_content_local_all_all_uses_scram() -> None:
     )
 
 
+# --- Dump-Skript/-Cron-Inhalte ---
+
+
+def test_cron_fields_splits_hhmm_into_minute_and_hour() -> None:
+    """_cron_fields liefert (Minute, Stunde) ohne führende Nullen."""
+    assert _cron_fields("02:00") == ("0", "2")
+    assert _cron_fields("23:45") == ("45", "23")
+
+
+def test_dump_cron_content_uses_converted_fields_and_script_path() -> None:
+    """Die Cron-Zeile nutzt die aus HH:MM umgesetzten Felder und den Skriptpfad."""
+    content = _dump_cron_content("02:30", "/usr/local/sbin/secure-base-pg-dumpall.sh")
+    assert "30 2 * * *  root  /usr/local/sbin/secure-base-pg-dumpall.sh" in content
+    assert content.startswith("# Datensicherung (pg_dumpall) - täglich um 02:30")
+
+
+def test_dump_script_content_runs_pg_dumpall_as_postgres_via_runuser() -> None:
+    """Das Skript ruft pg_dumpall als postgres über runuser auf."""
+    content = _dump_script_content(
+        dump_dir="/root/postgresql-dump",
+        dump_file="/root/postgresql-dump/dumpall.sql",
+        runuser_bin="/usr/sbin/runuser",
+        pg_dumpall_bin="/usr/bin/pg_dumpall",
+        sentinel_dir="/var/lib/secure-base",
+        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
+    )
+    assert "set -euo pipefail" in content
+    assert '"/usr/sbin/runuser" -u postgres -- "/usr/bin/pg_dumpall"' in content
+
+
+def test_dump_script_content_moves_atomically_and_sets_mode_0600() -> None:
+    """Das Skript setzt 0600 und ersetzt die Zieldatei per mv (atomar)."""
+    content = _dump_script_content(
+        dump_dir="/root/postgresql-dump",
+        dump_file="/root/postgresql-dump/dumpall.sql",
+        runuser_bin="/usr/sbin/runuser",
+        pg_dumpall_bin="/usr/bin/pg_dumpall",
+        sentinel_dir="/var/lib/secure-base",
+        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
+    )
+    assert 'chmod 0600 "$TMP_FILE"' in content
+    assert 'mv -f "$TMP_FILE" "$DUMP_FILE"' in content
+
+
+def test_dump_script_content_discards_temp_file_via_exit_trap() -> None:
+    """Ein EXIT-trap räumt die Temp-Datei bei Erfolg wie bei Fehlschlag auf."""
+    content = _dump_script_content(
+        dump_dir="/root/postgresql-dump",
+        dump_file="/root/postgresql-dump/dumpall.sql",
+        runuser_bin="/usr/sbin/runuser",
+        pg_dumpall_bin="/usr/bin/pg_dumpall",
+        sentinel_dir="/var/lib/secure-base",
+        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
+    )
+    assert """trap 'rm -f "$TMP_FILE"' EXIT""" in content
+    assert "exit 1" in content
+
+
+def test_dump_script_content_updates_sentinel_only_after_success() -> None:
+    """Der Sentinel-Touch steht nach dem Fehlerpfad — wird nur bei Erfolg erreicht."""
+    content = _dump_script_content(
+        dump_dir="/root/postgresql-dump",
+        dump_file="/root/postgresql-dump/dumpall.sql",
+        runuser_bin="/usr/sbin/runuser",
+        pg_dumpall_bin="/usr/bin/pg_dumpall",
+        sentinel_dir="/var/lib/secure-base",
+        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
+    )
+    fail_pos = content.index("exit 1")
+    sentinel_pos = content.index('touch "/var/lib/secure-base/pg-dumpall-last-success"')
+    assert fail_pos < sentinel_pos
+    assert 'mkdir -p "/var/lib/secure-base"' in content
+
+
+# --- Instanzgebundene Dump-Inhalte ---
+
+
+def test_dump_file_path_joins_dir_and_name() -> None:
+    """_dump_file_path hängt DUMP_FILE_NAME an DUMP_DIR an."""
+    mod = _make_module()
+    mod.DUMP_DIR = "/root/postgresql-dump"  # type: ignore[misc]
+    mod.DUMP_FILE_NAME = "dumpall.sql"  # type: ignore[misc]
+    assert mod._dump_file_path() == "/root/postgresql-dump/dumpall.sql"
+
+
+def test_build_dump_script_content_uses_instance_paths() -> None:
+    """Das gebaute Skript enthält die konfigurierten Programmpfade."""
+    mod = _make_module()
+    content = mod._build_dump_script_content()
+    assert mod.RUNUSER_BIN in content
+    assert mod.PG_DUMPALL_BIN in content
+    assert mod._dump_file_path() in content
+
+
+def test_build_dump_cron_content_uses_configured_pg_dump_time() -> None:
+    """Der gebaute Cron-Inhalt nutzt die konfigurierte pg_dump_time."""
+    mod = _make_module(pg_dump_time="03:15")
+    content = mod._build_dump_cron_content()
+    assert "15 3 * * *" in content
+    assert mod.DUMP_SCRIPT_PATH in content
+
+
 # --- _install_steps ---
 
 
@@ -232,6 +354,12 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
         "Datenverzeichnis-Rechte setzen",
         "Dienst aktivieren",
         "Dienst neu starten",
+        "Dump-Zielverzeichnis anlegen",
+        "Dump-Zielverzeichnis-Rechte setzen",
+        "Dump-Skript schreiben",
+        "Dump-Cron-Datei schreiben",
+        "Sentinel-Verzeichnis sicherstellen",
+        "Dump-Sentinel initialisieren",
     ]
 
     by_label = dict(steps)
@@ -270,6 +398,38 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
     restart_step = by_label["Dienst neu starten"]
     assert restart_step.operation == "restart"  # type: ignore[attr-defined]
     assert restart_step.unit == "postgresql@16-main"  # type: ignore[attr-defined]
+
+    mkdir_dump_dir = by_label["Dump-Zielverzeichnis anlegen"]
+    assert mkdir_dump_dir.path == mod.DUMP_DIR  # type: ignore[attr-defined]
+    assert mkdir_dump_dir.mode == 0o700  # type: ignore[attr-defined]
+
+    chown_dump_dir = by_label["Dump-Zielverzeichnis-Rechte setzen"]
+    assert chown_dump_dir.path == mod.DUMP_DIR  # type: ignore[attr-defined]
+    assert chown_dump_dir.mode == 0o700  # type: ignore[attr-defined]
+    assert chown_dump_dir.owner == "root"  # type: ignore[attr-defined]
+    assert chown_dump_dir.group == "root"  # type: ignore[attr-defined]
+
+    write_dump_script = by_label["Dump-Skript schreiben"]
+    assert write_dump_script.dst == mod.DUMP_SCRIPT_PATH  # type: ignore[attr-defined]
+    assert write_dump_script.mode == 0o700  # type: ignore[attr-defined]
+    assert (
+        write_dump_script.content  # type: ignore[attr-defined]
+        == mod._build_dump_script_content()
+    )
+
+    write_dump_cron = by_label["Dump-Cron-Datei schreiben"]
+    assert write_dump_cron.dst == mod.DUMP_CRON_PATH  # type: ignore[attr-defined]
+    assert write_dump_cron.mode == 0o644  # type: ignore[attr-defined]
+    assert write_dump_cron.content == mod._build_dump_cron_content()  # type: ignore[attr-defined]
+
+    sentinel_dir_action = by_label["Sentinel-Verzeichnis sicherstellen"]
+    assert sentinel_dir_action.path == mod.SENTINEL_DIR  # type: ignore[attr-defined]
+    assert sentinel_dir_action.mode == 0o755  # type: ignore[attr-defined]
+
+    sentinel_file_action = by_label["Dump-Sentinel initialisieren"]
+    assert sentinel_file_action.dst == mod.SENTINEL_FILE  # type: ignore[attr-defined]
+    assert sentinel_file_action.mode == 0o644  # type: ignore[attr-defined]
+    assert sentinel_file_action.content == ""  # type: ignore[attr-defined]
 
 
 def test_install_steps_raises_when_no_cluster_after_apt(tmp_path: Path) -> None:
@@ -356,6 +516,8 @@ def _prepare_verified_cluster(
     owner, group = _current_owner()
     monkeypatch.setattr(Postgresql, "PG_OWNER", owner)
     monkeypatch.setattr(Postgresql, "PG_GROUP", group)
+    monkeypatch.setattr(Postgresql, "DUMP_OWNER", owner)
+    monkeypatch.setattr(Postgresql, "DUMP_GROUP", group)
 
     etc_base = tmp_path / "etc-pg"
     cluster_dir = _make_cluster_dir(etc_base, version="16", cluster="main")
@@ -377,6 +539,21 @@ def _prepare_verified_cluster(
     data_dir.mkdir(parents=True)
     data_dir.chmod(0o700)
     mod.PG_DATA_BASE = str(tmp_path / "data-pg")  # type: ignore[misc]
+
+    dump_dir = tmp_path / "root-postgresql-dump"
+    dump_dir.mkdir()
+    dump_dir.chmod(0o700)
+    mod.DUMP_DIR = str(dump_dir)  # type: ignore[misc]
+
+    dump_script_path = tmp_path / "secure-base-pg-dumpall.sh"
+    mod.DUMP_SCRIPT_PATH = str(dump_script_path)  # type: ignore[misc]
+    dump_script_path.write_text(mod._build_dump_script_content(), encoding="utf-8")
+    dump_script_path.chmod(0o700)
+
+    dump_cron_path = tmp_path / "secure-base-pg-dumpall.cron"
+    mod.DUMP_CRON_PATH = str(dump_cron_path)  # type: ignore[misc]
+    dump_cron_path.write_text(mod._build_dump_cron_content(), encoding="utf-8")
+    dump_cron_path.chmod(0o644)
 
     dpkg_stub = _write_script(
         tmp_path, "fake-dpkg-query", "printf 'install ok installed'"
@@ -486,6 +663,51 @@ def test_verify_detects_wrong_data_dir_rights(
     assert mod._verify() == 1
 
 
+def test_verify_detects_missing_dump_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt das Dump-Skript, lässt _verify scheitern."""
+    mod = _prepare_verified_cluster(tmp_path, monkeypatch)
+    Path(mod.DUMP_SCRIPT_PATH).unlink()
+    assert mod._verify() == 1
+
+
+def test_verify_detects_missing_dump_cron(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt die Dump-Cron-Datei, lässt _verify scheitern."""
+    mod = _prepare_verified_cluster(tmp_path, monkeypatch)
+    Path(mod.DUMP_CRON_PATH).unlink()
+    assert mod._verify() == 1
+
+
+def test_verify_detects_dump_cron_content_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abweichender Inhalt der Cron-Datei lässt _verify scheitern."""
+    mod = _prepare_verified_cluster(tmp_path, monkeypatch)
+    Path(mod.DUMP_CRON_PATH).write_text("* * * * * root /bin/true\n", encoding="utf-8")
+    assert mod._verify() == 1
+
+
+def test_verify_detects_wrong_dump_script_rights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abweichende Rechte am Dump-Skript lassen _verify scheitern."""
+    mod = _prepare_verified_cluster(tmp_path, monkeypatch)
+    Path(mod.DUMP_SCRIPT_PATH).chmod(0o755)
+    assert mod._verify() == 1
+
+
+def test_verify_detects_wrong_dump_dir_rights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abweichende Rechte am Dump-Zielverzeichnis lassen _verify scheitern."""
+    mod = _prepare_verified_cluster(tmp_path, monkeypatch)
+    Path(mod.DUMP_DIR).chmod(0o750)
+    assert mod._verify() == 1
+
+
 # --- _test ---
 
 
@@ -524,10 +746,18 @@ def test_test_operation_fails_without_cluster(tmp_path: Path) -> None:
     assert mod._test() == 1
 
 
+def _write_executable_dump_script(tmp_path: Path) -> str:
+    """Legt ein harmloses, ausführbares Dump-Skript unter tmp_path an."""
+    script = tmp_path / "dump.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o700)
+    return str(script)
+
+
 def test_test_operation_succeeds_with_active_service_and_connection(
     tmp_path: Path,
 ) -> None:
-    """Aktiver Dienst und erfolgreiche SELECT-1-Verbindung liefern 0."""
+    """Aktiver Dienst, Verbindung und ausführbares Dump-Skript liefern 0."""
     etc_base = tmp_path / "etc-pg"
     _make_cluster_dir(etc_base, version="16", cluster="main")
     mod = _make_module()
@@ -538,7 +768,53 @@ def test_test_operation_succeeds_with_active_service_and_connection(
     mod.RUNUSER_BIN = _write_script(  # type: ignore[misc]
         tmp_path, "fake-runuser", "printf '1'"
     )
+    mod.DUMP_SCRIPT_PATH = _write_executable_dump_script(tmp_path)  # type: ignore[misc]
     assert mod._test() == 0
+
+
+def test_test_operation_fails_when_dump_script_missing(tmp_path: Path) -> None:
+    """Fehlt das Dump-Skript, meldet _test einen Fehlschlag trotz laufendem Dienst."""
+    etc_base = tmp_path / "etc-pg"
+    _make_cluster_dir(etc_base, version="16", cluster="main")
+    mod = _make_module()
+    mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.SYSTEMCTL_BIN = _write_script(  # type: ignore[misc]
+        tmp_path, "fake-systemctl", "printf active"
+    )
+    mod.RUNUSER_BIN = _write_script(  # type: ignore[misc]
+        tmp_path, "fake-runuser", "printf '1'"
+    )
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    assert mod._test() == 1
+
+
+# --- _check_dump_script_executable ---
+
+
+def test_check_dump_script_executable_true(tmp_path: Path) -> None:
+    """Ein vorhandenes, ausführbares Skript liefert True."""
+    mod = _make_module()
+    mod.DUMP_SCRIPT_PATH = _write_executable_dump_script(tmp_path)  # type: ignore[misc]
+    assert mod._check_dump_script_executable() is True
+
+
+def test_check_dump_script_executable_missing_returns_false(tmp_path: Path) -> None:
+    """Fehlt das Skript, liefert die Prüfung False."""
+    mod = _make_module()
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    assert mod._check_dump_script_executable() is False
+
+
+def test_check_dump_script_executable_not_executable_returns_false(
+    tmp_path: Path,
+) -> None:
+    """Ist das Skript nicht ausführbar, liefert die Prüfung False."""
+    script = tmp_path / "dump.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o600)
+    mod = _make_module()
+    mod.DUMP_SCRIPT_PATH = str(script)  # type: ignore[misc]
+    assert mod._check_dump_script_executable() is False
 
 
 # --- _uninstall ---
@@ -636,12 +912,107 @@ def test_uninstall_short_circuits_when_own_conf_file_already_removed(
     assert pg_hba_file.exists()
 
 
+def test_uninstall_removes_dump_script_and_cron_but_keeps_dump_dir(
+    tmp_path: Path,
+) -> None:
+    """uninstall entfernt Dump-Skript/-Cron; DUMP_DIR und vorhandene Dumps bleiben."""
+    from pifos.actions.systemd_service_action import SystemdServiceAction
+
+    class _NoOpSystemdAction(SystemdServiceAction):
+        def run(self) -> str:
+            self.status = "finished"
+            return self.status
+
+    etc_base = tmp_path / "etc-pg"
+    cluster_dir = _make_cluster_dir(etc_base, version="16", cluster="main")
+    (cluster_dir / "conf.d").mkdir()
+    (cluster_dir / "pg_hba.conf").write_text(_pg_hba_content(), encoding="utf-8")
+
+    dump_dir = tmp_path / "dump-dir"
+    dump_dir.mkdir()
+    dump_file = dump_dir / "dumpall.sql"
+    dump_file.write_text("-- alter Dump --\n", encoding="utf-8")
+
+    dump_script = tmp_path / "dump.sh"
+    dump_script.write_text("#!/bin/sh\n", encoding="utf-8")
+    dump_cron = tmp_path / "dump.cron"
+    dump_cron.write_text("0 2 * * * root /dump.sh\n", encoding="utf-8")
+
+    mod = _make_module(operation="uninstall")
+    mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.SYSTEMD_ACTION_CLS = _NoOpSystemdAction  # type: ignore[misc]
+    mod.DUMP_DIR = str(dump_dir)  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(dump_script)  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(dump_cron)  # type: ignore[misc]
+
+    result = mod._uninstall()
+
+    assert result == 0
+    assert not dump_script.exists()
+    assert not dump_cron.exists()
+    assert dump_dir.is_dir()
+    assert dump_file.exists()
+    assert dump_file.read_text(encoding="utf-8") == "-- alter Dump --\n"
+
+
+def test_uninstall_warns_about_dump_dir_when_present(tmp_path: Path) -> None:
+    """Die WARN-Meldung nennt DUMP_DIR, wenn dort Dumps liegen könnten."""
+    from pifos.actions.systemd_service_action import SystemdServiceAction
+
+    class _NoOpSystemdAction(SystemdServiceAction):
+        def run(self) -> str:
+            self.status = "finished"
+            return self.status
+
+    etc_base = tmp_path / "etc-pg"
+    cluster_dir = _make_cluster_dir(etc_base, version="16", cluster="main")
+    (cluster_dir / "conf.d").mkdir()
+    (cluster_dir / "pg_hba.conf").write_text(_pg_hba_content(), encoding="utf-8")
+
+    dump_dir = tmp_path / "dump-dir"
+    dump_dir.mkdir()
+
+    mod = _make_module(operation="uninstall")
+    mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.SYSTEMD_ACTION_CLS = _NoOpSystemdAction  # type: ignore[misc]
+    mod.DUMP_DIR = str(dump_dir)  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    conn = mod._conn
+
+    mod._uninstall()
+
+    messages = [str(call.args[0].payload) for call in conn.send.call_args_list]  # type: ignore[attr-defined]
+    assert any(str(dump_dir) in m and "bleibt bestehen" in m for m in messages)
+
+
+def test_uninstall_removes_dump_artifacts_even_without_cluster(
+    tmp_path: Path,
+) -> None:
+    """Dump-Skript/-Cron werden auch entfernt, wenn kein Cluster gefunden wird."""
+    dump_script = tmp_path / "dump.sh"
+    dump_script.write_text("#!/bin/sh\n", encoding="utf-8")
+    dump_cron = tmp_path / "dump.cron"
+    dump_cron.write_text("0 2 * * * root /dump.sh\n", encoding="utf-8")
+
+    mod = _make_module(operation="uninstall")
+    mod.PG_ETC_BASE = str(tmp_path / "nichts")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(dump_script)  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(dump_cron)  # type: ignore[misc]
+
+    result = mod._uninstall()
+
+    assert result == 0
+    assert not dump_script.exists()
+    assert not dump_cron.exists()
+
+
 # --- doc ---
 
 
 def test_doc_contains_section_title_and_core_fields() -> None:
     """doc() enthält Abschnittstitel, Pakete, Dateien, Rechte und Dienst."""
-    values = {"timezone": "Europe/Berlin"}
+    values = {"timezone": "Europe/Berlin", "pg_dump_time": "02:00"}
     section = Postgresql.doc(values)
     assert section.startswith("\n## Datenbankserver postgresql (optional)\n\n")
     assert "**Pakete:** postgresql\n\n" in section
@@ -656,16 +1027,39 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert "**Dienste:** postgresql@<version>-<cluster>" in section
 
 
-def test_doc_marks_missing_timezone_as_leer_default() -> None:
-    """Fehlt timezone, erscheint '(leer/Default)' statt eines leeren Werts."""
+def test_doc_contains_backup_section_with_script_cron_and_sentinel() -> None:
+    """doc() beschreibt Dump-Skript, Cron-Zeit, Ablage und Frische-Überwachung."""
+    values = {
+        "timezone": "Europe/Berlin",
+        "pg_dump_time": "02:00",
+        "restic_backup_time": "02:30",
+    }
+    section = Postgresql.doc(values)
+    assert "**Backup (pg_dumpall):**" in section
+    assert Postgresql.DUMP_SCRIPT_PATH in section
+    assert Postgresql.DUMP_CRON_PATH in section
+    assert "täglich 02:00 Uhr" in section
+    assert "restic_backup_time 02:30 Uhr" in section
+    assert f"{Postgresql.DUMP_DIR}/{Postgresql.DUMP_FILE_NAME}" in section
+    assert Postgresql.SENTINEL_FILE in section
+    assert "postgresql_dump" in section
+    assert "26 Stunden" in section
+    assert "psql -f" in section
+
+
+def test_doc_marks_missing_timezone_and_pg_dump_time_as_leer_default() -> None:
+    """Fehlen timezone/pg_dump_time, erscheint '(leer/Default)' statt leerer Werte."""
     section = Postgresql.doc({})
     assert "log_timezone = '(leer/Default)'" in section
+    assert "täglich (leer/Default) Uhr" in section
+    assert "restic_backup_time (leer/Default) Uhr" in section
 
 
 def test_doc_never_leaks_secrets_from_unrelated_config_keys() -> None:
     """Ein Kunstgeheimnis unter fremdem Schlüssel erscheint nie in doc()."""
     values = {
         "timezone": "Europe/Berlin",
+        "pg_dump_time": "02:00",
         "relay_password": "KUNST-GEHEIMNIS-42",
         "restic_passphrase": "KUNST-GEHEIMNIS-42",
     }
@@ -677,7 +1071,7 @@ def test_doc_never_leaks_secrets_from_unrelated_config_keys() -> None:
 
 def test_doc_notes_pg_hba_stays_hardened_after_uninstall() -> None:
     """doc() weist auf das Verbleiben der gehärteten pg_hba.conf hin."""
-    section = Postgresql.doc({"timezone": "Europe/Berlin"})
-    assert "pg_hba.conf bleibt aus Sicherheitsgründen" in section
-    assert "Paket und" in section
-    assert "Cluster bleiben in jedem Fall installiert" in section
+    section = Postgresql.doc({"timezone": "Europe/Berlin", "pg_dump_time": "02:00"})
+    assert "pg_hba.conf und" in section
+    assert "vorhandene Dumps" in section
+    assert "Paket und Cluster bleiben in" in section

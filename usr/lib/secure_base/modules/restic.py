@@ -53,6 +53,24 @@ _SFTP_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Anfangszeichen bereits aus.
 _SFTP_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
+# Grobe Plausibilität einer HH:MM-Uhrzeit (24h, anchored) — gleiches Muster
+# wie secure_base.modules.unattended/postgresql.
+_HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
+def _cron_fields(hhmm: str) -> tuple[str, str]:
+    """Zerlegt eine geprüfte HH:MM-Uhrzeit in Cron-Minute und -Stunde.
+
+    Args:
+        hhmm: Geprüfte Uhrzeit (Muster _HHMM_RE).
+
+    Returns:
+        (Minute, Stunde) als Cron-Feld-Strings ohne führende Nullen.
+    """
+    hour, minute = hhmm.split(":")
+    return str(int(minute)), str(int(hour))
+
+
 _BACKUP_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
@@ -116,20 +134,22 @@ def _backup_script_content(
     )
 
 
-def _cron_content(backup_script: str) -> str:
-    """Baut den Inhalt der Cron-Datei (täglich 02:30).
+def _cron_content(backup_script: str, hhmm: str) -> str:
+    """Baut den Inhalt der Cron-Datei für die konfigurierte Uhrzeit.
 
     Args:
         backup_script: Pfad zum Backup-Skript.
+        hhmm: Geprüfte Uhrzeit (Muster _HHMM_RE).
 
     Returns:
         Vollständiger Cron-Dateiinhalt.
     """
+    minute, hour = _cron_fields(hhmm)
     return (
-        "# Datensicherung (restic) - täglich um 02:30\n"
+        f"# Datensicherung (restic) - täglich um {hhmm}\n"
         "# Von secure-base/restic angelegt — nicht von Hand bearbeiten.\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
-        f"30 2 * * *  root  {backup_script}\n"
+        f"{minute} {hour} * * *  root  {backup_script}\n"
     )
 
 
@@ -185,6 +205,7 @@ class Restic(Module):
         "sftp_host_alias",
         "sftp_path",
         "restic_passphrase",
+        "restic_backup_time",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (wie Modul base):
@@ -224,6 +245,7 @@ class Restic(Module):
     sftp_host_alias: str
     sftp_path: str
     restic_passphrase: str
+    restic_backup_time: str
 
     def start(self) -> int:
         """Führt Einrichtung oder Abgleich nach der Betriebsart aus.
@@ -255,7 +277,8 @@ class Restic(Module):
 
         Args:
             values: Konfigurationswerte des Moduls (fqdn, admin_mail,
-                sftp_host_alias, sftp_path, restic_passphrase, …).
+                sftp_host_alias, sftp_path, restic_passphrase,
+                restic_backup_time, …).
 
         Returns:
             Markdown-Abschnitt, beginnend mit "## Datensicherung".
@@ -263,6 +286,7 @@ class Restic(Module):
         fqdn = _doc_value(values, "fqdn")
         sftp_host_alias = _doc_value(values, "sftp_host_alias")
         sftp_path = _doc_value(values, "sftp_path")
+        backup_time = _doc_value(values, "restic_backup_time")
         return (
             "\n## Datensicherung\n\n"
             "**Pakete:** restic\n\n"
@@ -274,7 +298,8 @@ class Restic(Module):
             f"- `{cls.CRON_DIR}/{fqdn}-backup`:\n"
             "  - `Cron-Eintrag: restic backup + forget`\n"
             f"\n**SFTP-Ziel:** `{sftp_host_alias}:{sftp_path}`\n\n"
-            f"\n**Timer/Cron:** täglicher Lauf via {cls.CRON_DIR}/{fqdn}-backup\n"
+            f"\n**Timer/Cron:** täglich {backup_time} Uhr via"
+            f" {cls.CRON_DIR}/{fqdn}-backup\n"
             "\n> Hinweis: Repo-Passphrase wird nicht dokumentiert (Secret)."
             " Forget-Politik: --keep-daily 7 --keep-weekly 4 --keep-monthly 6."
             " append-only (konv-system.md Abschnitt 3.8 b): am SFTP-Backend"
@@ -305,6 +330,11 @@ class Restic(Module):
             raise ModuleError(f"Ungültiger SFTP-Zielpfad: {self.sftp_path!r}")
         if not self.restic_passphrase:
             raise ModuleError("restic_passphrase ist leer")
+        if not _HHMM_RE.match(self.restic_backup_time):
+            raise ModuleError(
+                f"restic_backup_time ist keine gültige Uhrzeit HH:MM:"
+                f" {self.restic_backup_time!r}"
+            )
 
     def _repo_url(self) -> str:
         """Baut die restic-Repo-URL aus Host-Alias und Zielpfad."""
@@ -488,7 +518,7 @@ class Restic(Module):
 
     def _step_write_cron(self) -> int:
         """Schreibt die Cron-Datei (vollständig eigene Datei, 0644)."""
-        content = _cron_content(self._backup_script_path())
+        content = _cron_content(self._backup_script_path(), self.restic_backup_time)
         return self.run_action(
             WriteFileAction(
                 dst=self._cron_file_path(),

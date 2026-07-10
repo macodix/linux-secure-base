@@ -44,6 +44,7 @@ KNOWN_CHECKS: frozenset[str] = frozenset(
         "rkhunter",
         "restic",
         "postgresql",
+        "postgresql_dump",
     }
 )
 
@@ -117,6 +118,11 @@ CHECK_CONTENT: dict[str, str] = {
         '    start program = "/bin/systemctl start postgresql"\n'
         '    stop  program = "/bin/systemctl stop  postgresql"\n'
         "    if failed port 5432 then alert\n"
+    ),
+    "postgresql_dump": (
+        "check file postgresql_dump with path"
+        " /var/lib/secure-base/pg-dumpall-last-success\n"
+        "    if mtime > 26 hours then alert\n"
     ),
 }
 

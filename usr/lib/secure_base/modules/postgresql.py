@@ -5,15 +5,21 @@ Protokollierungseinstellungen über eine eigene Drop-in-Datei unter
 conf.d und ersetzt pg_hba.conf durch eine restriktive Zugriffsliste
 (kein trust, keine Netz-Freigabe außer Loopback). Prüft/setzt zusätzlich
 die Rechte des Datenverzeichnisses. Legt keine Anwendungs-DB/-Benutzer
-an, öffnet keinen Netz-Port (kein ufw-Eintrag) und erstellt kein
-Backup/Dump. Optionales Modul; setzt das gehärtete Grundsystem voraus.
-Betriebsart über den Schlüssel operation. PostgreSQL-Hauptversion und
-Cluster-Name werden zur Laufzeit unter /etc/postgresql ermittelt, nie
-hartkodiert.
+an und öffnet keinen Netz-Port (kein ufw-Eintrag). Richtet zusätzlich
+eine logische Datensicherung ein: ein Cron-Skript führt täglich
+pg_dumpall aus und legt den Dump unter /root ab, wo ihn das restic-Modul
+mit sichert (/etc /home /var/log /root); ein Erfolgs-Sentinel unter
+/var/lib/secure-base ermöglicht eine monit-Frische-Überwachung (Muster
+wie beim restic-Modul). Optionales Modul; setzt das gehärtete
+Grundsystem voraus. Betriebsart über den Schlüssel operation.
+PostgreSQL-Hauptversion und Cluster-Name werden zur Laufzeit unter
+/etc/postgresql ermittelt, nie hartkodiert.
 """
 
 import grp
+import os
 import pwd
+import re
 import stat
 from collections.abc import Iterator
 from pathlib import Path
@@ -76,14 +82,110 @@ def _pg_hba_content() -> str:
     return _OWN_FILE_HEADER + column_header + body
 
 
+# Grobe Plausibilität einer HH:MM-Uhrzeit (24h, anchored) — gleiches Muster
+# wie secure_base.modules.unattended.
+_HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+_DUMP_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.
+# cron-Umgebung ist spartanisch — PATH explizit setzen.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DUMP_DIR="{dump_dir}"
+DUMP_FILE="{dump_file}"
+TMP_FILE="$(mktemp "$DUMP_DIR/.dumpall.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
+
+if ! "{runuser_bin}" -u postgres -- "{pg_dumpall_bin}" >"$TMP_FILE"; then
+    echo "pg_dumpall fehlgeschlagen — alte Sicherung bleibt erhalten" >&2
+    exit 1
+fi
+
+chmod 0600 "$TMP_FILE"
+mv -f "$TMP_FILE" "$DUMP_FILE"
+
+# Erfolgs-Sentinel für die monit-Frische-Überwachung (postgresql_dump-Check),
+# wird nur nach erfolgreichem pg_dumpall erreicht — Muster wie beim
+# restic-Backup-Skript.
+mkdir -p "{sentinel_dir}" 2>/dev/null || true
+touch "{sentinel_file}" 2>/dev/null || true
+"""
+
+
+def _dump_script_content(
+    dump_dir: str,
+    dump_file: str,
+    runuser_bin: str,
+    pg_dumpall_bin: str,
+    sentinel_dir: str,
+    sentinel_file: str,
+) -> str:
+    """Baut den Inhalt des Dump-Skripts.
+
+    Args:
+        dump_dir: Zielverzeichnis für Temp- und Zieldatei.
+        dump_file: Endgültiger Pfad der Dump-Datei.
+        runuser_bin: Pfad zu runuser.
+        pg_dumpall_bin: Pfad zu pg_dumpall.
+        sentinel_dir: Verzeichnis des monit-Frische-Sentinels.
+        sentinel_file: Datei des monit-Frische-Sentinels.
+
+    Returns:
+        Vollständiger Skriptinhalt.
+    """
+    return _DUMP_SCRIPT_TEMPLATE.format(
+        dump_dir=dump_dir,
+        dump_file=dump_file,
+        runuser_bin=runuser_bin,
+        pg_dumpall_bin=pg_dumpall_bin,
+        sentinel_dir=sentinel_dir,
+        sentinel_file=sentinel_file,
+    )
+
+
+def _cron_fields(hhmm: str) -> tuple[str, str]:
+    """Zerlegt eine geprüfte HH:MM-Uhrzeit in Cron-Minute und -Stunde.
+
+    Args:
+        hhmm: Geprüfte Uhrzeit (Muster _HHMM_RE).
+
+    Returns:
+        (Minute, Stunde) als Cron-Feld-Strings ohne führende Nullen.
+    """
+    hour, minute = hhmm.split(":")
+    return str(int(minute)), str(int(hour))
+
+
+def _dump_cron_content(hhmm: str, script_path: str) -> str:
+    """Baut den Inhalt der Dump-Cron-Datei.
+
+    Args:
+        hhmm: Geprüfte Uhrzeit (Muster _HHMM_RE).
+        script_path: Pfad zum Dump-Skript.
+
+    Returns:
+        Vollständiger Cron-Dateiinhalt.
+    """
+    minute, hour = _cron_fields(hhmm)
+    return (
+        f"# Datensicherung (pg_dumpall) - täglich um {hhmm}\n"
+        "# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.\n"
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
+        f"{minute} {hour} * * *  root  {script_path}\n"
+    )
+
+
 class Postgresql(Module):
     """Datenbankserver mit lokal beschränktem Zugriff über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "timezone"]
+    CONFIG: ClassVar[list[str]] = ["operation", "timezone", "pg_dump_time"]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe Modul base
     # für die Begründung); eine Testunterklasse kann sie überschreiben.
     PSQL_BIN: ClassVar[str] = "/usr/bin/psql"
+    PG_DUMPALL_BIN: ClassVar[str] = "/usr/bin/pg_dumpall"
     RUNUSER_BIN: ClassVar[str] = "/usr/sbin/runuser"
     DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
     SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
@@ -105,6 +207,31 @@ class Postgresql(Module):
     HARDENING_CONF_MODE: ClassVar[int] = 0o640
     PG_HBA_MODE: ClassVar[int] = 0o640
 
+    # Logische Datensicherung (pg_dumpall): Skript/Cron nach dem Muster des
+    # restic-Moduls (Skript unter /usr/local/sbin, Cron in /etc/cron.d).
+    # Der Dump landet unter /root, das restic bereits sichert (/etc /home
+    # /var/log /root) — kein eigenes Backup-Ziel, kein eigener Transport.
+    DUMP_SCRIPT_PATH: ClassVar[str] = "/usr/local/sbin/secure-base-pg-dumpall.sh"
+    DUMP_CRON_PATH: ClassVar[str] = "/etc/cron.d/secure-base-pg-dumpall"
+    DUMP_DIR: ClassVar[str] = "/root/postgresql-dump"
+    DUMP_FILE_NAME: ClassVar[str] = "dumpall.sql"
+    DUMP_SCRIPT_MODE: ClassVar[int] = 0o700
+    DUMP_CRON_MODE: ClassVar[int] = 0o644
+    DUMP_DIR_MODE: ClassVar[int] = 0o700
+    # Eigentümer von Dump-Zielverzeichnis und -Skript — root:root (nicht
+    # postgres:postgres wie PG_OWNER/PG_GROUP): das Skript läuft als root
+    # und der Dump enthält u. a. scram-Hashes; eigenes Klassenattribut,
+    # damit eine Testunterklasse es umlenken kann (siehe PG_OWNER).
+    DUMP_OWNER: ClassVar[str] = "root"
+    DUMP_GROUP: ClassVar[str] = "root"
+
+    # Erfolgs-Sentinel für die monit-Frische-Überwachung (Check
+    # postgresql_dump) — gleiches Verzeichnis wie beim restic-Modul, das
+    # es bereits anlegt; hier zusätzlich defensiv sichergestellt, falls
+    # restic nicht aktiv ist.
+    SENTINEL_DIR: ClassVar[str] = "/var/lib/secure-base"
+    SENTINEL_FILE: ClassVar[str] = "/var/lib/secure-base/pg-dumpall-last-success"
+
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
     SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
 
@@ -112,6 +239,7 @@ class Postgresql(Module):
     # mypy --strict, ohne eigenen __init__ (siehe Modul base).
     operation: str
     timezone: str
+    pg_dump_time: str
 
     def start(self) -> int:
         """Führt Einrichtung, Abgleich, Rückbau oder Funktionstest aus.
@@ -137,34 +265,46 @@ class Postgresql(Module):
         return self._install()
 
     def _validate(self) -> None:
-        """Prüft timezone, bevor sie in eine Konfigurationsdatei geht.
+        """Prüft timezone und pg_dump_time, bevor sie in Dateien/Cron gehen.
 
-        Der Wert geht in log_timezone der eigenen conf.d-Datei;
+        Beide Werte gehen in generierte Konfigurations- bzw. Cron-Dateien;
         WriteFileAction schreibt Inhalte ungeprüft, deshalb prüft das
-        Modul den Wert vorher (konv-scripting-python.md Abschnitt 4.2).
+        Modul die Werte vorher (konv-scripting-python.md Abschnitt 4.2).
 
         Raises:
-            ModuleError: Wenn timezone keine bekannte tzdata-Zeitzone ist.
+            ModuleError: Wenn timezone keine bekannte tzdata-Zeitzone ist,
+                oder pg_dump_time nicht dem Muster HH:MM entspricht.
         """
         if self.timezone not in available_timezones():
             raise ModuleError(f"postgresql: unbekannte Zeitzone: {self.timezone!r}")
+        if not _HHMM_RE.match(self.pg_dump_time):
+            raise ModuleError(
+                f"postgresql: pg_dump_time ist keine gültige Uhrzeit HH:MM:"
+                f" {self.pg_dump_time!r}"
+            )
 
     @classmethod
     def doc(cls, values: dict[str, str]) -> str:
         """Markdown-Abschnitt für den Installationsbericht.
 
-        SICHERHEIT: postgresql verwaltet keine Geheimnisse (keine
-        Anwendungs-DB/-Benutzer, kein Backup); doc() liest aus values
-        ausschließlich timezone.
+        SICHERHEIT: postgresql verwaltet keine Geheimnisse über diesen Weg
+        (keine Anwendungs-DB/-Benutzer; der Dump selbst enthält zwar u. a.
+        scram-Hashes, sein Inhalt geht aber nie in den Bericht ein); doc()
+        liest aus values ausschließlich timezone, pg_dump_time und
+        restic_backup_time (rein informativ, für den Zeitplan-Hinweis; kein
+        modulübergreifender Abgleich/keine Validierung).
 
         Args:
-            values: Konfigurationswerte des Laufs (u. a. timezone).
+            values: Konfigurationswerte des Laufs (u. a. timezone,
+                pg_dump_time, restic_backup_time).
 
         Returns:
             Markdown-Abschnitt, beginnend mit "## Datenbankserver
             postgresql (optional)".
         """
         timezone = values.get("timezone") or "(leer/Default)"
+        pg_dump_time = values.get("pg_dump_time") or "(leer/Default)"
+        restic_backup_time = values.get("restic_backup_time") or "(leer/Default)"
         hardening_block = "".join(f"  - `{line}`\n" for line in _HARDENING_GUC_LINES)
         hardening_block += f"  - `log_timezone = '{timezone}'`\n"
         pg_hba_block = "".join(f"  - `{line}`\n" for line in _PG_HBA_LINES)
@@ -172,6 +312,7 @@ class Postgresql(Module):
             f"Rechte {oct(cls.HARDENING_CONF_MODE)}, Eigentümer"
             f" {cls.PG_OWNER}:{cls.PG_GROUP}"
         )
+        dump_file = f"{cls.DUMP_DIR}/{cls.DUMP_FILE_NAME}"
 
         return (
             "\n## Datenbankserver postgresql (optional)\n\n"
@@ -189,13 +330,28 @@ class Postgresql(Module):
             " nur Loopback, keine ufw-Regel)\n"
             "\n**Dienste:** postgresql@<version>-<cluster> (enabled, aktiv"
             " nach install)\n"
+            "\n**Backup (pg_dumpall):**\n\n"
+            f"- `{cls.DUMP_SCRIPT_PATH}` (Rechte {oct(cls.DUMP_SCRIPT_MODE)}"
+            f" {cls.DUMP_OWNER}:{cls.DUMP_GROUP})\n"
+            f"- `{cls.DUMP_CRON_PATH}`: täglich {pg_dump_time} Uhr (vor dem"
+            f" restic-Lauf, restic_backup_time {restic_backup_time} Uhr)\n"
+            f"- Ablage: `{dump_file}` (Rechte 0600 {cls.DUMP_OWNER}:"
+            f"{cls.DUMP_GROUP}, unter /root — wird vom restic-Modul mit"
+            " gesichert: /etc /home /var/log /root)\n"
+            f"- Frische-Überwachung: `{cls.SENTINEL_FILE}` wird nur nach"
+            " erfolgreichem Dump aktualisiert; monit-Check"
+            " `postgresql_dump` alarmiert ab 26 Stunden Alter (siehe Modul"
+            " monit)\n"
             "\n> Hinweis: Keine Anwendungs-DB/-Benutzer angelegt, keine"
-            " Remote-Zugänge, kein Backup/Dump. uninstall entfernt nur die"
-            " eigene conf.d-Datei; pg_hba.conf bleibt aus Sicherheitsgründen"
-            " in der gehärteten Fassung bestehen (Original als"
-            " .bak-<Zeitstempel> im selben Verzeichnis abgelegt). Paket und"
-            " Cluster bleiben in jedem Fall installiert (Datenverlust"
-            " vermeiden).\n"
+            " Remote-Zugänge. uninstall entfernt nur die eigene conf.d-Datei"
+            " sowie Dump-Skript und -Cron-Eintrag; pg_hba.conf und"
+            " vorhandene Dumps bleiben aus Sicherheitsgründen bzw. als Daten"
+            " bestehen (Original der pg_hba.conf als .bak-<Zeitstempel> im"
+            " selben Verzeichnis abgelegt). Paket und Cluster bleiben in"
+            " jedem Fall installiert (Datenverlust vermeiden)."
+            " Wiederherstellung aus dem Dump: `psql -f"
+            f" {dump_file} postgres` als postgres-Benutzer (vollständiger"
+            " Cluster-Restore).\n"
         )
 
     # --- Cluster-Ermittlung ------------------------------------------------
@@ -311,6 +467,37 @@ class Postgresql(Module):
         body = "".join(f"{line}\n" for line in self._expected_hardening_lines())
         return _OWN_FILE_HEADER + body
 
+    def _dump_file_path(self) -> str:
+        """Baut den Pfad der endgültigen Dump-Datei.
+
+        Returns:
+            Pfad unter DUMP_DIR mit dem Dateinamen DUMP_FILE_NAME.
+        """
+        return str(Path(self.DUMP_DIR) / self.DUMP_FILE_NAME)
+
+    def _build_dump_script_content(self) -> str:
+        """Baut den Inhalt des Dump-Skripts mit den konfigurierten Pfaden.
+
+        Returns:
+            Vollständiger Skriptinhalt (siehe _dump_script_content-Funktion).
+        """
+        return _dump_script_content(
+            dump_dir=self.DUMP_DIR,
+            dump_file=self._dump_file_path(),
+            runuser_bin=self.RUNUSER_BIN,
+            pg_dumpall_bin=self.PG_DUMPALL_BIN,
+            sentinel_dir=self.SENTINEL_DIR,
+            sentinel_file=self.SENTINEL_FILE,
+        )
+
+    def _build_dump_cron_content(self) -> str:
+        """Baut den Inhalt der Dump-Cron-Datei für die konfigurierte Uhrzeit.
+
+        Returns:
+            Vollständiger Cron-Dateiinhalt.
+        """
+        return _dump_cron_content(self.pg_dump_time, self.DUMP_SCRIPT_PATH)
+
     # --- Installation --------------------------------------------------
 
     def _install(self) -> int:
@@ -409,6 +596,54 @@ class Postgresql(Module):
             self.SYSTEMD_ACTION_CLS(operation="restart", unit=unit, timeout=60),
         )
 
+        yield (
+            "Dump-Zielverzeichnis anlegen",
+            MakeDirAction(path=self.DUMP_DIR, mode=self.DUMP_DIR_MODE, parents=True),
+        )
+        yield (
+            "Dump-Zielverzeichnis-Rechte setzen",
+            PermissionsAction(
+                path=self.DUMP_DIR,
+                mode=self.DUMP_DIR_MODE,
+                owner=self.DUMP_OWNER,
+                group=self.DUMP_GROUP,
+            ),
+        )
+        yield (
+            "Dump-Skript schreiben",
+            WriteFileAction(
+                dst=self.DUMP_SCRIPT_PATH,
+                content=self._build_dump_script_content(),
+                mode=self.DUMP_SCRIPT_MODE,
+                overwrite=True,
+                safe_mode=False,
+            ),
+        )
+        yield (
+            "Dump-Cron-Datei schreiben",
+            WriteFileAction(
+                dst=self.DUMP_CRON_PATH,
+                content=self._build_dump_cron_content(),
+                mode=self.DUMP_CRON_MODE,
+                overwrite=True,
+                safe_mode=False,
+            ),
+        )
+        yield (
+            "Sentinel-Verzeichnis sicherstellen",
+            MakeDirAction(path=self.SENTINEL_DIR, mode=0o755, parents=True),
+        )
+        yield (
+            "Dump-Sentinel initialisieren",
+            WriteFileAction(
+                dst=self.SENTINEL_FILE,
+                content="",
+                mode=0o644,
+                overwrite=True,
+                safe_mode=False,
+            ),
+        )
+
     def _step(self, label: str, action: Action) -> int:
         """Führt einen einzelnen Installationsschritt aus und meldet ihn.
 
@@ -428,21 +663,54 @@ class Postgresql(Module):
     # --- Rückbau (uninstall) ---------------------------------------------
 
     def _uninstall(self) -> int:
-        """Nimmt die eigene conf.d-Härtung zurück; Paket und Cluster bleiben.
+        """Nimmt die eigenen Änderungen zurück; Paket, Cluster und Dumps bleiben.
 
-        Entfernt nur die eigene conf.d-Datei und startet den Dienst neu, so
-        dass die überschriebenen GUCs auf die Paket-Vorgaben zurückfallen.
+        Entfernt Dump-Skript und Dump-Cron-Datei — konfig-/cluster-
+        unabhängig (wie z. B. beim Modul nginx): diese Artefakte werden
+        entfernt, sobald sie existieren, unabhängig davon, ob aktuell ein
+        Cluster gefunden wird. Anschließend die eigene conf.d-Härtung, mit
+        Dienst-Neustart, damit die überschriebenen GUCs auf die
+        Paket-Vorgaben zurückfallen.
+
         pg_hba.conf bleibt in der gehärteten Fassung bestehen: keine der
         verfügbaren pifos-Aktionen kann die ursprüngliche Datei gezielt
         wiederherstellen, und ein Rückbau würde scram-sha-256 durch das
         schwächere Vorgabe-„peer" ersetzen und die Replikationszeilen
-        wieder öffnen — das widerspräche dem Zweck von secure-base. Paket
-        und Cluster werden nie entfernt (Datenverlust).
+        wieder öffnen — das widerspräche dem Zweck von secure-base.
+        DUMP_DIR und vorhandene Dumps bleiben ebenfalls bestehen (Daten,
+        analog zur restic-Passphrase-Datei). Paket und Cluster werden nie
+        entfernt (Datenverlust).
 
         Returns:
-            0 bei Erfolg oder wenn kein Cluster gefunden wird (nichts
-            zurückzunehmen), 1 beim ersten fehlgeschlagenen Schritt.
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
+        dump_steps: list[tuple[str, Action]] = []
+        if Path(self.DUMP_CRON_PATH).exists():
+            dump_steps.append(
+                (
+                    "Dump-Cron-Datei entfernen",
+                    DeleteFileAction(path=self.DUMP_CRON_PATH, safe_mode=False),
+                )
+            )
+        if Path(self.DUMP_SCRIPT_PATH).exists():
+            dump_steps.append(
+                (
+                    "Dump-Skript entfernen",
+                    DeleteFileAction(path=self.DUMP_SCRIPT_PATH, safe_mode=False),
+                )
+            )
+        for label, action in dump_steps:
+            if self._step(label, action) != 0:
+                return 1
+        if Path(self.DUMP_DIR).exists():
+            self.send_message(
+                LogLevel.WARN,
+                "postgresql",
+                f"{self.DUMP_DIR} bleibt bestehen — vorhandene Dumps sind"
+                " Daten (wie die restic-Passphrase) und werden nie"
+                " automatisch gelöscht; bei Bedarf manuell entfernen",
+            )
+
         found = self._detect_cluster()
         if found is None:
             self.send_message(
@@ -492,9 +760,11 @@ class Postgresql(Module):
     def _test(self) -> int:
         """Führt einen Funktionstest ohne Systemänderung durch.
 
-        Prüft den Dienststatus und eine lokale Verbindung als postgres
-        (SELECT 1) über runuser — sammelnd, kein Abbruch beim ersten
-        Fehlschlag.
+        Prüft den Dienststatus, eine lokale Verbindung als postgres
+        (SELECT 1) über runuser und das Vorhandensein/die Ausführbarkeit
+        des Dump-Skripts — sammelnd, kein Abbruch beim ersten Fehlschlag.
+        Führt bewusst keinen echten pg_dumpall aus (rein lesend, wie die
+        übrigen Prüfungen).
 
         Returns:
             0, wenn alle Prüfungen erfolgreich waren, sonst 1.
@@ -516,7 +786,36 @@ class Postgresql(Module):
             [self.SYSTEMCTL_BIN, "is-active", unit], "active", f"{unit} aktiv"
         )
         ok &= self._check_local_connection()
+        ok &= self._check_dump_script_executable()
         return 0 if ok else 1
+
+    def _check_dump_script_executable(self) -> bool:
+        """Prüft, ob das Dump-Skript vorhanden und ausführbar ist.
+
+        Rein lesend — führt das Skript nicht aus (kein echter Dump im
+        Funktionstest).
+
+        Returns:
+            True, wenn das Skript existiert und für den aufrufenden
+            Prozess (root) ausführbar ist.
+        """
+        path = Path(self.DUMP_SCRIPT_PATH)
+        if not path.is_file():
+            self.send_message(
+                LogLevel.ERROR, "postgresql", f"Dump-Skript fehlt: {path}"
+            )
+            return False
+        if not os.access(path, os.X_OK):
+            self.send_message(
+                LogLevel.ERROR, "postgresql", f"Dump-Skript nicht ausführbar: {path}"
+            )
+            return False
+        self.send_message(
+            LogLevel.INFO,
+            "postgresql",
+            f"Dump-Skript vorhanden und ausführbar: {path}",
+        )
+        return True
 
     def _check_local_connection(self) -> bool:
         """Prüft eine lokale Verbindung als postgres über die Unix-Socket.
@@ -586,6 +885,9 @@ class Postgresql(Module):
         ok &= self._check_hardening_conf(version, cluster)
         ok &= self._check_pg_hba(version, cluster)
         ok &= self._check_data_dir(version, cluster)
+        ok &= self._check_dump_script()
+        ok &= self._check_dump_cron()
+        ok &= self._check_dump_dir()
         return 0 if ok else 1
 
     def _check_packages(self) -> bool:
@@ -724,6 +1026,53 @@ class Postgresql(Module):
         path = self._data_dir(version, cluster)
         return self._check_file_mode(
             path, self.DATA_DIR_MODE, self.PG_OWNER, self.PG_GROUP
+        )
+
+    def _check_dump_script(self) -> bool:
+        """Prüft Rechte und Eigentümer des Dump-Skripts.
+
+        Returns:
+            True bei vollständiger Übereinstimmung.
+        """
+        return self._check_file_mode(
+            self.DUMP_SCRIPT_PATH,
+            self.DUMP_SCRIPT_MODE,
+            self.DUMP_OWNER,
+            self.DUMP_GROUP,
+        )
+
+    def _check_dump_cron(self) -> bool:
+        """Prüft, ob die Dump-Cron-Datei exakt dem Sollinhalt entspricht.
+
+        Returns:
+            True bei exakter Übereinstimmung.
+        """
+        content = self._read_text(self.DUMP_CRON_PATH)
+        if content is None:
+            self.send_message(
+                LogLevel.ERROR, "postgresql", f"{self.DUMP_CRON_PATH} fehlt"
+            )
+            return False
+        if content != self._build_dump_cron_content():
+            self.send_message(
+                LogLevel.ERROR,
+                "postgresql",
+                f"{self.DUMP_CRON_PATH}: Inhalt weicht vom Soll ab",
+            )
+            return False
+        self.send_message(
+            LogLevel.INFO, "postgresql", f"{self.DUMP_CRON_PATH}: Inhalt OK"
+        )
+        return True
+
+    def _check_dump_dir(self) -> bool:
+        """Prüft Rechte und Eigentümer des Dump-Zielverzeichnisses.
+
+        Returns:
+            True bei vollständiger Übereinstimmung.
+        """
+        return self._check_file_mode(
+            self.DUMP_DIR, self.DUMP_DIR_MODE, self.DUMP_OWNER, self.DUMP_GROUP
         )
 
     def _check_file_mode(self, path: str, mode: int, owner: str, group: str) -> bool:

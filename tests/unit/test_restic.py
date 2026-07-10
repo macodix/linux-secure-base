@@ -21,6 +21,7 @@ def _make_restic(
     sftp_host_alias: str = "backup-alias",
     sftp_path: str = "/backup/server",
     restic_passphrase: str = "correct-horse-battery-staple",  # noqa: S107 — Testwert
+    restic_backup_time: str = "02:30",
 ) -> Restic:
     """Baut ein Restic-Modul mit gesetzten Werten, ohne Prozess/IPC."""
     mod = Restic(conn=MagicMock(), loglevel=LogLevel.INFO)
@@ -30,6 +31,7 @@ def _make_restic(
     mod.sftp_host_alias = sftp_host_alias
     mod.sftp_path = sftp_path
     mod.restic_passphrase = restic_passphrase
+    mod.restic_backup_time = restic_backup_time
     return mod
 
 
@@ -45,6 +47,7 @@ def test_restic_config_declares_expected_keys_in_order() -> None:
         "sftp_host_alias",
         "sftp_path",
         "restic_passphrase",
+        "restic_backup_time",
     ]
 
 
@@ -96,6 +99,13 @@ def test_validate_rejects_empty_passphrase() -> None:
     """Eine leere restic-Passphrase erzeugt ModuleError."""
     mod = _make_restic(restic_passphrase="")
     with pytest.raises(ModuleError, match="restic_passphrase ist leer"):
+        mod._validate()
+
+
+def test_validate_rejects_invalid_backup_time() -> None:
+    """Eine ungültige restic_backup_time erzeugt ModuleError."""
+    mod = _make_restic(restic_backup_time="25:99")
+    with pytest.raises(ModuleError, match="restic_backup_time"):
         mod._validate()
 
 
@@ -166,10 +176,17 @@ def test_backup_script_content_never_contains_passphrase_value() -> None:
     assert "correct-horse-battery-staple" not in content
 
 
-def test_cron_content_schedules_daily_at_0230() -> None:
-    """Die Cron-Datei ruft das Backup-Skript täglich um 02:30 als root auf."""
-    content = _cron_content("/usr/local/sbin/host.example.com-backup.sh")
+def test_cron_content_schedules_daily_at_configured_time() -> None:
+    """Die Cron-Datei ruft das Backup-Skript täglich zur konfigurierten Zeit auf."""
+    content = _cron_content("/usr/local/sbin/host.example.com-backup.sh", "02:30")
     assert "30 2 * * *  root  /usr/local/sbin/host.example.com-backup.sh" in content
+    assert content.startswith("# Datensicherung (restic) - täglich um 02:30")
+
+
+def test_cron_content_converts_hhmm_into_minute_and_hour_fields() -> None:
+    """Eine andere HH:MM-Uhrzeit wird korrekt in Minute/Stunde umgesetzt."""
+    content = _cron_content("/usr/local/sbin/host.example.com-backup.sh", "23:05")
+    assert "5 23 * * *  root  /usr/local/sbin/host.example.com-backup.sh" in content
 
 
 # --- _check_command_succeeds ---
@@ -424,6 +441,7 @@ def test_doc_contains_section_title_and_core_fields() -> None:
         "fqdn": "server.example.com",
         "sftp_host_alias": "backup-alias",
         "sftp_path": "/backup/server",
+        "restic_backup_time": "02:30",
     }
     section = Restic.doc(values)
     assert section.startswith("\n## Datensicherung\n\n")
@@ -433,7 +451,7 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert f"`{Restic.BACKUP_SCRIPT_DIR}/server.example.com-backup.sh`" in section
     assert f"`{Restic.CRON_DIR}/server.example.com-backup`" in section
     assert "**SFTP-Ziel:** `backup-alias:/backup/server`" in section
-    assert "**Timer/Cron:**" in section
+    assert "**Timer/Cron:** täglich 02:30 Uhr" in section
     assert "> Hinweis:" in section
 
 
