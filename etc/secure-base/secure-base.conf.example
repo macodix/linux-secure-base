@@ -16,7 +16,7 @@ loglevel = INFO
 modules_enabled = base,postfix,users,ssh,ufw,fail2ban,rkhunter,logging,unattended,restic,monit,lynis
 
 # Aktive optionale Module, kommagetrennt; nur mit dem Schalter -o
-# verarbeitet (verfügbar: nginx). Leer lassen, wenn keine.
+# verarbeitet (verfügbar: nginx, postgresql). Leer lassen, wenn keine.
 optional_enabled =
 
 # Installationsbericht nach jedem install-Lauf: lokal unter
@@ -149,7 +149,7 @@ monit_mail_from =
 
 # Aktive Prüfungen unter /etc/monit/conf.d/, kommagetrennt. Erlaubte
 # Werte: system, rootfs, sshd, postfix, fail2ban, ufw, cron, rkhunter,
-# restic.
+# restic, postgresql.
 monit_checks = system,rootfs,sshd,postfix,fail2ban,ufw,cron,rkhunter,restic
 
 [lynis]
@@ -177,3 +177,6 @@ nginx_certbot_mail =
 # certbot-Betriebsmodus: staging (Testzertifikate, für den ersten
 # Probelauf) oder live (echte Zertifikate).
 nginx_certbot_mode = live
+
+[postgresql]
+# Keine eigenen Schlüssel — nutzt timezone aus [base] (log_timezone).

@@ -100,8 +100,8 @@ def test_parsed_checks_ignores_empty_entries() -> None:
 # --- KNOWN_CHECKS / CHECK_CONTENT ---
 
 
-def test_known_checks_has_nine_entries() -> None:
-    """KNOWN_CHECKS enthält alle neun Checks aus dem Bash-Original."""
+def test_known_checks_has_ten_entries() -> None:
+    """KNOWN_CHECKS enthält die neun Checks aus dem Bash-Original plus postgresql."""
     expected = {
         "system",
         "rootfs",
@@ -112,6 +112,7 @@ def test_known_checks_has_nine_entries() -> None:
         "cron",
         "rkhunter",
         "restic",
+        "postgresql",
     }
     assert expected == KNOWN_CHECKS
 

@@ -8,6 +8,7 @@ from secure_base.modules.lynis import Lynis
 from secure_base.modules.monit import Monit
 from secure_base.modules.nginx import Nginx
 from secure_base.modules.postfix import Postfix
+from secure_base.modules.postgresql import Postgresql
 from secure_base.modules.restic import Restic
 from secure_base.modules.rkhunter import Rkhunter
 from secure_base.modules.ssh import Ssh
@@ -41,4 +42,5 @@ REGISTRY = [
         optional=True,
         optional_keys=("nginx_certbot_mail",),
     ),
+    ModuleSpec("postgresql", "Datenbankserver", Postgresql, optional=True),
 ]

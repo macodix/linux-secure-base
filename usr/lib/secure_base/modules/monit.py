@@ -43,6 +43,7 @@ KNOWN_CHECKS: frozenset[str] = frozenset(
         "cron",
         "rkhunter",
         "restic",
+        "postgresql",
     }
 )
 
@@ -110,6 +111,12 @@ CHECK_CONTENT: dict[str, str] = {
     "restic": (
         "check file restic_backup with path /var/lib/secure-base/restic-last-success\n"
         "    if mtime > 26 hours then alert\n"
+    ),
+    "postgresql": (
+        "check host postgresql_local with address 127.0.0.1\n"
+        '    start program = "/bin/systemctl start postgresql"\n'
+        '    stop  program = "/bin/systemctl stop  postgresql"\n'
+        "    if failed port 5432 then alert\n"
     ),
 }
 
