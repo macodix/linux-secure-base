@@ -21,3 +21,7 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 ## B. Anleitung
 
 01 [anleitung/INDEX.md](anleitung/INDEX.md) — Schritt-für-Schritt-Einrichtung des gehärteten Grundsystems und des optionalen nginx-Webservers (in Bearbeitung)
+
+## C. Installer
+
+01 [installer/secure-base-installer.md](installer/secure-base-installer.md) — Konzept des secure-base-installer: pifos-Grundlage, Ablauf, Module, Konfiguration, Betriebsarten, Bedienoberfläche, Installationsbericht (in Bearbeitung)
