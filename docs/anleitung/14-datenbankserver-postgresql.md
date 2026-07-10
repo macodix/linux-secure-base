@@ -69,3 +69,52 @@ Dienst neu starten und die lokale Verbindung prüfen:
 systemctl restart postgresql@<version>-main
 runuser -u postgres -- psql -c 'select 1'
 ```
+
+## 6. Tägliche Datensicherung (Dump)
+
+Das Datenverzeichnis eines laufenden Clusters lässt sich nicht konsistent dateiweise sichern. Stattdessen täglich einen logischen Gesamt-Dump erzeugen und unter `/root` ablegen — `/root` wird von der [Datensicherung](10-datensicherung.md) ohnehin mitgesichert.
+
+Zielverzeichnis anlegen:
+
+```
+mkdir -p /root/postgresql-dump
+chmod 700 /root/postgresql-dump
+```
+
+Dump-Skript `/usr/local/sbin/secure-base-pg-dumpall.sh` anlegen:
+
+```
+#!/usr/bin/env bash
+set -euo pipefail
+DUMP_DIR="/root/postgresql-dump"
+SENTINEL="/var/lib/secure-base/pg-dumpall-last-success"
+TMP_FILE="$(mktemp "$DUMP_DIR/.dumpall.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
+runuser -u postgres -- pg_dumpall > "$TMP_FILE"
+chmod 600 "$TMP_FILE"
+mv -f "$TMP_FILE" "$DUMP_DIR/dumpall.sql"
+mkdir -p "$(dirname "$SENTINEL")"
+touch "$SENTINEL"
+```
+
+```
+chmod 700 /usr/local/sbin/secure-base-pg-dumpall.sh
+```
+
+Der Dump als root schreibt die Datei mit Mode 0600; `pg_dumpall` läuft über `runuser` als `postgres` (lokale peer-Authentifizierung, kein Passwort). Cron-Eintrag `/etc/cron.d/secure-base-pg-dumpall` — vor dem restic-Lauf (Vorgabe 02:30), damit der frische Dump im selben Nachtlauf gesichert wird:
+
+```
+0 2 * * *  root  /usr/local/sbin/secure-base-pg-dumpall.sh
+```
+
+## 7. Frische-Überwachung
+
+Der Dump aktualisiert die Markierungsdatei `/var/lib/secure-base/pg-dumpall-last-success` nur im Erfolgsfall. Das Monitoring prüft mit dem Check `postgresql_dump` ihr Alter und alarmiert bei Überalterung (>26 h). Dazu `postgresql_dump` in der Konfiguration zu den aktiven monit-Checks aufnehmen.
+
+## 8. Wiederherstellung
+
+Den Gesamt-Dump als `postgres` einspielen:
+
+```
+runuser -u postgres -- psql -f /root/postgresql-dump/dumpall.sql
+```

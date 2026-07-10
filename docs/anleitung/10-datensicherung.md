@@ -105,7 +105,7 @@ touch /var/lib/secure-base/restic-last-success
 Datei `/etc/cron.d/<FQDN>-backup` anlegen:
 
 ```
-# Datensicherung (restic) — täglich um 02:30
+# Datensicherung (restic) — täglich zur Zeit aus restic_backup_time (Vorgabe 02:30)
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 30 2 * * *  root  /usr/local/sbin/<FQDN>-backup.sh
 ```
