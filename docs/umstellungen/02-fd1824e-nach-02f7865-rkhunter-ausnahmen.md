@@ -1,4 +1,4 @@
-# Anpassung Produktivsysteme für Version 02f7865 (rkhunter-Ausnahmen für bekannte Fehlalarme)
+# Anpassung Produktivsysteme fd1824e → 02f7865: rkhunter-Ausnahmen für bekannte Fehlalarme
 
 Anleitung für einen bereits laufenden Server, der auf den neuen Standard gebracht werden soll. Auf einem neu aufgesetzten Server ist nichts davon nötig — dort erledigt der Installer alles.
 
@@ -6,7 +6,7 @@ Anleitung für einen bereits laufenden Server, der auf den neuen Standard gebrac
 
 ## 1. Geltungsbereich
 
-Die Anleitung gilt für Server, die mit einem Stand **bis einschließlich Commit `c9e462b`** eingerichtet wurden. Den neuen Standard bringt Commit `02f7865`.
+Die Anleitung gilt für Server, die mit einem Stand **bis einschließlich Commit `fd1824e`** eingerichtet wurden. Den neuen Standard bringt Commit `02f7865`.
 
 Betroffen ist jeder Server mit eingerichtetem Modul `rkhunter` — also jeder nach lsb-Standard aufgesetzte Server. Der tägliche Lauf schickt dort eine Mail mit Warnungen dieser Art:
 

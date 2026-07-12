@@ -30,8 +30,8 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 ## D. Umstellungen
 
-Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bringen. Auf einem neu aufgesetzten Server sind sie gegenstandslos. Jede Anleitung nennt die Zielversion im Titel.
+Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bringen. Auf einem neu aufgesetzten Server sind sie gegenstandslos. Der Dateiname nennt den Versionssprung: `<lfd>-<von>-nach-<nach>-<thema>.md`. Wer den Stand seines Servers kennt, sieht daran ohne Öffnen, welche Anleitungen noch anzuwenden sind.
 
-01 [umstellungen/01-sicherungsablagen-var-backup.md](umstellungen/01-sicherungsablagen-var-backup.md) — Anpassung Produktivsysteme für Version `fd1824e`: lokale Sicherungsablagen nach `/var/backup`, PostgreSQL-Einzeldumps, verstecktes restic-Konfigverzeichnis
+01 [umstellungen/01-f5278f8-nach-fd1824e-sicherungsablagen-var-backup.md](umstellungen/01-f5278f8-nach-fd1824e-sicherungsablagen-var-backup.md) — lokale Sicherungsablagen nach `/var/backup`, PostgreSQL-Einzeldumps, verstecktes restic-Konfigverzeichnis
 
-02 [umstellungen/02-rkhunter-ausnahmen.md](umstellungen/02-rkhunter-ausnahmen.md) — Anpassung Produktivsysteme für Version `02f7865`: rkhunter-Ausnahmen für bekannte Fehlalarme (systemd, PostgreSQL)
+02 [umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md](umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md) — rkhunter-Ausnahmen für bekannte Fehlalarme (systemd, PostgreSQL)

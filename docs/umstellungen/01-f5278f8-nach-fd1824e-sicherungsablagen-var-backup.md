@@ -1,4 +1,4 @@
-# Anpassung Produktivsysteme für Version fd1824e (lokale Sicherungsablagen nach /var/backup)
+# Anpassung Produktivsysteme f5278f8 → fd1824e: lokale Sicherungsablagen nach /var/backup
 
 Anleitung für einen bereits laufenden Server, der auf den neuen Standard gebracht werden soll. Auf einem neu aufgesetzten Server ist nichts davon nötig — dort erledigt der Installer alles.
 
