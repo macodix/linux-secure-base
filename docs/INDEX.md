@@ -27,3 +27,9 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 ## C. Installer
 
 01 [installer/secure-base-installer.md](installer/secure-base-installer.md) — Konzept des secure-base-installer: pifos-Grundlage, Ablauf, Module, Konfiguration, Betriebsarten, Bedienoberfläche, Installationsbericht (in Bearbeitung)
+
+## D. Umstellungen
+
+Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bringen. Auf einem neu aufgesetzten Server sind sie gegenstandslos. Jede Anleitung nennt die Zielversion im Titel.
+
+01 [umstellungen/01-sicherungsablagen-var-backup.md](umstellungen/01-sicherungsablagen-var-backup.md) — Anpassung Produktivsysteme für Version `fd1824e`: lokale Sicherungsablagen nach `/var/backup`, PostgreSQL-Einzeldumps, verstecktes restic-Konfigverzeichnis
