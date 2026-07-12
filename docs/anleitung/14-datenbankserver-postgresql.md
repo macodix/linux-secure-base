@@ -72,49 +72,87 @@ runuser -u postgres -- psql -c 'select 1'
 
 ## 6. Tägliche Datensicherung (Dump)
 
-Das Datenverzeichnis eines laufenden Clusters lässt sich nicht konsistent dateiweise sichern. Stattdessen täglich einen logischen Gesamt-Dump erzeugen und unter `/root` ablegen — `/root` wird von der [Datensicherung](10-datensicherung.md) ohnehin mitgesichert.
+Das Datenverzeichnis eines laufenden Clusters lässt sich nicht konsistent dateiweise sichern. Stattdessen täglich je Datenbank einen logischen Dump erzeugen und unter `/var/backup/postgresql` ablegen. `/var/backup` ist das Sammelverzeichnis für alle lokal abgelegten Sicherungen und wird von der [Datensicherung](10-datensicherung.md) mitgesichert.
+
+Einzeldumps statt eines Gesamt-Dumps: jede Datenbank lässt sich einzeln wiederherstellen, ohne die übrigen anzufassen. Rollen und Tablespaces gehören dem Cluster, nicht einer Datenbank — sie kommen zusätzlich über `pg_dumpall --globals-only` nach `globals.sql`.
 
 Zielverzeichnis anlegen:
 
 ```
-mkdir -p /root/postgresql-dump
-chmod 700 /root/postgresql-dump
+mkdir -p /var/backup/postgresql
+chmod 700 /var/backup /var/backup/postgresql
 ```
 
-Dump-Skript `/usr/local/sbin/secure-base-pg-dumpall.sh` anlegen:
+Dump-Skript `/usr/local/sbin/secure-base-pg-dump.sh` anlegen:
 
 ```
 #!/usr/bin/env bash
 set -euo pipefail
-DUMP_DIR="/root/postgresql-dump"
-SENTINEL="/var/lib/secure-base/pg-dumpall-last-success"
-TMP_FILE="$(mktemp "$DUMP_DIR/.dumpall.XXXXXX")"
+DUMP_DIR="/var/backup/postgresql"
+GLOBALS_FILE="$DUMP_DIR/globals.sql"
+
+TMP_FILE=""
 trap 'rm -f "$TMP_FILE"' EXIT
-runuser -u postgres -- pg_dumpall > "$TMP_FILE"
-chmod 600 "$TMP_FILE"
-mv -f "$TMP_FILE" "$DUMP_DIR/dumpall.sql"
-mkdir -p "$(dirname "$SENTINEL")"
-touch "$SENTINEL"
+
+dump_to() {
+    local target="$1"
+    shift
+    TMP_FILE="$(mktemp "$DUMP_DIR/.dump.XXXXXX")"
+    if ! "$@" >"$TMP_FILE"; then
+        echo "fehlgeschlagen: $* — bisherige Sicherung $target bleibt erhalten" >&2
+        return 1
+    fi
+    chmod 0600 "$TMP_FILE"
+    mv -f "$TMP_FILE" "$target"
+    TMP_FILE=""
+}
+
+if ! databases="$(runuser -u postgres -- psql -tAc \
+    "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate")"; then
+    echo "Datenbankliste nicht lesbar — kein Dump" >&2
+    exit 1
+fi
+
+while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    case "$db" in
+        *[!A-Za-z0-9_-]*)
+            echo "Datenbankname mit unzulässigen Zeichen: $db — kein Dump" >&2
+            exit 1
+            ;;
+    esac
+    dump_to "$DUMP_DIR/$db.sql" runuser -u postgres -- \
+        pg_dump --create --clean --if-exists "$db"
+done <<< "$databases"
+
+dump_to "$GLOBALS_FILE" runuser -u postgres -- pg_dumpall --globals-only
 ```
 
 ```
-chmod 700 /usr/local/sbin/secure-base-pg-dumpall.sh
+chmod 700 /usr/local/sbin/secure-base-pg-dump.sh
 ```
 
-Der Dump als root schreibt die Datei mit Mode 0600; `pg_dumpall` läuft über `runuser` als `postgres` (lokale peer-Authentifizierung, kein Passwort). Cron-Eintrag `/etc/cron.d/secure-base-pg-dumpall` — vor dem restic-Lauf (Vorgabe 02:30), damit der frische Dump im selben Nachtlauf gesichert wird:
+Das Skript läuft als root und schreibt die Dumps mit Mode 0600; `pg_dump` und `pg_dumpall` laufen über `runuser` als `postgres` (lokale peer-Authentifizierung, kein Passwort). Jeder Dump wird erst in eine Temp-Datei geschrieben und bei Erfolg per `mv` über die Zieldatei gelegt — ein Fehlschlag lässt die vorherige Sicherung unverändert.
+
+`globals.sql` entsteht bewusst als letzte Datei des Laufs. Ihr Zeitstempel belegt damit einen vollständig erfolgreichen Dump — die Frische-Überwachung stützt sich darauf (Kapitel 7).
+
+Cron-Eintrag `/etc/cron.d/secure-base-pg-dump` — vor dem restic-Lauf (Vorgabe 02:30), damit die frischen Dumps im selben Nachtlauf gesichert werden:
 
 ```
-0 2 * * *  root  /usr/local/sbin/secure-base-pg-dumpall.sh
+0 2 * * *  root  /usr/local/sbin/secure-base-pg-dump.sh
 ```
 
 ## 7. Frische-Überwachung
 
-Der Dump aktualisiert die Markierungsdatei `/var/lib/secure-base/pg-dumpall-last-success` nur im Erfolgsfall. Das Monitoring prüft mit dem Check `postgresql_dump` ihr Alter und alarmiert bei Überalterung (>26 h). Dazu `postgresql_dump` in der Konfiguration zu den aktiven monit-Checks aufnehmen.
+Das Monitoring prüft mit dem Check `postgresql_dump` das Alter von `/var/backup/postgresql/globals.sql` und alarmiert bei Überalterung (>26 h). Da das Skript diese Datei zuletzt schreibt, bleibt sie bei jedem Fehlschlag alt — auch wenn nur der Dump einer einzelnen Datenbank scheitert. Geprüft wird damit die Sicherungsdatei selbst, keine gesonderte Markierungsdatei. Dazu `postgresql_dump` in der Konfiguration zu den aktiven monit-Checks aufnehmen.
 
 ## 8. Wiederherstellung
 
-Den Gesamt-Dump als `postgres` einspielen:
+Zuerst die clusterweiten Objekte (Rollen, Tablespaces), dann die gewünschten Datenbanken — jede für sich:
 
 ```
-runuser -u postgres -- psql -f /root/postgresql-dump/dumpall.sql
+runuser -u postgres -- psql -f /var/backup/postgresql/globals.sql
+runuser -u postgres -- psql -f /var/backup/postgresql/<datenbank>.sql postgres
 ```
+
+Die Einzeldumps sind mit `--create --clean --if-exists` erzeugt: der Aufruf verbindet sich mit der Datenbank `postgres`, verwirft die Zieldatenbank, falls vorhanden, und legt sie neu an.

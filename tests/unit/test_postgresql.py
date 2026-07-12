@@ -240,78 +240,88 @@ def test_cron_fields_splits_hhmm_into_minute_and_hour() -> None:
 
 def test_dump_cron_content_uses_converted_fields_and_script_path() -> None:
     """Die Cron-Zeile nutzt die aus HH:MM umgesetzten Felder und den Skriptpfad."""
-    content = _dump_cron_content("02:30", "/usr/local/sbin/secure-base-pg-dumpall.sh")
-    assert "30 2 * * *  root  /usr/local/sbin/secure-base-pg-dumpall.sh" in content
-    assert content.startswith("# Datensicherung (pg_dumpall) - täglich um 02:30")
-
-
-def test_dump_script_content_runs_pg_dumpall_as_postgres_via_runuser() -> None:
-    """Das Skript ruft pg_dumpall als postgres über runuser auf."""
-    content = _dump_script_content(
-        dump_dir="/root/postgresql-dump",
-        dump_file="/root/postgresql-dump/dumpall.sql",
-        runuser_bin="/usr/sbin/runuser",
-        pg_dumpall_bin="/usr/bin/pg_dumpall",
-        sentinel_dir="/var/lib/secure-base",
-        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
+    content = _dump_cron_content("02:30", "/usr/local/sbin/secure-base-pg-dump.sh")
+    assert "30 2 * * *  root  /usr/local/sbin/secure-base-pg-dump.sh" in content
+    assert content.startswith(
+        "# Datensicherung (pg_dump je Datenbank) - täglich um 02:30"
     )
+
+
+def _script() -> str:
+    """Baut einen Skriptinhalt mit festen Pfaden für die Inhaltsprüfungen."""
+    return _dump_script_content(
+        dump_dir="/var/backup/postgresql",
+        globals_file_name="globals.sql",
+        runuser_bin="/usr/sbin/runuser",
+        psql_bin="/usr/bin/psql",
+        pg_dump_bin="/usr/bin/pg_dump",
+        pg_dumpall_bin="/usr/bin/pg_dumpall",
+    )
+
+
+def test_dump_script_content_dumps_each_database_separately_via_runuser() -> None:
+    """Je Datenbank ein pg_dump als postgres über runuser — kein Cluster-Gesamtdump."""
+    content = _script()
     assert "set -euo pipefail" in content
-    assert '"/usr/sbin/runuser" -u postgres -- "/usr/bin/pg_dumpall"' in content
+    assert 'dump_to "$DUMP_DIR/$db.sql" "/usr/sbin/runuser" -u postgres --' in content
+    assert '"/usr/bin/pg_dump" --create --clean --if-exists "$db"' in content
+
+
+def test_dump_script_content_lists_only_connectable_non_template_databases() -> None:
+    """Die Datenbankliste kommt aus pg_database ohne Vorlagen/nicht verbindbare."""
+    content = _script()
+    assert '"/usr/sbin/runuser" -u postgres -- "/usr/bin/psql" -tAc' in content
+    assert (
+        "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate"
+        in content
+    )
+
+
+def test_dump_script_content_dumps_globals_only_not_whole_cluster() -> None:
+    """pg_dumpall läuft ausschließlich mit --globals-only (Rollen, Tablespaces)."""
+    content = _script()
+    assert '"/usr/bin/pg_dumpall" --globals-only' in content
+    assert content.count("pg_dumpall") == 1
 
 
 def test_dump_script_content_moves_atomically_and_sets_mode_0600() -> None:
-    """Das Skript setzt 0600 und ersetzt die Zieldatei per mv (atomar)."""
-    content = _dump_script_content(
-        dump_dir="/root/postgresql-dump",
-        dump_file="/root/postgresql-dump/dumpall.sql",
-        runuser_bin="/usr/sbin/runuser",
-        pg_dumpall_bin="/usr/bin/pg_dumpall",
-        sentinel_dir="/var/lib/secure-base",
-        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
-    )
+    """dump_to setzt 0600 und ersetzt die Zieldatei per mv (atomar)."""
+    content = _script()
     assert 'chmod 0600 "$TMP_FILE"' in content
-    assert 'mv -f "$TMP_FILE" "$DUMP_FILE"' in content
+    assert 'mv -f "$TMP_FILE" "$target"' in content
 
 
 def test_dump_script_content_discards_temp_file_via_exit_trap() -> None:
     """Ein EXIT-trap räumt die Temp-Datei bei Erfolg wie bei Fehlschlag auf."""
-    content = _dump_script_content(
-        dump_dir="/root/postgresql-dump",
-        dump_file="/root/postgresql-dump/dumpall.sql",
-        runuser_bin="/usr/sbin/runuser",
-        pg_dumpall_bin="/usr/bin/pg_dumpall",
-        sentinel_dir="/var/lib/secure-base",
-        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
-    )
+    content = _script()
     assert """trap 'rm -f "$TMP_FILE"' EXIT""" in content
     assert "exit 1" in content
 
 
-def test_dump_script_content_updates_sentinel_only_after_success() -> None:
-    """Der Sentinel-Touch steht nach dem Fehlerpfad — wird nur bei Erfolg erreicht."""
-    content = _dump_script_content(
-        dump_dir="/root/postgresql-dump",
-        dump_file="/root/postgresql-dump/dumpall.sql",
-        runuser_bin="/usr/sbin/runuser",
-        pg_dumpall_bin="/usr/bin/pg_dumpall",
-        sentinel_dir="/var/lib/secure-base",
-        sentinel_file="/var/lib/secure-base/pg-dumpall-last-success",
-    )
-    fail_pos = content.index("exit 1")
-    sentinel_pos = content.index('touch "/var/lib/secure-base/pg-dumpall-last-success"')
-    assert fail_pos < sentinel_pos
-    assert 'mkdir -p "/var/lib/secure-base"' in content
+def test_dump_script_content_writes_globals_last() -> None:
+    """globals.sql entsteht nach den Einzeldumps — ihr Zeitstempel belegt den Erfolg."""
+    content = _script()
+    per_db_pos = content.index('dump_to "$DUMP_DIR/$db.sql"')
+    globals_pos = content.index('dump_to "$GLOBALS_FILE"')
+    assert per_db_pos < globals_pos
+
+
+def test_dump_script_content_rejects_database_names_with_special_characters() -> None:
+    """Ein Datenbankname außerhalb [A-Za-z0-9_-] bricht den Lauf ab (Pfadschutz)."""
+    content = _script()
+    assert "*[!A-Za-z0-9_-]*)" in content
+    assert "Datenbankname mit unzulässigen Zeichen" in content
 
 
 # --- Instanzgebundene Dump-Inhalte ---
 
 
-def test_dump_file_path_joins_dir_and_name() -> None:
-    """_dump_file_path hängt DUMP_FILE_NAME an DUMP_DIR an."""
+def test_globals_file_path_joins_dir_and_name() -> None:
+    """_globals_file_path hängt GLOBALS_FILE_NAME an DUMP_DIR an."""
     mod = _make_module()
-    mod.DUMP_DIR = "/root/postgresql-dump"  # type: ignore[misc]
-    mod.DUMP_FILE_NAME = "dumpall.sql"  # type: ignore[misc]
-    assert mod._dump_file_path() == "/root/postgresql-dump/dumpall.sql"
+    mod.DUMP_DIR = "/var/backup/postgresql"  # type: ignore[misc]
+    mod.GLOBALS_FILE_NAME = "globals.sql"  # type: ignore[misc]
+    assert mod._globals_file_path() == "/var/backup/postgresql/globals.sql"
 
 
 def test_build_dump_script_content_uses_instance_paths() -> None:
@@ -319,8 +329,10 @@ def test_build_dump_script_content_uses_instance_paths() -> None:
     mod = _make_module()
     content = mod._build_dump_script_content()
     assert mod.RUNUSER_BIN in content
+    assert mod.PSQL_BIN in content
+    assert mod.PG_DUMP_BIN in content
     assert mod.PG_DUMPALL_BIN in content
-    assert mod._dump_file_path() in content
+    assert mod.DUMP_DIR in content
 
 
 def test_build_dump_cron_content_uses_configured_pg_dump_time() -> None:
@@ -354,12 +366,12 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
         "Datenverzeichnis-Rechte setzen",
         "Dienst aktivieren",
         "Dienst neu starten",
+        "Sicherungsverzeichnis anlegen",
+        "Sicherungsverzeichnis-Rechte setzen",
         "Dump-Zielverzeichnis anlegen",
         "Dump-Zielverzeichnis-Rechte setzen",
         "Dump-Skript schreiben",
         "Dump-Cron-Datei schreiben",
-        "Sentinel-Verzeichnis sicherstellen",
-        "Dump-Sentinel initialisieren",
     ]
 
     by_label = dict(steps)
@@ -399,6 +411,16 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
     assert restart_step.operation == "restart"  # type: ignore[attr-defined]
     assert restart_step.unit == "postgresql@16-main"  # type: ignore[attr-defined]
 
+    mkdir_backup_base = by_label["Sicherungsverzeichnis anlegen"]
+    assert mkdir_backup_base.path == mod.BACKUP_BASE_DIR  # type: ignore[attr-defined]
+    assert mkdir_backup_base.mode == 0o700  # type: ignore[attr-defined]
+
+    chown_backup_base = by_label["Sicherungsverzeichnis-Rechte setzen"]
+    assert chown_backup_base.path == mod.BACKUP_BASE_DIR  # type: ignore[attr-defined]
+    assert chown_backup_base.mode == 0o700  # type: ignore[attr-defined]
+    assert chown_backup_base.owner == "root"  # type: ignore[attr-defined]
+    assert chown_backup_base.group == "root"  # type: ignore[attr-defined]
+
     mkdir_dump_dir = by_label["Dump-Zielverzeichnis anlegen"]
     assert mkdir_dump_dir.path == mod.DUMP_DIR  # type: ignore[attr-defined]
     assert mkdir_dump_dir.mode == 0o700  # type: ignore[attr-defined]
@@ -421,15 +443,6 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
     assert write_dump_cron.dst == mod.DUMP_CRON_PATH  # type: ignore[attr-defined]
     assert write_dump_cron.mode == 0o644  # type: ignore[attr-defined]
     assert write_dump_cron.content == mod._build_dump_cron_content()  # type: ignore[attr-defined]
-
-    sentinel_dir_action = by_label["Sentinel-Verzeichnis sicherstellen"]
-    assert sentinel_dir_action.path == mod.SENTINEL_DIR  # type: ignore[attr-defined]
-    assert sentinel_dir_action.mode == 0o755  # type: ignore[attr-defined]
-
-    sentinel_file_action = by_label["Dump-Sentinel initialisieren"]
-    assert sentinel_file_action.dst == mod.SENTINEL_FILE  # type: ignore[attr-defined]
-    assert sentinel_file_action.mode == 0o644  # type: ignore[attr-defined]
-    assert sentinel_file_action.content == ""  # type: ignore[attr-defined]
 
 
 def test_install_steps_raises_when_no_cluster_after_apt(tmp_path: Path) -> None:
@@ -540,17 +553,22 @@ def _prepare_verified_cluster(
     data_dir.chmod(0o700)
     mod.PG_DATA_BASE = str(tmp_path / "data-pg")  # type: ignore[misc]
 
-    dump_dir = tmp_path / "root-postgresql-dump"
+    backup_base_dir = tmp_path / "var-backup"
+    backup_base_dir.mkdir()
+    backup_base_dir.chmod(0o700)
+    mod.BACKUP_BASE_DIR = str(backup_base_dir)  # type: ignore[misc]
+
+    dump_dir = backup_base_dir / "postgresql"
     dump_dir.mkdir()
     dump_dir.chmod(0o700)
     mod.DUMP_DIR = str(dump_dir)  # type: ignore[misc]
 
-    dump_script_path = tmp_path / "secure-base-pg-dumpall.sh"
+    dump_script_path = tmp_path / "secure-base-pg-dump.sh"
     mod.DUMP_SCRIPT_PATH = str(dump_script_path)  # type: ignore[misc]
     dump_script_path.write_text(mod._build_dump_script_content(), encoding="utf-8")
     dump_script_path.chmod(0o700)
 
-    dump_cron_path = tmp_path / "secure-base-pg-dumpall.cron"
+    dump_cron_path = tmp_path / "secure-base-pg-dump.cron"
     mod.DUMP_CRON_PATH = str(dump_cron_path)  # type: ignore[misc]
     dump_cron_path.write_text(mod._build_dump_cron_content(), encoding="utf-8")
     dump_cron_path.chmod(0o644)
@@ -930,7 +948,7 @@ def test_uninstall_removes_dump_script_and_cron_but_keeps_dump_dir(
 
     dump_dir = tmp_path / "dump-dir"
     dump_dir.mkdir()
-    dump_file = dump_dir / "dumpall.sql"
+    dump_file = dump_dir / "kundendaten.sql"
     dump_file.write_text("-- alter Dump --\n", encoding="utf-8")
 
     dump_script = tmp_path / "dump.sh"
@@ -1027,7 +1045,7 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert "**Dienste:** postgresql@<version>-<cluster>" in section
 
 
-def test_doc_contains_backup_section_with_script_cron_and_sentinel() -> None:
+def test_doc_contains_backup_section_with_script_cron_and_freshness() -> None:
     """doc() beschreibt Dump-Skript, Cron-Zeit, Ablage und Frische-Überwachung."""
     values = {
         "timezone": "Europe/Berlin",
@@ -1035,13 +1053,14 @@ def test_doc_contains_backup_section_with_script_cron_and_sentinel() -> None:
         "restic_backup_time": "02:30",
     }
     section = Postgresql.doc(values)
-    assert "**Backup (pg_dumpall):**" in section
+    assert "**Backup (Einzeldump je Datenbank):**" in section
     assert Postgresql.DUMP_SCRIPT_PATH in section
     assert Postgresql.DUMP_CRON_PATH in section
     assert "täglich 02:00 Uhr" in section
     assert "restic_backup_time 02:30 Uhr" in section
-    assert f"{Postgresql.DUMP_DIR}/{Postgresql.DUMP_FILE_NAME}" in section
-    assert Postgresql.SENTINEL_FILE in section
+    assert f"{Postgresql.DUMP_DIR}/<datenbank>.sql" in section
+    assert f"{Postgresql.DUMP_DIR}/{Postgresql.GLOBALS_FILE_NAME}" in section
+    assert Postgresql.BACKUP_BASE_DIR in section
     assert "postgresql_dump" in section
     assert "26 Stunden" in section
     assert "psql -f" in section

@@ -6,14 +6,15 @@ conf.d und ersetzt pg_hba.conf durch eine restriktive Zugriffsliste
 (kein trust, keine Netz-Freigabe außer Loopback). Prüft/setzt zusätzlich
 die Rechte des Datenverzeichnisses. Legt keine Anwendungs-DB/-Benutzer
 an und öffnet keinen Netz-Port (kein ufw-Eintrag). Richtet zusätzlich
-eine logische Datensicherung ein: ein Cron-Skript führt täglich
-pg_dumpall aus und legt den Dump unter /root ab, wo ihn das restic-Modul
-mit sichert (/etc /home /var/log /root); ein Erfolgs-Sentinel unter
-/var/lib/secure-base ermöglicht eine monit-Frische-Überwachung (Muster
-wie beim restic-Modul). Optionales Modul; setzt das gehärtete
-Grundsystem voraus. Betriebsart über den Schlüssel operation.
-PostgreSQL-Hauptversion und Cluster-Name werden zur Laufzeit unter
-/etc/postgresql ermittelt, nie hartkodiert.
+eine logische Datensicherung ein: ein Cron-Skript sichert täglich jede
+Datenbank einzeln (pg_dump) und danach die clusterweiten Objekte
+(pg_dumpall --globals-only) nach /var/backup/postgresql, wo sie das
+restic-Modul mit sichert (/var/backup gehört zu dessen Sicherungspfaden).
+Die zuletzt geschriebene globals.sql belegt mit ihrem Zeitstempel einen
+vollständig erfolgreichen Lauf und dient der monit-Frische-Überwachung.
+Optionales Modul; setzt das gehärtete Grundsystem voraus. Betriebsart
+über den Schlüssel operation. PostgreSQL-Hauptversion und Cluster-Name
+werden zur Laufzeit unter /etc/postgresql ermittelt, nie hartkodiert.
 """
 
 import grp
@@ -94,54 +95,86 @@ set -euo pipefail
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 DUMP_DIR="{dump_dir}"
-DUMP_FILE="{dump_file}"
-TMP_FILE="$(mktemp "$DUMP_DIR/.dumpall.XXXXXX")"
+GLOBALS_FILE="$DUMP_DIR/{globals_file_name}"
+
+TMP_FILE=""
 trap 'rm -f "$TMP_FILE"' EXIT
 
-if ! "{runuser_bin}" -u postgres -- "{pg_dumpall_bin}" >"$TMP_FILE"; then
-    echo "pg_dumpall fehlgeschlagen — alte Sicherung bleibt erhalten" >&2
+# Schreibt die Ausgabe des ab $2 angegebenen Befehls atomar nach $1: erst in
+# eine Temp-Datei im selben Verzeichnis, bei Erfolg per mv darüber. Ein
+# Fehlschlag lässt die vorherige Sicherung unverändert stehen.
+dump_to() {{
+    local target="$1"
+    shift
+    TMP_FILE="$(mktemp "$DUMP_DIR/.dump.XXXXXX")"
+    if ! "$@" >"$TMP_FILE"; then
+        echo "fehlgeschlagen: $* — bisherige Sicherung $target bleibt erhalten" >&2
+        return 1
+    fi
+    chmod 0600 "$TMP_FILE"
+    mv -f "$TMP_FILE" "$target"
+    TMP_FILE=""
+}}
+
+# Verbindbare, nicht-Vorlagen-Datenbanken; template0/template1 scheiden aus.
+if ! databases="$("{runuser_bin}" -u postgres -- "{psql_bin}" -tAc \\
+    "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate")"; then
+    echo "Datenbankliste nicht lesbar — kein Dump" >&2
     exit 1
 fi
 
-chmod 0600 "$TMP_FILE"
-mv -f "$TMP_FILE" "$DUMP_FILE"
+# Jede Datenbank einzeln. --create --clean --if-exists macht den Einzeldump
+# eigenständig wiederherstellbar (legt die Datenbank selbst neu an).
+while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    case "$db" in
+        *[!A-Za-z0-9_-]*)
+            echo "Datenbankname mit unzulässigen Zeichen: $db — kein Dump" >&2
+            exit 1
+            ;;
+    esac
+    dump_to "$DUMP_DIR/$db.sql" "{runuser_bin}" -u postgres -- \\
+        "{pg_dump_bin}" --create --clean --if-exists "$db"
+done <<< "$databases"
 
-# Erfolgs-Sentinel für die monit-Frische-Überwachung (postgresql_dump-Check),
-# wird nur nach erfolgreichem pg_dumpall erreicht — Muster wie beim
-# restic-Backup-Skript.
-mkdir -p "{sentinel_dir}" 2>/dev/null || true
-touch "{sentinel_file}" 2>/dev/null || true
+# Clusterweite Objekte (Rollen inklusive Passwort-Hashes, Tablespaces) — ohne
+# Datenbankinhalte. Bewusst als letzter Schritt: der Zeitstempel dieser Datei
+# belegt damit einen vollständig erfolgreichen Lauf. Genau ihn prüft die
+# monit-Frische-Überwachung (Check postgresql_dump); scheitert vorher ein
+# Einzeldump, bricht das Skript ab und globals.sql bleibt alt.
+dump_to "$GLOBALS_FILE" "{runuser_bin}" -u postgres -- \\
+    "{pg_dumpall_bin}" --globals-only
 """
 
 
 def _dump_script_content(
     dump_dir: str,
-    dump_file: str,
+    globals_file_name: str,
     runuser_bin: str,
+    psql_bin: str,
+    pg_dump_bin: str,
     pg_dumpall_bin: str,
-    sentinel_dir: str,
-    sentinel_file: str,
 ) -> str:
     """Baut den Inhalt des Dump-Skripts.
 
     Args:
-        dump_dir: Zielverzeichnis für Temp- und Zieldatei.
-        dump_file: Endgültiger Pfad der Dump-Datei.
+        dump_dir: Zielverzeichnis für Temp- und Zieldateien.
+        globals_file_name: Dateiname der clusterweiten Objekte.
         runuser_bin: Pfad zu runuser.
-        pg_dumpall_bin: Pfad zu pg_dumpall.
-        sentinel_dir: Verzeichnis des monit-Frische-Sentinels.
-        sentinel_file: Datei des monit-Frische-Sentinels.
+        psql_bin: Pfad zu psql (Abfrage der Datenbankliste).
+        pg_dump_bin: Pfad zu pg_dump (Einzeldump je Datenbank).
+        pg_dumpall_bin: Pfad zu pg_dumpall (nur --globals-only).
 
     Returns:
         Vollständiger Skriptinhalt.
     """
     return _DUMP_SCRIPT_TEMPLATE.format(
         dump_dir=dump_dir,
-        dump_file=dump_file,
+        globals_file_name=globals_file_name,
         runuser_bin=runuser_bin,
+        psql_bin=psql_bin,
+        pg_dump_bin=pg_dump_bin,
         pg_dumpall_bin=pg_dumpall_bin,
-        sentinel_dir=sentinel_dir,
-        sentinel_file=sentinel_file,
     )
 
 
@@ -170,7 +203,7 @@ def _dump_cron_content(hhmm: str, script_path: str) -> str:
     """
     minute, hour = _cron_fields(hhmm)
     return (
-        f"# Datensicherung (pg_dumpall) - täglich um {hhmm}\n"
+        f"# Datensicherung (pg_dump je Datenbank) - täglich um {hhmm}\n"
         "# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{minute} {hour} * * *  root  {script_path}\n"
@@ -185,6 +218,7 @@ class Postgresql(Module):
     # Programmpfade und Schreibziele als Klassenattribute (siehe Modul base
     # für die Begründung); eine Testunterklasse kann sie überschreiben.
     PSQL_BIN: ClassVar[str] = "/usr/bin/psql"
+    PG_DUMP_BIN: ClassVar[str] = "/usr/bin/pg_dump"
     PG_DUMPALL_BIN: ClassVar[str] = "/usr/bin/pg_dumpall"
     RUNUSER_BIN: ClassVar[str] = "/usr/sbin/runuser"
     DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
@@ -207,30 +241,33 @@ class Postgresql(Module):
     HARDENING_CONF_MODE: ClassVar[int] = 0o640
     PG_HBA_MODE: ClassVar[int] = 0o640
 
-    # Logische Datensicherung (pg_dumpall): Skript/Cron nach dem Muster des
-    # restic-Moduls (Skript unter /usr/local/sbin, Cron in /etc/cron.d).
-    # Der Dump landet unter /root, das restic bereits sichert (/etc /home
-    # /var/log /root) — kein eigenes Backup-Ziel, kein eigener Transport.
-    DUMP_SCRIPT_PATH: ClassVar[str] = "/usr/local/sbin/secure-base-pg-dumpall.sh"
-    DUMP_CRON_PATH: ClassVar[str] = "/etc/cron.d/secure-base-pg-dumpall"
-    DUMP_DIR: ClassVar[str] = "/root/postgresql-dump"
-    DUMP_FILE_NAME: ClassVar[str] = "dumpall.sql"
+    # Logische Datensicherung: Skript/Cron nach dem Muster des restic-Moduls
+    # (Skript unter /usr/local/sbin, Cron in /etc/cron.d). Die Dumps landen
+    # unter BACKUP_BASE_DIR — dem Sammelverzeichnis für alle lokal abgelegten
+    # Sicherungen, das restic mit sichert. Kein eigenes Backup-Ziel, kein
+    # eigener Transport. BACKUP_BASE_DIR legt auch das restic-Modul an;
+    # postgresql tut es ebenfalls, da beide Module unabhängig voneinander
+    # laufen können.
+    BACKUP_BASE_DIR: ClassVar[str] = "/var/backup"
+    DUMP_SCRIPT_PATH: ClassVar[str] = "/usr/local/sbin/secure-base-pg-dump.sh"
+    DUMP_CRON_PATH: ClassVar[str] = "/etc/cron.d/secure-base-pg-dump"
+    DUMP_DIR: ClassVar[str] = "/var/backup/postgresql"
+    # Clusterweite Objekte (Rollen, Tablespaces). Das Skript schreibt diese
+    # Datei zuletzt; ihr Zeitstempel belegt damit einen vollständig
+    # erfolgreichen Lauf und trägt die monit-Frische-Überwachung (Check
+    # postgresql_dump im Modul monit) — ein eigener Sentinel entfällt.
+    GLOBALS_FILE_NAME: ClassVar[str] = "globals.sql"
     DUMP_SCRIPT_MODE: ClassVar[int] = 0o700
     DUMP_CRON_MODE: ClassVar[int] = 0o644
     DUMP_DIR_MODE: ClassVar[int] = 0o700
-    # Eigentümer von Dump-Zielverzeichnis und -Skript — root:root (nicht
-    # postgres:postgres wie PG_OWNER/PG_GROUP): das Skript läuft als root
-    # und der Dump enthält u. a. scram-Hashes; eigenes Klassenattribut,
-    # damit eine Testunterklasse es umlenken kann (siehe PG_OWNER).
+    BACKUP_BASE_DIR_MODE: ClassVar[int] = 0o700
+    # Eigentümer von Sicherungsverzeichnissen und Dump-Skript — root:root
+    # (nicht postgres:postgres wie PG_OWNER/PG_GROUP): das Skript läuft als
+    # root und die Dumps enthalten u. a. scram-Hashes; eigenes
+    # Klassenattribut, damit eine Testunterklasse es umlenken kann (siehe
+    # PG_OWNER).
     DUMP_OWNER: ClassVar[str] = "root"
     DUMP_GROUP: ClassVar[str] = "root"
-
-    # Erfolgs-Sentinel für die monit-Frische-Überwachung (Check
-    # postgresql_dump) — gleiches Verzeichnis wie beim restic-Modul, das
-    # es bereits anlegt; hier zusätzlich defensiv sichergestellt, falls
-    # restic nicht aktiv ist.
-    SENTINEL_DIR: ClassVar[str] = "/var/lib/secure-base"
-    SENTINEL_FILE: ClassVar[str] = "/var/lib/secure-base/pg-dumpall-last-success"
 
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
     SYSTEMD_ACTION_CLS: ClassVar[type[SystemdServiceAction]] = SystemdServiceAction
@@ -288,8 +325,8 @@ class Postgresql(Module):
         """Markdown-Abschnitt für den Installationsbericht.
 
         SICHERHEIT: postgresql verwaltet keine Geheimnisse über diesen Weg
-        (keine Anwendungs-DB/-Benutzer; der Dump selbst enthält zwar u. a.
-        scram-Hashes, sein Inhalt geht aber nie in den Bericht ein); doc()
+        (keine Anwendungs-DB/-Benutzer; die Dumps enthalten zwar u. a.
+        scram-Hashes, ihr Inhalt geht aber nie in den Bericht ein); doc()
         liest aus values ausschließlich timezone, pg_dump_time und
         restic_backup_time (rein informativ, für den Zeitplan-Hinweis; kein
         modulübergreifender Abgleich/keine Validierung).
@@ -312,7 +349,7 @@ class Postgresql(Module):
             f"Rechte {oct(cls.HARDENING_CONF_MODE)}, Eigentümer"
             f" {cls.PG_OWNER}:{cls.PG_GROUP}"
         )
-        dump_file = f"{cls.DUMP_DIR}/{cls.DUMP_FILE_NAME}"
+        globals_file = f"{cls.DUMP_DIR}/{cls.GLOBALS_FILE_NAME}"
 
         return (
             "\n## Datenbankserver postgresql (optional)\n\n"
@@ -330,18 +367,23 @@ class Postgresql(Module):
             " nur Loopback, keine ufw-Regel)\n"
             "\n**Dienste:** postgresql@<version>-<cluster> (enabled, aktiv"
             " nach install)\n"
-            "\n**Backup (pg_dumpall):**\n\n"
+            "\n**Backup (Einzeldump je Datenbank):**\n\n"
             f"- `{cls.DUMP_SCRIPT_PATH}` (Rechte {oct(cls.DUMP_SCRIPT_MODE)}"
             f" {cls.DUMP_OWNER}:{cls.DUMP_GROUP})\n"
             f"- `{cls.DUMP_CRON_PATH}`: täglich {pg_dump_time} Uhr (vor dem"
             f" restic-Lauf, restic_backup_time {restic_backup_time} Uhr)\n"
-            f"- Ablage: `{dump_file}` (Rechte 0600 {cls.DUMP_OWNER}:"
-            f"{cls.DUMP_GROUP}, unter /root — wird vom restic-Modul mit"
-            " gesichert: /etc /home /var/log /root)\n"
-            f"- Frische-Überwachung: `{cls.SENTINEL_FILE}` wird nur nach"
-            " erfolgreichem Dump aktualisiert; monit-Check"
-            " `postgresql_dump` alarmiert ab 26 Stunden Alter (siehe Modul"
-            " monit)\n"
+            f"- Ablage: `{cls.DUMP_DIR}/<datenbank>.sql` je Datenbank"
+            f" (pg_dump --create --clean --if-exists) und `{globals_file}`"
+            " für die clusterweiten Objekte (pg_dumpall --globals-only:"
+            " Rollen, Tablespaces). Rechte 0600"
+            f" {cls.DUMP_OWNER}:{cls.DUMP_GROUP}, Verzeichnisse"
+            f" {oct(cls.DUMP_DIR_MODE)}; `{cls.BACKUP_BASE_DIR}` ist das"
+            " Sammelverzeichnis aller lokal abgelegten Sicherungen und wird"
+            " vom restic-Modul mit gesichert\n"
+            f"- Frische-Überwachung: `{globals_file}` wird als letzte Datei"
+            " des Laufs geschrieben, ihr Zeitstempel belegt damit einen"
+            " vollständig erfolgreichen Dump; monit-Check `postgresql_dump`"
+            " alarmiert ab 26 Stunden Alter (siehe Modul monit)\n"
             "\n> Hinweis: Keine Anwendungs-DB/-Benutzer angelegt, keine"
             " Remote-Zugänge. uninstall entfernt nur die eigene conf.d-Datei"
             " sowie Dump-Skript und -Cron-Eintrag; pg_hba.conf und"
@@ -349,9 +391,10 @@ class Postgresql(Module):
             " bestehen (Original der pg_hba.conf als .bak-<Zeitstempel> im"
             " selben Verzeichnis abgelegt). Paket und Cluster bleiben in"
             " jedem Fall installiert (Datenverlust vermeiden)."
-            " Wiederherstellung aus dem Dump: `psql -f"
-            f" {dump_file} postgres` als postgres-Benutzer (vollständiger"
-            " Cluster-Restore).\n"
+            " Wiederherstellung: erst `psql -f"
+            f" {globals_file}` (Rollen), dann je Datenbank `psql -f"
+            f" {cls.DUMP_DIR}/<datenbank>.sql postgres` als"
+            " postgres-Benutzer.\n"
         )
 
     # --- Cluster-Ermittlung ------------------------------------------------
@@ -467,13 +510,13 @@ class Postgresql(Module):
         body = "".join(f"{line}\n" for line in self._expected_hardening_lines())
         return _OWN_FILE_HEADER + body
 
-    def _dump_file_path(self) -> str:
-        """Baut den Pfad der endgültigen Dump-Datei.
+    def _globals_file_path(self) -> str:
+        """Baut den Pfad der Datei mit den clusterweiten Objekten.
 
         Returns:
-            Pfad unter DUMP_DIR mit dem Dateinamen DUMP_FILE_NAME.
+            Pfad unter DUMP_DIR mit dem Dateinamen GLOBALS_FILE_NAME.
         """
-        return str(Path(self.DUMP_DIR) / self.DUMP_FILE_NAME)
+        return str(Path(self.DUMP_DIR) / self.GLOBALS_FILE_NAME)
 
     def _build_dump_script_content(self) -> str:
         """Baut den Inhalt des Dump-Skripts mit den konfigurierten Pfaden.
@@ -483,11 +526,11 @@ class Postgresql(Module):
         """
         return _dump_script_content(
             dump_dir=self.DUMP_DIR,
-            dump_file=self._dump_file_path(),
+            globals_file_name=self.GLOBALS_FILE_NAME,
             runuser_bin=self.RUNUSER_BIN,
+            psql_bin=self.PSQL_BIN,
+            pg_dump_bin=self.PG_DUMP_BIN,
             pg_dumpall_bin=self.PG_DUMPALL_BIN,
-            sentinel_dir=self.SENTINEL_DIR,
-            sentinel_file=self.SENTINEL_FILE,
         )
 
     def _build_dump_cron_content(self) -> str:
@@ -597,6 +640,23 @@ class Postgresql(Module):
         )
 
         yield (
+            "Sicherungsverzeichnis anlegen",
+            MakeDirAction(
+                path=self.BACKUP_BASE_DIR,
+                mode=self.BACKUP_BASE_DIR_MODE,
+                parents=True,
+            ),
+        )
+        yield (
+            "Sicherungsverzeichnis-Rechte setzen",
+            PermissionsAction(
+                path=self.BACKUP_BASE_DIR,
+                mode=self.BACKUP_BASE_DIR_MODE,
+                owner=self.DUMP_OWNER,
+                group=self.DUMP_GROUP,
+            ),
+        )
+        yield (
             "Dump-Zielverzeichnis anlegen",
             MakeDirAction(path=self.DUMP_DIR, mode=self.DUMP_DIR_MODE, parents=True),
         )
@@ -625,20 +685,6 @@ class Postgresql(Module):
                 dst=self.DUMP_CRON_PATH,
                 content=self._build_dump_cron_content(),
                 mode=self.DUMP_CRON_MODE,
-                overwrite=True,
-                safe_mode=False,
-            ),
-        )
-        yield (
-            "Sentinel-Verzeichnis sicherstellen",
-            MakeDirAction(path=self.SENTINEL_DIR, mode=0o755, parents=True),
-        )
-        yield (
-            "Dump-Sentinel initialisieren",
-            WriteFileAction(
-                dst=self.SENTINEL_FILE,
-                content="",
-                mode=0o644,
                 overwrite=True,
                 safe_mode=False,
             ),
@@ -763,7 +809,7 @@ class Postgresql(Module):
         Prüft den Dienststatus, eine lokale Verbindung als postgres
         (SELECT 1) über runuser und das Vorhandensein/die Ausführbarkeit
         des Dump-Skripts — sammelnd, kein Abbruch beim ersten Fehlschlag.
-        Führt bewusst keinen echten pg_dumpall aus (rein lesend, wie die
+        Führt bewusst keinen echten Dump aus (rein lesend, wie die
         übrigen Prüfungen).
 
         Returns:
@@ -887,6 +933,7 @@ class Postgresql(Module):
         ok &= self._check_data_dir(version, cluster)
         ok &= self._check_dump_script()
         ok &= self._check_dump_cron()
+        ok &= self._check_backup_base_dir()
         ok &= self._check_dump_dir()
         return 0 if ok else 1
 
@@ -1064,6 +1111,19 @@ class Postgresql(Module):
             LogLevel.INFO, "postgresql", f"{self.DUMP_CRON_PATH}: Inhalt OK"
         )
         return True
+
+    def _check_backup_base_dir(self) -> bool:
+        """Prüft Rechte und Eigentümer des lokalen Sicherungsverzeichnisses.
+
+        Returns:
+            True bei vollständiger Übereinstimmung.
+        """
+        return self._check_file_mode(
+            self.BACKUP_BASE_DIR,
+            self.BACKUP_BASE_DIR_MODE,
+            self.DUMP_OWNER,
+            self.DUMP_GROUP,
+        )
 
     def _check_dump_dir(self) -> bool:
         """Prüft Rechte und Eigentümer des Dump-Zielverzeichnisses.

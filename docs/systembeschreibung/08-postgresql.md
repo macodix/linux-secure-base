@@ -32,13 +32,15 @@ Das Datenverzeichnis hat Mode 0700, Eigentümer `postgres`. Die eigene Drop-in-D
 
 ## 5. Datensicherung per Dump
 
-Das Datenverzeichnis eines laufenden Clusters wird nicht dateiweise gesichert — eine solche Kopie wäre inkonsistent. Stattdessen erzeugt ein täglicher Cron-Lauf einen logischen Gesamt-Dump mit `pg_dumpall` (als Benutzer `postgres`, nimmt Rollen und Rechte mit) in die Datei `/root/postgresql-dump/dumpall.sql` (Mode 0600, Verzeichnis 0700, Eigentümer `root`). Der Dump wird atomar geschrieben; ein Fehlschlag lässt die vorige Sicherung unverändert.
+Das Datenverzeichnis eines laufenden Clusters wird nicht dateiweise gesichert — eine solche Kopie wäre inkonsistent. Stattdessen erzeugt ein täglicher Cron-Lauf logische Dumps als Benutzer `postgres`: je Datenbank einen Einzeldump mit `pg_dump` nach `/var/backup/postgresql/<datenbank>.sql` und anschließend die clusterweiten Objekte (Rollen inklusive Passwort-Hashes, Tablespaces) mit `pg_dumpall --globals-only` nach `/var/backup/postgresql/globals.sql`. Dumps Mode 0600, Verzeichnisse 0700, Eigentümer `root`. Jeder Dump wird atomar geschrieben; ein Fehlschlag lässt die vorige Sicherung unverändert und bricht den Lauf ab.
 
-Die Ablage unter `/root` ist bewusst gewählt: `/root` gehört zu den von der Datensicherung ([Systembeschreibung Datensicherung](05-datensicherung.md)) erfassten Pfaden, der Dump wird damit ohne weitere Kopplung mitgesichert. Die Dump-Zeit (`pg_dump_time`, Vorgabe 02:00) liegt vor der restic-Zeit (`restic_backup_time`, Vorgabe 02:30), damit der frische Dump im selben Nachtlauf gesichert wird. Die Wiederherstellung erfolgt über `psql`.
+Einzeldumps statt eines Gesamt-Dumps: jede Datenbank ist für sich wiederherstellbar, ohne die übrigen anzufassen. Die Einzeldumps sind mit `--create --clean --if-exists` eigenständig — sie legen ihre Datenbank bei der Wiederherstellung selbst neu an. Rollen und Tablespaces gehören dem Cluster und nicht einer einzelnen Datenbank, deshalb der zusätzliche Globals-Dump: ohne ihn kämen die Datenbanken zurück, die Benutzer nicht.
+
+Die Ablage unter `/var/backup` ist bewusst gewählt: das Verzeichnis sammelt alle lokal abgelegten Sicherungen und gehört zu den von der Datensicherung ([Systembeschreibung Datensicherung](05-datensicherung.md)) erfassten Pfaden. Die Dumps werden damit ohne weitere Kopplung mitgesichert. Die Dump-Zeit (`pg_dump_time`, Vorgabe 02:00) liegt vor der restic-Zeit (`restic_backup_time`, Vorgabe 02:30), damit die frischen Dumps im selben Nachtlauf gesichert werden. Die Wiederherstellung erfolgt über `psql`, zuerst `globals.sql`, dann die einzelnen Datenbanken.
 
 ## 6. Frische-Überwachung des Dumps
 
-Der Dump-Lauf aktualisiert nur im Erfolgsfall eine Markierungsdatei `/var/lib/secure-base/pg-dumpall-last-success`. Das Monitoring prüft deren Alter über den Check `postgresql_dump`; bleibt sie länger als 26 Stunden unverändert, alarmiert es per Mail an die Administrator Email Adresse. Ein ausbleibender oder fehlgeschlagener Dump wird so bemerkt.
+`globals.sql` entsteht als letzte Datei des Dump-Laufs. Ihr Zeitstempel belegt damit einen vollständig erfolgreichen Lauf: scheitert vorher der Dump einer einzelnen Datenbank, bricht das Skript ab und die Datei bleibt alt. Das Monitoring prüft ihr Alter über den Check `postgresql_dump`; bleibt sie länger als 26 Stunden unverändert, alarmiert es per Mail an die Administrator Email Adresse. Ein ausbleibender oder fehlgeschlagener Dump wird so bemerkt. Überwacht wird die Sicherungsdatei selbst, keine gesonderte Markierungsdatei.
 
 ## 7. Rückbau belässt die Zugriffskontrolle
 

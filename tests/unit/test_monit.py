@@ -121,7 +121,7 @@ def test_known_checks_has_eleven_entries() -> None:
 def test_check_content_postgresql_dump_checks_sentinel_mtime() -> None:
     """Der postgresql_dump-Check prüft das Alter des Dump-Sentinels."""
     content = CHECK_CONTENT["postgresql_dump"]
-    assert "/var/lib/secure-base/pg-dumpall-last-success" in content
+    assert "/var/backup/postgresql/globals.sql" in content
     assert "mtime > 26 hours" in content
 
 

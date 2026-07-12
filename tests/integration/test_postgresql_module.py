@@ -86,20 +86,17 @@ def _make_module(
     monkeypatch.setattr(
         Postgresql, "PG_DATA_BASE", str(tmp_path / "var-lib-postgresql")
     )
-    # Reale Zielpfade (/root/postgresql-dump, /usr/local/sbin, /etc/cron.d,
-    # /var/lib/secure-base) sind ohne Systemrechte nicht beschreibbar — im
-    # Test auf tmp_path umgelenkt.
-    monkeypatch.setattr(Postgresql, "DUMP_DIR", str(tmp_path / "root-pg-dump"))
+    # Reale Zielpfade (/var/backup/postgresql, /usr/local/sbin, /etc/cron.d)
+    # sind ohne Systemrechte nicht beschreibbar — im Test auf tmp_path
+    # umgelenkt.
+    backup_base_dir = tmp_path / "var-backup"
+    monkeypatch.setattr(Postgresql, "BACKUP_BASE_DIR", str(backup_base_dir))
+    monkeypatch.setattr(Postgresql, "DUMP_DIR", str(backup_base_dir / "postgresql"))
     monkeypatch.setattr(
-        Postgresql, "DUMP_SCRIPT_PATH", str(tmp_path / "secure-base-pg-dumpall.sh")
+        Postgresql, "DUMP_SCRIPT_PATH", str(tmp_path / "secure-base-pg-dump.sh")
     )
     monkeypatch.setattr(
-        Postgresql, "DUMP_CRON_PATH", str(tmp_path / "secure-base-pg-dumpall.cron")
-    )
-    sentinel_dir = tmp_path / "var-lib-secure-base"
-    monkeypatch.setattr(Postgresql, "SENTINEL_DIR", str(sentinel_dir))
-    monkeypatch.setattr(
-        Postgresql, "SENTINEL_FILE", str(sentinel_dir / "pg-dumpall-last-success")
+        Postgresql, "DUMP_CRON_PATH", str(tmp_path / "secure-base-pg-dump.cron")
     )
     _prepare_cluster(tmp_path)
 
@@ -173,6 +170,10 @@ def test_install_all_steps_succeed(
 
     assert _data_dir(mod).stat().st_mode & 0o777 == 0o700
 
+    backup_base_dir = Path(mod.BACKUP_BASE_DIR)
+    assert backup_base_dir.is_dir()
+    assert backup_base_dir.stat().st_mode & 0o777 == 0o700
+
     dump_dir = Path(mod.DUMP_DIR)
     assert dump_dir.is_dir()
     assert dump_dir.stat().st_mode & 0o777 == 0o700
@@ -187,9 +188,6 @@ def test_install_all_steps_succeed(
     assert dump_cron.stat().st_mode & 0o777 == 0o644
     assert dump_cron.read_text(encoding="utf-8") == mod._build_dump_cron_content()
     assert "0 2 * * *  root " in dump_cron.read_text(encoding="utf-8")
-
-    sentinel_file = Path(mod.SENTINEL_FILE)
-    assert sentinel_file.is_file()
 
 
 def test_install_stops_at_first_failed_step(
@@ -319,7 +317,7 @@ def test_uninstall_removes_dump_script_and_cron_but_keeps_dump_dir(
     """uninstall entfernt Dump-Skript/-Cron; DUMP_DIR und vorhandene Dumps bleiben."""
     mod, conn = _make_module(tmp_path, monkeypatch)
     assert mod.start() == 0
-    old_dump = Path(mod.DUMP_DIR) / mod.DUMP_FILE_NAME
+    old_dump = Path(mod.DUMP_DIR) / "kundendaten.sql"
     old_dump.write_text("-- vorheriger Dump --\n", encoding="utf-8")
 
     conn.reset_mock()

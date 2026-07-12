@@ -119,9 +119,11 @@ CHECK_CONTENT: dict[str, str] = {
         '    stop  program = "/bin/systemctl stop  postgresql"\n'
         "    if failed port 5432 then alert\n"
     ),
+    # globals.sql schreibt das Dump-Skript des Moduls postgresql als letzte
+    # Datei des Laufs — ihr Zeitstempel belegt einen vollständig erfolgreichen
+    # Dump aller Datenbanken. Geprüft wird damit die Sicherungsdatei selbst.
     "postgresql_dump": (
-        "check file postgresql_dump with path"
-        " /var/lib/secure-base/pg-dumpall-last-success\n"
+        "check file postgresql_dump with path /var/backup/postgresql/globals.sql\n"
         "    if mtime > 26 hours then alert\n"
     ),
 }
