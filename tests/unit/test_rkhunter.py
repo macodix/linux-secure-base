@@ -320,6 +320,44 @@ def test_run_scan_start_failure_is_failure(monkeypatch: pytest.MonkeyPatch) -> N
     assert mod._run_scan() is False
 
 
+# --- Ausnahmen (ALLOWHIDDENFILE/ALLOWDEVFILE) ---
+
+
+def test_allow_entries_lists_hidden_files_then_dev_files() -> None:
+    """_allow_entries liefert erst die versteckten Dateien, dann die /dev-Muster."""
+    assert Rkhunter._allow_entries() == [
+        ("ALLOWHIDDENFILE", "/etc/.resolv.conf.systemd-resolved.bak"),
+        ("ALLOWHIDDENFILE", "/etc/.updated"),
+        ("ALLOWDEVFILE", "/dev/shm/PostgreSQL.*"),  # noqa: S108 — nur Text
+    ]
+
+
+def test_allow_pattern_matches_only_the_full_entry(tmp_path: Path) -> None:
+    """Das Muster trifft den ganzen Eintrag, nicht andere Werte desselben Schlüssels."""
+    mod = _make_rkhunter("srv.example.com", "admin@example.com")
+    pattern = mod._allow_pattern("ALLOWHIDDENFILE", "/etc/.updated")
+
+    conf = tmp_path / "rkhunter.conf"
+    conf.write_text("ALLOWHIDDENFILE=/etc/.fremd\n", encoding="utf-8")
+    assert mod._file_has_line(str(conf), pattern) is False
+
+    conf.write_text("ALLOWHIDDENFILE=/etc/.updated\n", encoding="utf-8")
+    assert mod._file_has_line(str(conf), pattern) is True
+
+
+def test_allow_pattern_escapes_the_dev_file_wildcard(tmp_path: Path) -> None:
+    """Der Stern im /dev/shm-Muster ist ein Literal, kein Regex-Quantor."""
+    mod = _make_rkhunter("srv.example.com", "admin@example.com")
+    pattern = mod._allow_pattern("ALLOWDEVFILE", "/dev/shm/PostgreSQL.*")  # noqa: S108
+
+    conf = tmp_path / "rkhunter.conf"
+    conf.write_text("ALLOWDEVFILE=/dev/shm/PostgreSQL.1967000986\n", encoding="utf-8")
+    assert mod._file_has_line(str(conf), pattern) is False
+
+    conf.write_text("ALLOWDEVFILE=/dev/shm/PostgreSQL.*\n", encoding="utf-8")
+    assert mod._file_has_line(str(conf), pattern) is True
+
+
 # --- doc ---
 
 
@@ -336,6 +374,14 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert "**Timer/Cron:**" in section
     assert "/etc/cron.daily/rkhunter" in section
     assert "> Hinweis:" in section
+
+
+def test_doc_lists_the_false_positive_exceptions() -> None:
+    """doc() nennt jede Ausnahme aus rkhunter.conf mit Schlüssel und Wert."""
+    section = Rkhunter.doc({"fqdn": "srv.example.com", "admin_mail": "a@example.com"})
+    assert f"`{Rkhunter.RK_CONF}`" in section
+    for key, value in Rkhunter._allow_entries():
+        assert f"`{key}={value}`" in section
 
 
 def test_doc_marks_missing_admin_mail_as_leer_default() -> None:

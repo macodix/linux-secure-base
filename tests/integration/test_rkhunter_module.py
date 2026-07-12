@@ -80,6 +80,9 @@ def test_install_all_steps_succeed(
 
     conf_content = Path(mod.RK_CONF).read_text(encoding="utf-8")
     assert "MAIL_CMD=mail -r root@example.com" in conf_content
+    assert "ALLOWHIDDENFILE=/etc/.resolv.conf.systemd-resolved.bak" in conf_content
+    assert "ALLOWHIDDENFILE=/etc/.updated" in conf_content
+    assert "ALLOWDEVFILE=/dev/shm/PostgreSQL.*" in conf_content
     assert "${HOST_NAME}" in conf_content
 
 
@@ -174,6 +177,8 @@ def test_uninstall_reverts_config_and_removes_package(
     assert "APT_AUTOGEN" not in default_content
     conf_content = Path(mod.RK_CONF).read_text(encoding="utf-8")
     assert "MAIL_CMD" not in conf_content
+    assert "ALLOWHIDDENFILE" not in conf_content
+    assert "ALLOWDEVFILE" not in conf_content
     # Baseline bleibt erhalten — uninstall entsorgt sie nicht.
     assert Path(mod.RK_BASELINE).read_text(encoding="utf-8") == "baseline-inhalt\n"
     messages = _sent_messages(conn)

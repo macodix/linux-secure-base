@@ -1,10 +1,12 @@
 """Modul rkhunter — Schadsoftware-/Rootkit-Schutz.
 
 Installiert das Paket rkhunter, härtet /etc/default/rkhunter (täglicher
-Cron-Lauf, DB-Update, Report-Mail, apt-Hook) und den Mail-Absender in
-/etc/rkhunter.conf, und initialisiert die Baseline-Datenbank. Betriebsart
-über den Schlüssel operation (install, check, uninstall, test). Kein
-eigener systemd-Dienst — der Lauf erfolgt über /etc/cron.daily/rkhunter
+Cron-Lauf, DB-Update, Report-Mail, apt-Hook), setzt in /etc/rkhunter.conf
+den Mail-Absender und trägt dort die Ausnahmen für bekannte Fehlalarme ein
+(von systemd angelegte versteckte Dateien unter /etc, Shared-Memory-Segmente
+von PostgreSQL unter /dev/shm), und initialisiert die Baseline-Datenbank.
+Betriebsart über den Schlüssel operation (install, check, uninstall, test).
+Kein eigener systemd-Dienst — der Lauf erfolgt über /etc/cron.daily/rkhunter
 und einen apt-Hook.
 """
 
@@ -53,6 +55,28 @@ class Rkhunter(Module):
 
     DPKG_QUERY_BIN: ClassVar[str] = "/usr/bin/dpkg-query"
     DPKG_QUERY_TIMEOUT: ClassVar[float] = 15.0
+
+    # Bekannte Fehlalarme des täglichen Laufs, als Ausnahmen in rkhunter.conf.
+    # Jeder Eintrag steht in einer eigenen Zeile; beide Schlüssel dürfen
+    # mehrfach vorkommen. Ohne sie meldet rkhunter diese Dateien bei jedem
+    # Lauf per Mail, und die Meldungen verdecken echte Funde.
+    #
+    # Versteckte Dateien (Punkt am Anfang), beide von systemd angelegt:
+    # .resolv.conf.systemd-resolved.bak ist die Sicherung, die
+    # systemd-resolved beim Übernehmen von /etc/resolv.conf hinterlässt;
+    # .updated ist die Zeitstempel-Datei von systemd-update-done.service.
+    ALLOWED_HIDDEN_FILES: ClassVar[tuple[str, ...]] = (
+        "/etc/.resolv.conf.systemd-resolved.bak",
+        "/etc/.updated",
+    )
+    # Shared-Memory-Segmente des PostgreSQL-Servers
+    # (dynamic_shared_memory_type = posix, Vorgabe unter Debian/Ubuntu). Der
+    # Zahlenteil des Namens ist zufällig und wechselt je Segment, deshalb ein
+    # Muster statt fester Namen. Der Eintrag steht auch auf Systemen ohne
+    # Datenbankserver: dort gibt es keine passenden Dateien, er bleibt wirkungslos.
+    # S108 (Temp-Pfad) trifft hier nicht: der Wert wird nicht beschrieben oder
+    # gelesen, er ist der Text einer rkhunter-Ausnahme.
+    ALLOWED_DEV_FILES: ClassVar[tuple[str, ...]] = ("/dev/shm/PostgreSQL.*",)  # noqa: S108
 
     APT_ACTION_CLS: ClassVar[type[AptAction]] = AptAction
 
@@ -137,13 +161,41 @@ class Rkhunter(Module):
         )
 
     @classmethod
+    def _allow_entries(cls) -> list[tuple[str, str]]:
+        """Liefert die Ausnahme-Einträge für rkhunter.conf.
+
+        Returns:
+            (Schlüssel, Wert)-Paare in Schreibreihenfolge.
+        """
+        entries = [("ALLOWHIDDENFILE", value) for value in cls.ALLOWED_HIDDEN_FILES]
+        entries += [("ALLOWDEVFILE", value) for value in cls.ALLOWED_DEV_FILES]
+        return entries
+
+    @classmethod
+    def _allow_pattern(cls, key: str, value: str) -> str:
+        """Baut den Regex, der genau diesen Ausnahme-Eintrag trifft.
+
+        Trifft den vollständigen Eintrag, nicht nur den Schlüssel: beide
+        Schlüssel dürfen mehrfach vorkommen, ein Muster auf den Schlüssel
+        allein würde fremde Einträge überschreiben.
+
+        Args:
+            key: Schlüssel des Eintrags (ALLOWHIDDENFILE, ALLOWDEVFILE).
+            value: Wert des Eintrags.
+
+        Returns:
+            Regulärer Ausdruck für die Sollzeile.
+        """
+        return rf"^{re.escape(key)}={re.escape(value)}$"
+
+    @classmethod
     def doc(cls, values: dict[str, str]) -> str:
         """Markdown-Abschnitt für den Installationsbericht.
 
-        Deckungsgleich mit module_doc im Bash-Original (installer/lib/
-        modules/rkhunter.sh): dokumentiert nur REPORT_EMAIL aus /etc/
-        default/rkhunter — der Absender-Eintrag (MAIL_CMD) in /etc/
-        rkhunter.conf bleibt wie im Original unerwähnt.
+        Dokumentiert REPORT_EMAIL aus /etc/default/rkhunter sowie die
+        Ausnahmen in /etc/rkhunter.conf; der Absender-Eintrag (MAIL_CMD)
+        bleibt wie im Bash-Original (installer/lib/modules/rkhunter.sh)
+        unerwähnt.
 
         SICHERHEIT: rkhunter kennt keine Geheimnisse; doc() liest aus
         values ausschließlich admin_mail.
@@ -155,6 +207,9 @@ class Rkhunter(Module):
             Markdown-Abschnitt, beginnend mit "## Schadsoftware-Schutz".
         """
         admin_mail = values.get("admin_mail") or "(leer/Default)"
+        allow_block = "".join(
+            f"  - `{key}={value}`\n" for key, value in cls._allow_entries()
+        )
         return (
             "\n## Schadsoftware-Schutz\n\n"
             "**Pakete:** rkhunter\n\n"
@@ -163,10 +218,16 @@ class Rkhunter(Module):
             "  - `CRON_DAILY_RUN=true`\n"
             "  - `CRON_DB_UPDATE=true`\n"
             f"  - `REPORT_EMAIL={admin_mail}`\n"
+            f"- `{cls.RK_CONF}` (Ausnahmen für bekannte Fehlalarme):\n"
+            f"{allow_block}"
             "\n**Timer/Cron:** täglicher Lauf via /etc/cron.daily/rkhunter;"
             " Baseline-DB wird bei apt-Update aktualisiert\n"
             "\n> Hinweis: Baseline-Datenbank wurde bei der Installation"
-            " initialisiert.\n"
+            " initialisiert. Die Ausnahmen decken Dateien ab, die systemd"
+            " (versteckte Dateien unter /etc) und PostgreSQL"
+            " (Shared-Memory-Segmente unter /dev/shm) im Normalbetrieb"
+            " anlegen; ohne sie meldet jeder Lauf dieselben Fehlalarme und"
+            " verdeckt damit echte Funde.\n"
         )
 
     def _install(self) -> int:
@@ -228,6 +289,17 @@ class Rkhunter(Module):
                     match=r"^MAIL_CMD=",
                 ),
             ),
+        ]
+        steps += [
+            (
+                f"Ausnahme eintragen: {key}={value}",
+                LineInFileAction(
+                    path=self.RK_CONF,
+                    line=f"{key}={value}",
+                    match=self._allow_pattern(key, value),
+                ),
+            )
+            for key, value in self._allow_entries()
         ]
         for label, action in steps:
             self.send_message(LogLevel.INFO, "rkhunter", label)
@@ -295,9 +367,17 @@ class Rkhunter(Module):
             ),
         ):
             return 1
-        if not self._revert_config(
-            self.RK_CONF, (("Mail-Absender zurücknehmen", r"^MAIL_CMD="),)
-        ):
+        conf_entries: tuple[tuple[str, str], ...] = (
+            ("Mail-Absender zurücknehmen", r"^MAIL_CMD="),
+            *(
+                (
+                    f"Ausnahme zurücknehmen: {key}={value}",
+                    self._allow_pattern(key, value),
+                )
+                for key, value in self._allow_entries()
+            ),
+        )
+        if not self._revert_config(self.RK_CONF, conf_entries):
             return 1
         return self._remove_package()
 
@@ -376,6 +456,12 @@ class Rkhunter(Module):
             rf"^MAIL_CMD={re.escape(self._mail_cmd())}$",
             "Mail-Absender",
         )
+        for key, value in self._allow_entries():
+            ok &= self._check_setting(
+                self.RK_CONF,
+                self._allow_pattern(key, value),
+                f"Ausnahme {key}={value}",
+            )
         ok &= self._check_baseline()
         return 0 if ok else 1
 

@@ -79,6 +79,8 @@ Der Befund je BSI-Maßnahmenklasse wird mit Schweregrad und Handlungsempfehlung 
 
 Ein Schutz vor Schadsoftware wird von `rkhunter`, mit täglichem Lauf aus `cron.daily` und Mail-Bericht an die Administrator Email Adresse, geleistet. Die Baseline-Datenbank wird bei der Einrichtung initialisiert (`rkhunter --propupd`). Das Monitoring prüft die Aktualität des Scan-Logs.
 
+Dateien, die der Normalbetrieb erzeugt und `rkhunter` als verdächtig meldet, sind in `/etc/rkhunter.conf` als Ausnahmen eingetragen: die von systemd unter `/etc` angelegten versteckten Dateien und die Shared-Memory-Segmente des PostgreSQL-Servers unter `/dev/shm`. Der Verzicht auf diese Ausnahmen wäre kein Sicherheitsgewinn, im Gegenteil: Ein Bericht, der bei jedem Lauf dieselben Fehlalarme enthält, wird nicht mehr gelesen und verdeckt echte Funde.
+
 ## Versionshistorie
 
 | Version | Datum | Wer | Änderung |
