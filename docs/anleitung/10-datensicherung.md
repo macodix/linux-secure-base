@@ -1,8 +1,10 @@
 # Datensicherung (restic)
 
-Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Raum. Das Repository ist verschlüsselt. Die Passphrase liegt in `/root/config/restic-passphrase` (Mode 600). Ein Cron-Eintrag löst den Lauf täglich um 02:30 aus (RPO 24 h). Bei Fehlschlag verschickt das Backup-Skript selbst eine Mail.
+Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Raum. Das Repository ist verschlüsselt. Die Passphrase liegt in `/root/.config/restic/restic-passphrase` (Mode 600). Ein Cron-Eintrag löst den Lauf täglich um 02:30 aus (RPO 24 h). Bei Fehlschlag verschickt das Backup-Skript selbst eine Mail.
 
-Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log` und `/root`. Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen deren Pfade hinzu.
+Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log`, `/root` und `/var/backup`.
+
+`/var/backup` ist das Sammelverzeichnis für alle lokal abgelegten Sicherungen (Mode 700, Eigentümer `root`). Dort legen andere Module ihre Dumps ab — etwa der [Datenbankserver](14-datenbankserver-postgresql.md) unter `/var/backup/postgresql`. Sie kommen damit ohne weiteren Pfad ins Repository. Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen deren Pfade hinzu.
 
 ## 1. Installation
 
@@ -37,23 +39,31 @@ Die append-only-Eigenschaft des Ziels (vom Server aus nicht löschbare Stände) 
 Die Repo-Passphrase als `root` außerhalb des Repos ablegen:
 
 ```
-mkdir -p /root/config
-( umask 077; cat > /root/config/restic-passphrase )
+mkdir -p /root/.config/restic
+chmod 700 /root/.config/restic
+( umask 077; cat > /root/.config/restic/restic-passphrase )
 <Passphrase eingeben, mit Strg-D abschließen>
-chmod 600 /root/config/restic-passphrase
+chmod 600 /root/.config/restic/restic-passphrase
 ```
 
 Das Repository initialisieren:
 
 ```
-restic -r sftp:restic-backup:/backups/<server> -p /root/config/restic-passphrase init
+restic -r sftp:restic-backup:/backups/<server> -p /root/.config/restic/restic-passphrase init
 ```
 
 Passphrase und SFTP-Schlüssel sind für den Notfall sicher und getrennt vom Server zu hinterlegen. Ohne sie ist das Repository nicht wiederherstellbar.
 
 ## 4. Backup-Skript
 
-Unter `/usr/local/sbin/<FQDN>-backup.sh` anlegen (der Installer setzt `<FQDN>` auf den Wert aus `secure-base.conf`):
+Das Sammelverzeichnis für lokale Sicherungen anlegen — auch wenn zunächst kein Modul dort ablegt, sonst meldet `restic` den Pfad bei jedem Lauf als fehlend:
+
+```
+mkdir -p /var/backup
+chmod 700 /var/backup
+```
+
+Backup-Skript unter `/usr/local/sbin/<FQDN>-backup.sh` anlegen (der Installer setzt `<FQDN>` auf den Wert aus `secure-base.conf`):
 
 ```
 #!/usr/bin/env bash
@@ -63,14 +73,14 @@ set -euo pipefail
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RESTIC_REPO="sftp:restic-backup:/backups/<server>"
-RESTIC_PASS="/root/config/restic-passphrase"
+RESTIC_PASS="/root/.config/restic/restic-passphrase"
 ADMIN_MAIL="<admin@meine-domain.de>"
 LOGFILE="$(mktemp)"
 trap 'rm -f "$LOGFILE"' EXIT
 
 run() {
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \
-        /etc /home /var/log /root
+        /etc /home /var/log /root /var/backup
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 }

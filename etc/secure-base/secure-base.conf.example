@@ -140,7 +140,8 @@ sftp_host_alias =
 sftp_path =
 
 # Pflicht — Passphrase zur Verschlüsselung des Backup-Repos (nicht der
-# SSH-Key). Landet ausschließlich in /root/config/restic-passphrase (0600).
+# SSH-Key). Landet ausschließlich in
+# /root/.config/restic/restic-passphrase (0600).
 restic_passphrase =
 
 # Uhrzeit der täglichen restic-Sicherung (HH:MM). Muss NACH pg_dump_time
@@ -184,7 +185,7 @@ nginx_certbot_mail =
 nginx_certbot_mode = live
 
 [postgresql]
-# Uhrzeit des täglichen Datenbank-Dumps (pg_dumpall, HH:MM). Muss VOR
+# Uhrzeit des täglichen Datenbank-Dumps (pg_dump je Datenbank, HH:MM). Muss VOR
 # restic_backup_time (Abschnitt [restic]) liegen, damit der frische Dump
 # noch mit gesichert wird.
 pg_dump_time = 02:00

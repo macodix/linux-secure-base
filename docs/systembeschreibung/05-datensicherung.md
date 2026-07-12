@@ -15,9 +15,11 @@ Dieses Dokument beschreibt die Datensicherung des Grundsystems:
 
 ## 1. Sicherungsverfahren und Ziel
 
-Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Speicher. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/config/restic-passphrase` mit Mode 600. Der Lauf wird täglich zur konfigurierten Zeit (`restic_backup_time`, Vorgabe 02:30) über `/etc/cron.d/<FQDN>-backup` als `root` ausgelöst (Skript `/usr/local/sbin/<FQDN>-backup.sh`, Mode 700). `<FQDN>` wird zur Installationszeit aus `secure-base.conf` eingesetzt.
+Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Speicher. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/.config/restic/restic-passphrase` mit Mode 600 (Verzeichnis 0700). Der Lauf wird täglich zur konfigurierten Zeit (`restic_backup_time`, Vorgabe 02:30) über `/etc/cron.d/<FQDN>-backup` als `root` ausgelöst (Skript `/usr/local/sbin/<FQDN>-backup.sh`, Mode 700). `<FQDN>` wird zur Installationszeit aus `secure-base.conf` eingesetzt.
 
-Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log` und `/root`. Der optionale PostgreSQL-Dump liegt unter `/root` und wird damit ohne zusätzlichen Pfad mitgesichert (siehe [postgresql-Grundsatz](08-postgresql.md)). Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen ggf. weitere Pfade hinzu.
+Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log`, `/root` und `/var/backup`.
+
+`/var/backup` (Mode 0700, Eigentümer `root`) ist das Sammelverzeichnis für alle lokal abgelegten Sicherungen. Das restic-Modul legt es an, auch wenn kein anderes Modul dort ablegt — ein fehlender Pfad würde bei jedem Sicherungslauf gemeldet. Die optionalen PostgreSQL-Dumps liegen unter `/var/backup/postgresql` und werden damit ohne zusätzlichen Pfad mitgesichert (siehe [postgresql-Grundsatz](08-postgresql.md)). Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen ggf. weitere Pfade hinzu.
 
 Der SSH-Zugang zum SFTP-Ziel ist Vorbedingung. Das Backup-Skript prüft zu Beginn non-interaktiv die Erreichbarkeit über das SFTP-Subsystem (`BatchMode`, kein `ssh host cmd`, da SFTP-only-Anbieter kein Kommando erlauben) und bricht nei Nichterreichbarkeit ab.
 

@@ -71,6 +71,7 @@ def _make_module(
         Restic, "PASSPHRASE_FILE", str(tmp_path / "config/restic-passphrase")
     )
     monkeypatch.setattr(Restic, "CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Restic, "BACKUP_BASE_DIR", str(tmp_path / "var-backup"))
     monkeypatch.setattr(Restic, "BACKUP_SCRIPT_DIR", str(tmp_path / "sbin"))
     monkeypatch.setattr(Restic, "CRON_DIR", str(tmp_path / "cron.d"))
     monkeypatch.setattr(Restic, "SENTINEL_DIR", str(tmp_path / "state"))
@@ -81,8 +82,9 @@ def _make_module(
 
     # Elternverzeichnisse für WriteFileAction/MakeDirAction ohne parents=True
     # (Backup-Skript- und Cron-Zielverzeichnis werden vom Modul nicht mit
-    # parents=True angelegt, entsprechend dem Bash-Original: nur CONFIG_DIR
-    # und SENTINEL_DIR sind Modul-eigene, mit install -d angelegte Ziele).
+    # parents=True angelegt, entsprechend dem Bash-Original: nur CONFIG_DIR,
+    # BACKUP_BASE_DIR und SENTINEL_DIR sind Modul-eigene, mit install -d
+    # angelegte Ziele).
     Path(tmp_path / "sbin").mkdir()
     Path(tmp_path / "cron.d").mkdir()
 

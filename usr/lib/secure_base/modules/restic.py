@@ -86,7 +86,7 @@ trap 'rm -f "$LOGFILE"' EXIT
 
 run() {{
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \\
-        /etc /home /var/log /root
+        {backup_paths}
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \\
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 }}
@@ -108,6 +108,7 @@ def _backup_script_content(
     admin_mail: str,
     fqdn: str,
     passphrase_file: str,
+    backup_paths: tuple[str, ...],
     sentinel_dir: str,
     sentinel_file: str,
 ) -> str:
@@ -118,6 +119,7 @@ def _backup_script_content(
         admin_mail: Mail-Adresse für die Fehlermeldung.
         fqdn: Rechnername für den Mail-Betreff.
         passphrase_file: Pfad zur Passphrase-Datei (nicht ihr Inhalt).
+        backup_paths: Zu sichernde Pfade in Aufrufreihenfolge.
         sentinel_dir: Verzeichnis des monit-Frische-Sentinels.
         sentinel_file: Datei des monit-Frische-Sentinels.
 
@@ -129,6 +131,7 @@ def _backup_script_content(
         passphrase_file=passphrase_file,
         admin_mail=admin_mail,
         fqdn=fqdn,
+        backup_paths=" ".join(backup_paths),
         sentinel_dir=sentinel_dir,
         sentinel_file=sentinel_file,
     )
@@ -213,10 +216,31 @@ class Restic(Module):
     # ohne dieses Modul anzufassen und ohne Laufzeit-Schalter in Produktionscode.
     RESTIC_BIN: ClassVar[str] = "/usr/bin/restic"
     SFTP_BIN: ClassVar[str] = "/usr/bin/sftp"
-    PASSPHRASE_FILE: ClassVar[str] = "/root/config/restic-passphrase"  # noqa: S105
-    CONFIG_DIR: ClassVar[str] = "/root/config"
+    # Konfigurationsverzeichnis nach der üblichen Ablage für benutzereigene
+    # Konfiguration (~/.config/<programm>), hier für root.
+    CONFIG_DIR: ClassVar[str] = "/root/.config/restic"
+    PASSPHRASE_FILE: ClassVar[str] = "/root/.config/restic/restic-passphrase"  # noqa: S105
     BACKUP_SCRIPT_DIR: ClassVar[str] = "/usr/local/sbin"
     CRON_DIR: ClassVar[str] = "/etc/cron.d"
+
+    # Sammelverzeichnis für alle lokal abgelegten Sicherungen (z. B. die
+    # Datenbank-Dumps des postgresql-Moduls). Dieses Modul legt es an — auch
+    # ohne postgresql —, damit der Sicherungslauf nicht über einen fehlenden
+    # Pfad stolpert.
+    BACKUP_BASE_DIR: ClassVar[str] = "/var/backup"
+    BACKUP_BASE_DIR_MODE: ClassVar[int] = 0o700
+
+    # Zu sichernde Pfade. Struktur-Deklaration des Moduls, kein
+    # Konfigurationswert: BACKUP_BASE_DIR bringt die lokalen Sicherungen
+    # anderer Module (Datenbank-Dumps) mit ins Repo.
+    BACKUP_PATHS: ClassVar[tuple[str, ...]] = (
+        "/etc",
+        "/home",
+        "/var/log",
+        "/root",
+        BACKUP_BASE_DIR,
+    )
+
     SENTINEL_DIR: ClassVar[str] = "/var/lib/secure-base"
     SENTINEL_FILE: ClassVar[str] = "/var/lib/secure-base/restic-last-success"
 
@@ -297,6 +321,9 @@ class Restic(Module):
             "  - `Backup-Skript (täglicher Cron-Lauf)`\n"
             f"- `{cls.CRON_DIR}/{fqdn}-backup`:\n"
             "  - `Cron-Eintrag: restic backup + forget`\n"
+            f"- `{cls.BACKUP_BASE_DIR}`:\n"
+            "  - `Sammelverzeichnis lokaler Sicherungen (0700 root:root)`\n"
+            f"\n**Gesicherte Pfade:** {', '.join(f'`{p}`' for p in cls.BACKUP_PATHS)}\n"
             f"\n**SFTP-Ziel:** `{sftp_host_alias}:{sftp_path}`\n\n"
             f"\n**Timer/Cron:** täglich {backup_time} Uhr via"
             f" {cls.CRON_DIR}/{fqdn}-backup\n"
@@ -364,6 +391,10 @@ class Restic(Module):
             ("SFTP-Erreichbarkeit prüfen", self._step_check_sftp_reachable),
             ("Zielverzeichnis sicherstellen", self._step_ensure_remote_dir),
             ("Konfigurationsverzeichnis anlegen", self._step_ensure_config_dir),
+            (
+                "Lokales Sicherungsverzeichnis anlegen",
+                self._step_ensure_local_backup_dir,
+            ),
             ("Passphrase-Datei schreiben", self._step_ensure_passphrase),
             ("Repo initialisieren", self._step_init_repo),
             ("Backup-Skript schreiben", self._step_write_backup_script),
@@ -393,6 +424,21 @@ class Restic(Module):
         """Legt das Konfigurationsverzeichnis (CONFIG_DIR) mit 0700 an."""
         return self.run_action(
             MakeDirAction(path=self.CONFIG_DIR, mode=0o700, parents=True)
+        )
+
+    def _step_ensure_local_backup_dir(self) -> int:
+        """Legt das lokale Sicherungsverzeichnis (BACKUP_BASE_DIR) an.
+
+        Gehört zu BACKUP_PATHS: ohne das Verzeichnis würde restic den Pfad
+        bei jedem Lauf als fehlend melden, auch wenn kein anderes Modul
+        dort ablegt.
+        """
+        return self.run_action(
+            MakeDirAction(
+                path=self.BACKUP_BASE_DIR,
+                mode=self.BACKUP_BASE_DIR_MODE,
+                parents=True,
+            )
         )
 
     def _step_ensure_passphrase(self) -> int:
@@ -503,6 +549,7 @@ class Restic(Module):
             admin_mail=self.admin_mail,
             fqdn=self.fqdn,
             passphrase_file=self.PASSPHRASE_FILE,
+            backup_paths=self.BACKUP_PATHS,
             sentinel_dir=self.SENTINEL_DIR,
             sentinel_file=self.SENTINEL_FILE,
         )

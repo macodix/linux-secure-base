@@ -151,12 +151,14 @@ def test_backup_script_content_contains_repo_mail_and_fqdn() -> None:
         repo="sftp:alias:/path",
         admin_mail="admin@example.com",
         fqdn="host.example.com",
-        passphrase_file="/root/config/restic-passphrase",  # noqa: S106 — nur Pfad
+        passphrase_file="/root/.config/restic/restic-passphrase",  # noqa: S106 — nur Pfad
+        backup_paths=("/etc", "/home", "/var/log", "/root", "/var/backup"),
         sentinel_dir="/var/lib/secure-base",
         sentinel_file="/var/lib/secure-base/restic-last-success",
     )
     assert 'RESTIC_REPO="sftp:alias:/path"' in content
-    assert 'RESTIC_PASS="/root/config/restic-passphrase"' in content
+    assert 'RESTIC_PASS="/root/.config/restic/restic-passphrase"' in content
+    assert "/etc /home /var/log /root /var/backup" in content
     assert 'ADMIN_MAIL="admin@example.com"' in content
     assert "auf host.example.com" in content
     assert "mkdir -p /var/lib/secure-base" in content
@@ -169,7 +171,8 @@ def test_backup_script_content_never_contains_passphrase_value() -> None:
         repo="sftp:alias:/path",
         admin_mail="admin@example.com",
         fqdn="host.example.com",
-        passphrase_file="/root/config/restic-passphrase",  # noqa: S106 — nur Pfad
+        passphrase_file="/root/.config/restic/restic-passphrase",  # noqa: S106 — nur Pfad
+        backup_paths=("/etc", "/home", "/var/log", "/root", "/var/backup"),
         sentinel_dir="/var/lib/secure-base",
         sentinel_file="/var/lib/secure-base/restic-last-success",
     )

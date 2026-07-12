@@ -49,11 +49,12 @@ Der Webserver ist erst aktiv, wenn nginx installiert ist. Bis dahin nimmt der Se
 
 ## 3. Verzeichnis- und Dienst-Layout
 
-Das Layout folgt den Unix-Konventionen: Konfiguration unter `/etc`, Laufzeit- und Datenverzeichnisse unter `/var/lib`, System-Skripte unter `/usr/local/sbin`. 
+Das Layout folgt den Unix-Konventionen: Konfiguration unter `/etc`, Laufzeit- und Datenverzeichnisse unter `/var/lib`, lokale Sicherungen unter `/var/backup`, System-Skripte unter `/usr/local/sbin`.
 
 | Pfad | Inhalt | Eigentümer/Rechte |
 |---|---|---|
-| `/root/config/` | Geheimnis-Dateien (restic-Passphrase u. a.) | `root`, 600 |
+| `/root/.config/restic/` | restic-Konfiguration, darin die Repo-Passphrase | `root`, 700 (Datei 600) |
+| `/var/backup/` | Sammelverzeichnis lokaler Sicherungen (z. B. Datenbank-Dumps) | `root`, 700 |
 | `/var/lib/secure-base/` | Erfolgs-Kennzeichen der Datensicherung, Härtungsberichte | `root` |
 | `/usr/local/sbin/` | System-Skripte (Backup, Härtungsprüfung) | `root`, 700 |
 | `/etc/nginx/sites-available/` | Server-Blöcke des Webservers | `root` |
