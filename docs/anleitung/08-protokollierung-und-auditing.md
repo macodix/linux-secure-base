@@ -1,6 +1,6 @@
 # Protokollierung und Auditing
 
-Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `logwatch` als tägliche Auswertung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs. Den täglichen Bericht verschickt ein eigenes Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang (Kapitel 3).
+Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `rsyslog` als Schreiber der Protokolldateien unter `/var/log`, `logwatch` als tägliche Auswertung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs. Den täglichen Bericht verschickt ein eigenes Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang (Kapitel 4).
 
 ## 1. journald persistent
 
@@ -25,7 +25,20 @@ Anschließend neu starten:
 systemctl restart systemd-journald
 ```
 
-## 2. logwatch als täglicher Mail-Report
+## 2. rsyslog
+
+`rsyslog` schreibt die Protokolldateien unter `/var/log` (`auth.log`, `syslog`, `mail.log`). Sie sind die Quelle des Logwatch-Berichts (Kapitel 3) und werden von Werkzeugen außerhalb von secure-base gelesen.
+
+```
+apt install rsyslog
+systemctl enable --now rsyslog
+```
+
+Nicht jede Distribution führt `rsyslog` in der Standardinstallation mit — unter Debian 13 hat das Paket nur Priorität `optional`. Ist es bereits vorhanden, ändert der Aufruf nichts. Die Vorgabekonfiguration wird unverändert übernommen.
+
+`journald` (Kapitel 1) bleibt daneben bestehen und ist die Quelle der Zusammenfassung im Tagesbericht.
+
+## 3. logwatch als täglicher Mail-Report
 
 ```
 apt install logwatch
@@ -44,7 +57,7 @@ Range = yesterday
 
 Der Versand nutzt das Postfix aus Kapitel 2 der Installationsanleitung.
 
-## 3. Tagesbericht: Zusammenfassung im Mailtext, Logwatch-Bericht als Anhang
+## 4. Tagesbericht: Zusammenfassung im Mailtext, Logwatch-Bericht als Anhang
 
 Der vollständige Logwatch-Bericht umfasst leicht zweitausend Zeilen, von denen über neunzig Prozent Aufzählungen abgewiesener Anmeldeversuche und HTTP-Scanner sind. Diese Hosts hat `fail2ban` bereits gesperrt, die Aufzählung ändert an keiner Entscheidung etwas. Steht sie im Mailtext, wird der Bericht nicht mehr gelesen und verdeckt damit das Wenige, worauf es ankommt.
 
@@ -69,7 +82,7 @@ chmod 644 /etc/cron.daily/00logwatch
 
 Ein Paket-Upgrade kann dieses Recht zurücksetzen. Dann kommen zwei Mails, und der Abgleich (`check`) des Moduls `logging` meldet es.
 
-## 4. auditd
+## 5. auditd
 
 `auditd` protokolliert administrative Änderungen nachweisbar. Das Regelset bleibt klein und auf administrative Vorgänge ausgerichtet.
 
@@ -116,7 +129,7 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 
 Überprüfung: `auditctl -l` listet die Soll-Regeln vollständig, `auditctl -s` meldet `enabled 2`. Wegen des Immutable-Modus (`-e 2`) verlangt jede Regeländerung einen Reboot.
 
-## 5. sudo-Protokollierung
+## 6. sudo-Protokollierung
 
 `sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`), seine Aufrufe werden aber dennoch protokolliert. In `/etc/sudoers.d/secure-base-sudolog` (Mode 440):
 
@@ -126,6 +139,6 @@ Defaults logfile="/var/log/sudo.log"
 
 Nur auf einem System, auf dem `sudo` vorhanden ist. Fehlt es, entfällt dieser Schritt — `sudo` wird dafür nicht nachinstalliert.
 
-## 6. Log-Rotation
+## 7. Log-Rotation
 
 Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` rotiert (`weekly`, `rotate 8` — acht Wochen Vorhaltung). `journald` und `auditd` verwalten die Rotation ihrer Logs selbst.

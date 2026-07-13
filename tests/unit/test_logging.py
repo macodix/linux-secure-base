@@ -357,8 +357,8 @@ def test_doc_contains_section_title_and_core_fields(
     }
     section = Logging.doc(values)
     assert section.startswith("\n## Protokollierung und Auditing\n\n")
-    assert "**Pakete:** logwatch, auditd" in section
-    assert "**Dienste:** auditd (enabled, aktiv nach install)" in section
+    assert "**Pakete:** rsyslog, logwatch, auditd" in section
+    assert "**Dienste:** rsyslog, auditd (enabled, aktiv nach install)" in section
     assert f"`{Logging.JOURNALD_CONF}`" in section
     assert "Storage = persistent" in section
     assert "SystemMaxUse = 1G" in section

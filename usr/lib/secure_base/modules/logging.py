@@ -1,10 +1,16 @@
 """Modul logging — Protokollierung und Auditing.
 
-Härtet journald (persistentes Journal mit Größen-/Zeitgrenze), richtet den
-täglichen Bericht per Mail ein, schreibt die logrotate-Konfig für das
-secure-base-Logfile und aktiviert auditd mit sudo-Protokollierung und
-Audit-Regeln nach konv-system.md Abschnitt 3.4. Betriebsart über den
-Schlüssel operation.
+Härtet journald (persistentes Journal mit Größen-/Zeitgrenze), stellt rsyslog
+als Schreiber der Protokolldateien sicher, richtet den täglichen Bericht per
+Mail ein, schreibt die logrotate-Konfig für das secure-base-Logfile und
+aktiviert auditd mit sudo-Protokollierung und Audit-Regeln nach konv-system.md
+Abschnitt 3.4. Betriebsart über den Schlüssel operation.
+
+rsyslog gehört nicht auf jeder Distribution zur Standardinstallation — unter
+Debian 13 hat das Paket nur Priorität "optional". Ohne rsyslog gibt es keine
+Protokolldateien unter /var/log (auth.log, syslog, mail.log), und der
+angehängte Logwatch-Bericht bliebe weitgehend leer. Das Modul installiert es
+deshalb; ist es bereits vorhanden, ändert der Schritt nichts.
 
 Die sudo-Bestandteile — die Protokollierungs-Konfiguration in sudoers.d und
 die beiden Audit-Regeln auf die sudoers-Pfade — richtet das Modul nur ein,
@@ -475,8 +481,8 @@ class Logging(Module):
         )
         return (
             "\n## Protokollierung und Auditing\n\n"
-            "**Pakete:** logwatch, auditd\n\n"
-            "\n**Dienste:** auditd (enabled, aktiv nach install)\n"
+            "**Pakete:** rsyslog, logwatch, auditd\n\n"
+            "\n**Dienste:** rsyslog, auditd (enabled, aktiv nach install)\n"
             "**Dateien/Einstellungen:**\n\n"
             f"- `{cls.JOURNALD_CONF}`:\n"
             "  - `Storage = persistent`\n"
@@ -507,7 +513,10 @@ class Logging(Module):
             f" stillgelegt (Rechte {oct(cls.STOCK_CRON_MODE_OFF)})\n"
             "\n> Hinweis: systemd-journald wird nicht neu installiert "
             f"(Basis-Infrastruktur); persistentes Journal wird unter "
-            f"{cls.JOURNAL_DIR} abgelegt. auditd-Regeln mit -e 2 (Immutable) "
+            f"{cls.JOURNAL_DIR} abgelegt. rsyslog schreibt die Protokolldateien "
+            "unter /var/log, aus denen der angehängte Logwatch-Bericht entsteht; "
+            "es wird installiert, falls es fehlt, und beim Rückbau nicht entfernt. "
+            "auditd-Regeln mit -e 2 (Immutable) "
             "greifen erst nach dem nächsten Reboot. Die Zusammenfassung im"
             " Mailtext nennt erfolgreiche SSH-Anmeldungen, Zwei-Faktor-Vorgänge,"
             " fehlgeschlagene Anmeldungen bekannter Benutzer, sudo/su,"
@@ -626,6 +635,18 @@ class Logging(Module):
                 self.SYSTEMD_ACTION_CLS(
                     operation="restart", unit="systemd-journald", timeout=30
                 ),
+            ),
+            (
+                "rsyslog installieren",
+                self.APT_ACTION_CLS(packages=["rsyslog"]),
+            ),
+            (
+                "rsyslog aktivieren",
+                self.SYSTEMD_ACTION_CLS(operation="enable", unit="rsyslog", timeout=60),
+            ),
+            (
+                "rsyslog starten",
+                self.SYSTEMD_ACTION_CLS(operation="start", unit="rsyslog", timeout=60),
             ),
             (
                 "logwatch installieren",
@@ -757,9 +778,13 @@ class Logging(Module):
         """Nimmt die eigenen Änderungen von _install zurück.
 
         systemd-journald bleibt bestehen (Basis-Infrastruktur) — nur die
-        eigenen Direktiven werden zurückgenommen. logwatch und auditd
-        werden nur entfernt, wenn sie installiert sind (wie im
-        Bash-Original). /var/log/sudo.log bleibt als Datensicherung
+        eigenen Direktiven werden zurückgenommen. rsyslog bleibt ebenfalls
+        bestehen: Es schreibt die Protokolldateien unter /var/log, auf die
+        auch Werkzeuge außerhalb von secure-base zugreifen, und auf einem Teil
+        der Distributionen gehört es zur Standardinstallation — ein Rückbau
+        träfe dort einen Zustand, den das Modul nicht hergestellt hat.
+        logwatch und auditd werden nur entfernt, wenn sie installiert sind
+        (wie im Bash-Original). /var/log/sudo.log bleibt als Datensicherung
         erhalten.
 
         Schrittliste mit Abbruch beim ersten Fehler (wie _install). Jeder
@@ -782,6 +807,12 @@ class Logging(Module):
             if step() != 0:
                 self.send_message(LogLevel.ERROR, "logging", f"fehlgeschlagen: {label}")
                 return 1
+        self.send_message(
+            LogLevel.INFO,
+            "logging",
+            "rsyslog bleibt installiert (Schreiber der Protokolldateien unter"
+            " /var/log)",
+        )
         if self._sudo_present():
             self.send_message(
                 LogLevel.WARN,
@@ -1061,6 +1092,12 @@ class Logging(Module):
             "journald MaxRetentionSec",
         )
         ok &= self._check_dir_exists(self.JOURNAL_DIR, "journald-Persistenzverzeichnis")
+        ok &= self._check_installed("rsyslog", "Paket rsyslog")
+        ok &= self._check_value(
+            [self.SYSTEMCTL_BIN, "is-active", "--", "rsyslog"],
+            "active",
+            "rsyslog-Dienst",
+        )
         ok &= self._check_installed("logwatch", "Paket logwatch")
         # Der Aufruf steht im Berichts-Skript und im Funktionstest — ein
         # falscher Pfad fällt sonst erst auf, wenn der Nachtlauf ausbleibt.

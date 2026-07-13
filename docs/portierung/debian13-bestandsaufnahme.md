@@ -161,11 +161,13 @@ Drei Annahmen aus der ersten, gedächtnisbasierten Einschätzung haben der Prüf
 |---|---|---|---|
 | 1 | Origins der automatischen Updates | `unattended.py` `DEBIAN_ORIGINS_BLOCK` | andere Direktive, andere Syntax — **erledigt** |
 | 2 | Neustart-Kennzeichen außerhalb des Kernels | `unattended.py` `/var/run/reboot-required` | nur bei Kernel-Updates gesetzt |
-| 3 | Systemprotokolle als Dateien | `postfix.py`, `users.py` `MAIL_LOG`; Logwatch-Anhang | ohne `rsyslog` nicht vorhanden |
+| 3 | Systemprotokolle als Dateien | `logging.py` (Paketliste) | ohne `rsyslog` nicht vorhanden — **erledigt** |
 | 4 | `sudo` und `/etc/sudoers.d` | `logging.py` `SUDOLOG_CONF`, `AUDIT_RULES` | nicht garantiert installiert — **erledigt** |
 | 5 | Härtungsmaßstab | Doku, `lynis`-Profil | CIS-Benchmark für Debian statt Ubuntu |
 
-Punkt 3 ist für den Tagesbericht unkritisch: Die Zusammenfassung liest bereits aus dem Journal. Betroffen ist nur der angehängte Logwatch-Bericht, der ohne `rsyslog` kaum noch Quellen hätte.
+Punkt 3 ist umgesetzt, und zwar ohne Verzweigung: Das Modul `logging` installiert `rsyslog` mit. Unter Ubuntu ist es ohnehin vorhanden, der Schritt ändert dort nichts. Damit existieren die Protokolldateien unter `/var/log` auf beiden Distributionen, und der angehängte Logwatch-Bericht behält seine Quellen. Beim Rückbau bleibt `rsyslog` bestehen — es schreibt Dateien, die auch Werkzeuge außerhalb von secure-base lesen, und auf einem Teil der Distributionen gehört es zur Standardinstallation.
+
+Für die Zusammenfassung im Tagesbericht war das ohnehin unkritisch: Sie liest aus dem Journal.
 
 Punkt 1 ist umgesetzt: Das Modul `unattended` schreibt unter Debian einen `Origins-Pattern`-Block mit Origin, Codename und Label, unter Ubuntu weiterhin die Kurzform `Allowed-Origins`. Welche Distribution läuft, stellt `secure_base.distro` aus `/etc/os-release` fest; auf einer nicht unterstützten Distribution bricht das Modul ab, statt eine der beiden Benennungen zu unterstellen. `check` prüft die Datei am Soll der laufenden Distribution — eine unter Ubuntu geschriebene Datei fällt auf Debian als Abweichung auf.
 
@@ -183,6 +185,6 @@ Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab un
 
 ## 9. Nächster Schritt
 
-Von den fünf Punkten aus Kapitel 7 sind zwei umgesetzt, darunter der einzige Blocker. Offen sind noch die Systemprotokolle als Dateien (`rsyslog`, Punkt 3) und der Härtungsmaßstab (Punkt 5); Punkt 2 ist reine Dokumentation.
+Von den fünf Punkten aus Kapitel 7 sind drei umgesetzt, darunter der einzige Blocker. Offen ist noch der Härtungsmaßstab (Punkt 5); Punkt 2 ist reine Dokumentation.
 
 Die Erkennung der Distribution liegt in `secure_base.distro` und wird bisher nur vom Modul `unattended` abgefragt. Der Installer selbst prüft die Distribution noch nicht — er läuft ungeprüft auf jedem System an und bricht erst ab, wenn das erste Modul eine distributionsabhängige Entscheidung trifft.
