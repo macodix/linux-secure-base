@@ -177,7 +177,7 @@ systemctl daemon-reload && systemctl restart nginx
 
 ## 10. AppArmor-Profil
 
-nginx ist der einzige von außen erreichbare Anwendungsdienst und damit der exponierte Dienst. Weder das `nginx`-Paket noch `apparmor-profiles-extra` liefern auf Ubuntu ein AppArmor-Profil für nginx mit. Den Stand bestätigen:
+nginx ist der einzige von außen erreichbare Anwendungsdienst und damit der exponierte Dienst. Weder das `nginx`-Paket noch `apparmor-profiles-extra` liefern ein AppArmor-Profil für nginx mit — auf keiner der unterstützten Distributionen. Den Stand bestätigen:
 
 ```
 aa-status | grep -i nginx

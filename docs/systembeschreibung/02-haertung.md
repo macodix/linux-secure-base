@@ -71,7 +71,7 @@ Dienste, die keine root-Rechte benötigen (Postfix, nginx), laufen unter einem e
 
 Über die Benutzer-Trennung hinaus sieht der BSI-Grundschutz Mandatory-Access-Control (AppArmor) oder Isolation per Container/chroot für exponierte Dienste vor. Die Umsetzung ist zweistufig festgelegt:
 - Stufe 1: jede selbst eingerichtete systemd-Unit erhält Hardening-Direktiven (`NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectHome`).
-- Stufe 2: das `base`-Modul installiert `apparmor` und `apparmor-utils` und stellt den aktiven Dienst sicher; die von Ubuntu mitgelieferten AppArmor-Profile laufen im Enforce-Modus und werden in einem Härtungs-Prüflauf kontrolliert. Wo keine Profile mitgeliefert werden, werden eigene erstellt (Beispiel `nginx`).
+- Stufe 2: das `base`-Modul installiert `apparmor` und `apparmor-utils` und stellt den aktiven Dienst sicher; die von der Distribution mitgelieferten AppArmor-Profile laufen im Enforce-Modus und werden in einem Härtungs-Prüflauf kontrolliert. Wo keine Profile mitgeliefert werden, werden eigene erstellt (Beispiel `nginx`). Der Profilumfang ist distributionsabhängig — für die von secure-base eingerichteten Dienste ist er es nicht: Weder `sshd` noch `nginx` bringen auf einer der unterstützten Distributionen ein Profil mit.
 
 ## 8. Härtungsprüfung
 
@@ -91,3 +91,4 @@ Dateien, die der Normalbetrieb erzeugt und `rkhunter` als verdächtig meldet, si
 | 0.02 | 2026-06-22 | macodix | base-Grundhärtung (sysctl, usb-Blacklist, autofs, NTP) und konkrete sshd-Sollwerte ergänzt; AppArmor-Aktivierung durch base benannt. |
 | 0.03 | 2026-07-13 | macodix | Aussage zu sudo distributionsneutral gefasst: nicht genutzt, nicht nachinstalliert, Überwachung nur wenn vorhanden. |
 | 0.04 | 2026-07-13 | macodix | Härtungsmaßstab: CIS-Benchmark der eingesetzten Distribution (Ubuntu bzw. Debian) statt fest Ubuntu. |
+| 0.05 | 2026-07-13 | macodix | AppArmor-Aussagen distributionsneutral gefasst; fehlende Profile für sshd und nginx für beide Distributionen belegt. |

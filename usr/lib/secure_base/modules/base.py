@@ -457,7 +457,7 @@ class Base(Module):
                 f" (konv-system.md Abschnitt 3.10 b): {pakete} installiert,"
                 " Dienst enabled. Soll-Teilerfüllung mit Begründung"
                 " (qm-richtlinien.md Kapitel 5): sshd hat kein"
-                " Ubuntu-Standard-AppArmor-Profil; seine Eindämmung erfolgt"
+                " mitgeliefertes AppArmor-Profil; seine Eindämmung erfolgt"
                 " über den restriktiven Paketfilter (ufw) und die"
                 " SSH-Härtung. Ein eigenes sshd-Profil wird bewusst nicht"
                 " erstellt (Aussperr-Risiko).\n",

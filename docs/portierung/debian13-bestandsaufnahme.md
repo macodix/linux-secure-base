@@ -143,7 +143,19 @@ Das sshd-Jail liest also auf beiden Distributionen aus dem Journal, nicht aus `/
 
 Beide Pakete liefern `ssh.service` **und** `ssh.socket` (Ubuntu zusätzlich `sshd.service` als Alias). Beide Vorgabekonfigurationen enthalten `Include /etc/ssh/sshd_config.d/*.conf`. Kein Unterschied.
 
-### 5.5 cron.daily
+### 5.5 AppArmor
+
+Beide Distributionen liefern mit dem Paket `apparmor` einen umfangreichen Satz Profile aus, überwiegend für Desktop-Anwendungen. Der Umfang unterscheidet sich (Ubuntu deutlich mehr Profile als Debian), für die von secure-base eingerichteten Dienste ist er jedoch gleich:
+
+| Paket | Profil für `sshd` | Profil für `nginx` |
+|---|---|---|
+| `openssh-server` | **keines** (Debian wie Ubuntu) | — |
+| `nginx-core`, `nginx-common` | — | **keines** (Debian wie Ubuntu) |
+| `apparmor-profiles-extra` | keines | **keines** — das Paket ist in beiden Distributionen inhaltsgleich und enthält nur `irssi`, `pidgin`, `totem` und `apt-cacher-ng` |
+
+Die Aussagen der Dokumentation zu den fehlenden Profilen für `sshd` und `nginx` gelten also unverändert, sie waren nur auf Ubuntu festgelegt. Am Vorgehen ändert sich nichts: Für `nginx` wird ein eigenes Profil erzeugt, für `sshd` bewusst keines (Aussperr-Risiko).
+
+### 5.6 cron.daily
 
 `logwatch` und `rkhunter` liefern auf beiden Distributionen dieselben Dateien `/etc/cron.daily/00logwatch` bzw. `/etc/cron.daily/rkhunter`. Das Stilllegen des mitgelieferten logwatch-Laufs funktioniert auf Debian unverändert.
 
@@ -187,9 +199,9 @@ Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab un
 
 ## 9. Nächster Schritt
 
-Die fünf Punkte aus Kapitel 7 sind abgearbeitet. Offen bleiben die vier Fragen aus Kapitel 8, die sich nur auf einem laufenden Debian 13 beantworten lassen.
+Die fünf Punkte aus Kapitel 7 sind abgearbeitet. Dazu kamen die AppArmor-Aussagen (Kapitel 5.5), die auf Ubuntu festgelegt waren, sachlich aber für beide Distributionen gelten — sie sind jetzt neutral formuliert.
 
-Nicht durchgesehen sind die Aussagen zu AppArmor: Systembeschreibung und Anleitung sprechen dort von den „von Ubuntu mitgelieferten Profilen" und davon, dass Ubuntu kein Profil für `sshd` und `nginx` mitliefert. Ob das für Debian 13 gleichermaßen gilt, ist nicht geprüft; die Formulierungen sind in jedem Fall auf Ubuntu festgelegt.
+Offen bleiben die vier Fragen aus Kapitel 8, die sich nur auf einem laufenden Debian 13 beantworten lassen.
 
 Die Erkennung der Distribution liegt in `secure_base.distro`. Der Installer fragt sie als ersten Schritt jedes Laufs ab und bricht auf einer nicht unterstützten Distribution mit Code 2 ab, bevor er die Konfiguration liest oder ein Modul startet. Das Modul `unattended` fragt sie zusätzlich ab, weil es zwischen den beiden Benennungen der Paketquellen wählen muss.
 

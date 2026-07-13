@@ -237,7 +237,7 @@ class Nginx(Module):
             " Encrypt). HTTP→HTTPS-Redirect von certbot gesetzt, bleibt"
             " als Absicherung erhalten. AppArmor-Basisprofil für nginx"
             " per aa-autodep erzeugt und im complain-Modus (protokolliert,"
-            " blockiert nicht; kein Ubuntu-Standardprofil vorhanden,"
+            " blockiert nicht; kein mitgeliefertes Profil vorhanden,"
             " konv-system.md 3.10). Weg zu enforce: Testbetrieb →"
             " aa-logprof → aa-enforce (siehe Anleitung 13). server_tokens"
             " off gesetzt.\n"

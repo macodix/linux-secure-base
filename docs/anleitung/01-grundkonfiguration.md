@@ -49,7 +49,7 @@ systemctl mask autofs
 
 ## AppArmor
 
-Die Pakete `apparmor` und `apparmor-utils` werden installiert und der Dienst aktiviert; die mitgelieferten Distributions-Profile bleiben im Enforce-Modus. Für `sshd` liefert Ubuntu kein Standard-Profil — seine Eindämmung erfolgt über die Firewall und die SSH-Härtung (siehe [Systembeschreibung, Härtung](../systembeschreibung/02-haertung.md)).
+Die Pakete `apparmor` und `apparmor-utils` werden installiert und der Dienst aktiviert; die mitgelieferten Distributions-Profile bleiben im Enforce-Modus. Für `sshd` liefert keine der unterstützten Distributionen ein Profil mit — seine Eindämmung erfolgt über die Firewall und die SSH-Härtung (siehe [Systembeschreibung, Härtung](../systembeschreibung/02-haertung.md)).
 
 ## Paketstand
 
