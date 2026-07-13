@@ -6,7 +6,7 @@ Anleitung für einen bereits laufenden Server, der auf den neuen Standard gebrac
 
 ## 1. Geltungsbereich
 
-Die Anleitung gilt für Server, die mit einem Stand **bis einschließlich Commit `f5278f8`** eingerichtet wurden (Etikett `testbau` vor dem 12. Juli 2026, Version `0.1.0-dev`).
+Die Anleitung gilt für Server, die mit einem Stand **bis einschließlich Commit `f5278f8`** eingerichtet wurden (Version `0.1.0-dev`, bezogen vor dem 12. Juli 2026).
 
 Den neuen Standard bringen die Commits `d0390fe` (postgresql) und `fd1824e` (restic). Wer den Installer ab `fd1824e` bezieht, hat ihn bereits.
 
