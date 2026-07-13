@@ -17,6 +17,10 @@ die beiden Audit-Regeln auf die sudoers-Pfade — richtet das Modul nur ein,
 wenn sudo auf dem System vorhanden ist. Administriert wird über su; sudo
 gehört nicht auf jeder Distribution zur Standardinstallation.
 
+Ebenso die Audit-Regel auf die Anmeldehistorie: Überwacht wird die Datenbank,
+die das System tatsächlich führt (wtmpdb oder lastlog2). Die frühere Regel auf
+/var/log/lastlog griff ins Leere — die Datei gibt es nicht mehr.
+
 Der Tagesbericht besteht aus einer Zusammenfassung im Mailtext und dem
 vollständigen Logwatch-Bericht als Anhang. Die Zusammenfassung entsteht aus
 dem Journal und nennt die sicherheitsrelevanten Vorgänge des Tages —
@@ -57,56 +61,88 @@ _JOURNALD_SIZE_RE = re.compile(r"^[0-9]+[KMGT]?$")
 # systemd-Zeitspanne (journald MaxRetentionSec), z. B. "4week", "3month".
 _JOURNALD_RETENTION_RE = re.compile(r"^[0-9]+(s|min|h|day|week|month|year)$")
 
-# Soll-Regeln nach konv-system.md Abschnitt 3.4 b (exakt); "-e 2" (Immutable)
-# steht als letzte Regel.
-AUDIT_RULES: tuple[str, ...] = (
+# Soll-Regeln nach konv-system.md Abschnitt 3.4 b. Feste Regeln — sie
+# überwachen Pfade, die auf jedem System vorliegen.
+IDENTITY_AUDIT_RULES: tuple[str, ...] = (
     "-w /etc/passwd -p wa -k identity",
     "-w /etc/shadow -p wa -k identity",
     "-w /etc/group -p wa -k identity",
-    "-w /var/log/lastlog -p wa -k logins",
-    "-w /usr/bin/su -p x -k priv_esc",
-    "-w /etc/sudoers -p wa -k scope",
-    "-w /etc/sudoers.d -p wa -k scope",
+)
+
+PRIV_ESC_AUDIT_RULE: str = "-w /usr/bin/su -p x -k priv_esc"
+
+CONFIG_AUDIT_RULES: tuple[str, ...] = (
     "-w /etc/ssh/sshd_config -p wa -k sshd",
     "-w /etc/pam.d -p wa -k pam",
     "-w /etc/ufw -p wa -k firewall",
     "-w /etc/audit -p wa -k auditconfig",
-    "-e 2",
 )
 
-# Regeln, die einen sudoers-Pfad überwachen: auditctl nimmt eine Überwachung
-# nur an, wenn der Pfad existiert. Ohne sudo würde das Regelwerk sonst mit
-# Fehler geladen, statt die übrigen Regeln zu setzen.
+# Immutable — steht als letzte Regel.
+IMMUTABLE_AUDIT_RULE: str = "-e 2"
+
+# Regeln, die einen sudoers-Pfad überwachen. /etc/sudoers.d ist ein
+# Verzeichnis; auditctl weist eine Überwachung eines nicht existierenden
+# Verzeichnisses ab, das Regelwerk würde dann mit Fehler geladen, statt die
+# übrigen Regeln zu setzen. (Bei einer Datei genügt das Elternverzeichnis —
+# die Regel auf /etc/sudoers allein würde also laden, aber nie greifen.)
 SUDO_AUDIT_RULES: tuple[str, ...] = (
     "-w /etc/sudoers -p wa -k scope",
     "-w /etc/sudoers.d -p wa -k scope",
 )
 
+# Überwachung der Anmeldehistorie. /var/log/lastlog gibt es nicht mehr:
+# pam_lastlog ist aus libpam-modules entfernt, unter Debian 13 wie unter
+# Ubuntu 26.04. Eine Regel darauf würde zwar laden (das Elternverzeichnis
+# /var/log existiert), aber nie greifen — eine stille Lücke.
+#
+# Überwacht wird deshalb die Datenbank, die das System tatsächlich führt. Je
+# Eintrag: Vorbedingung (ein Pfad aus dem jeweiligen Paket) und die Regel, die
+# gilt, wenn die Vorbedingung erfüllt ist.
+LOGIN_AUDIT_RULES: tuple[tuple[str, str], ...] = (
+    # wtmpdb — unter Debian 13 die Standard-Anmeldehistorie (Paketpriorität
+    # "standard"), sshd schreibt direkt hinein. Die Datenbank liegt unter
+    # /var/log/wtmp.db; /var/lib/wtmpdb/wtmp.db ist nur ein Symlink darauf und
+    # als Überwachungsziel deshalb ungeeignet.
+    ("/usr/bin/wtmpdb", "-w /var/log/wtmp.db -p wa -k logins"),
+    # lastlog2 — Nachfolger von /var/log/lastlog. Das Verzeichnis legt das
+    # Paket an; es ist zugleich Ladevoraussetzung der Regel, denn die Datenbank
+    # entsteht erst bei der ersten Anmeldung.
+    ("/var/lib/lastlog", "-w /var/lib/lastlog/lastlog2.db -p wa -k logins"),
+)
 
-def _audit_rules(sudo_present: bool) -> tuple[str, ...]:
-    """Liefert die Soll-Regeln für das vorliegende System.
+
+def _audit_rules(sudo_present: bool, login_rules: tuple[str, ...]) -> tuple[str, ...]:
+    """Setzt die Soll-Regeln für das vorliegende System zusammen.
 
     Args:
         sudo_present: Ob sudo auf dem System vorhanden ist.
+        login_rules: Regeln zur Anmeldehistorie, deren Vorbedingung erfüllt ist.
 
     Returns:
-        AUDIT_RULES, ohne die sudoers-Regeln, wenn sudo fehlt.
+        Alle Soll-Regeln in fester Reihenfolge, "-e 2" als letzte.
     """
-    if sudo_present:
-        return AUDIT_RULES
-    return tuple(rule for rule in AUDIT_RULES if rule not in SUDO_AUDIT_RULES)
+    return (
+        *IDENTITY_AUDIT_RULES,
+        *login_rules,
+        PRIV_ESC_AUDIT_RULE,
+        *(SUDO_AUDIT_RULES if sudo_present else ()),
+        *CONFIG_AUDIT_RULES,
+        IMMUTABLE_AUDIT_RULE,
+    )
 
 
-def _audit_rules_content(sudo_present: bool) -> str:
+def _audit_rules_content(sudo_present: bool, login_rules: tuple[str, ...]) -> str:
     """Baut den Inhalt der Audit-Regeldatei.
 
     Args:
         sudo_present: Ob sudo auf dem System vorhanden ist.
+        login_rules: Regeln zur Anmeldehistorie, deren Vorbedingung erfüllt ist.
 
     Returns:
         Regeldatei-Inhalt, eine Regel je Zeile.
     """
-    return "".join(f"{rule}\n" for rule in _audit_rules(sudo_present))
+    return "".join(f"{rule}\n" for rule in _audit_rules(sudo_present, login_rules))
 
 
 def _logrotate_content() -> str:
@@ -370,6 +406,8 @@ class Logging(Module):
     # sudoers-Audit-Regeln überwachen.
     SUDOERS_FILE: ClassVar[str] = "/etc/sudoers"
     SUDOERS_DIR: ClassVar[str] = "/etc/sudoers.d"
+    # Anmeldehistorie: (Vorbedingung, Regel) — siehe LOGIN_AUDIT_RULES.
+    LOGIN_RULES: ClassVar[tuple[tuple[str, str], ...]] = LOGIN_AUDIT_RULES
 
     # Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
     # als Anhang (siehe _REPORT_SCRIPT_TEMPLATE).
@@ -442,6 +480,20 @@ class Logging(Module):
         return Path(cls.SUDOERS_FILE).exists() and Path(cls.SUDOERS_DIR).is_dir()
 
     @classmethod
+    def _login_rules(cls) -> tuple[str, ...]:
+        """Liefert die Audit-Regeln der auf dem System geführten Anmeldehistorie.
+
+        Returns:
+            Je Eintrag aus LOGIN_RULES die Regel, wenn deren Vorbedingung
+            vorliegt; leer, wenn keine Anmeldehistorie geführt wird.
+        """
+        return tuple(
+            rule
+            for precondition, rule in cls.LOGIN_RULES
+            if Path(precondition).exists()
+        )
+
+    @classmethod
     def doc(cls, values: dict[str, str]) -> str:
         """Markdown-Abschnitt für den Installationsbericht.
 
@@ -479,6 +531,15 @@ class Logging(Module):
             " sudo-Protokollierung und die beiden Audit-Regeln auf die"
             " sudoers-Pfade entfallen (administriert wird über su)."
         )
+        login_rules = cls._login_rules()
+        login_audit_doc = "".join(f"  - `{rule}`\n" for rule in login_rules)
+        login_hinweis = (
+            ""
+            if login_rules
+            else " Auf diesem System wird keine Anmeldehistorie als Datenbank"
+            " geführt (weder wtmpdb noch lastlog2) — die Audit-Regel darauf"
+            " entfällt. Die Anmeldungen selbst stehen im Journal."
+        )
         return (
             "\n## Protokollierung und Auditing\n\n"
             "**Pakete:** rsyslog, logwatch, auditd\n\n"
@@ -500,7 +561,7 @@ class Logging(Module):
             "  - `-w /etc/passwd -p wa -k identity`\n"
             "  - `-w /etc/shadow -p wa -k identity`\n"
             "  - `-w /etc/group -p wa -k identity`\n"
-            "  - `-w /var/log/lastlog -p wa -k logins`\n"
+            f"{login_audit_doc}"
             "  - `-e 2 (Immutable — Regeländerungen ohne Reboot gesperrt)`\n"
             f"{sudolog_doc}"
             f"- `{cls.REPORT_SCRIPT}`:\n"
@@ -523,7 +584,7 @@ class Logging(Module):
             " fail2ban-Sperren, fehlgeschlagene Dienste und Cron-Läufe,"
             " Journal-Fehler und Plattenplatz; die Aufzählung der abgewiesenen"
             " Anmeldeversuche unbekannter Benutzer steht als Summe im Text und"
-            f" vollständig im Anhang.{sudo_hinweis}\n"
+            f" vollständig im Anhang.{sudo_hinweis}{login_hinweis}\n"
         )
 
     def _validate(self) -> None:
@@ -678,6 +739,15 @@ class Logging(Module):
                 )
             )
         sudo_present = self._sudo_present()
+        login_rules = self._login_rules()
+        if not login_rules:
+            self.send_message(
+                LogLevel.WARN,
+                "logging",
+                "keine Anmeldehistorie-Datenbank vorhanden (weder wtmpdb noch"
+                " lastlog2) — Audit-Regel dafür entfällt; Anmeldungen stehen im"
+                " Journal",
+            )
         steps += [
             (
                 "Berichts-Skript schreiben",
@@ -745,7 +815,7 @@ class Logging(Module):
                 "Audit-Regeln schreiben",
                 WriteFileAction(
                     dst=self.AUDIT_RULES_FILE,
-                    content=_audit_rules_content(sudo_present),
+                    content=_audit_rules_content(sudo_present, login_rules),
                     mode=0o640,
                     overwrite=True,
                     safe_mode=False,
@@ -1115,7 +1185,15 @@ class Logging(Module):
             [self.SYSTEMCTL_BIN, "is-active", "--", "auditd"], "active", "auditd-Dienst"
         )
         sudo_present = self._sudo_present()
-        for rule in _audit_rules(sudo_present):
+        login_rules = self._login_rules()
+        if not login_rules:
+            self.send_message(
+                LogLevel.WARN,
+                "logging",
+                "keine Anmeldehistorie-Datenbank vorhanden — Audit-Regel dafür"
+                " nicht zutreffend",
+            )
+        for rule in _audit_rules(sudo_present, login_rules):
             ok &= self._check_file_line(
                 self.AUDIT_RULES_FILE, rule, f"Audit-Regel {rule}"
             )

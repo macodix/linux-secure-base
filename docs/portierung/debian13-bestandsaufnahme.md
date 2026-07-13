@@ -167,7 +167,22 @@ Beide Distributionen liefern mit dem Paket `apparmor` einen umfangreichen Satz P
 
 Die Aussagen der Dokumentation zu den fehlenden Profilen für `sshd` und `nginx` gelten also unverändert, sie waren nur auf Ubuntu festgelegt. Am Vorgehen ändert sich nichts: Für `nginx` wird ein eigenes Profil erzeugt, für `sshd` bewusst keines (Aussperr-Risiko).
 
-### 5.6 cron.daily
+### 5.6 Anmeldehistorie: lastlog ist weg
+
+`pam_lastlog.so` ist aus `libpam-modules` entfernt — in **beiden** Distributionen. Auf einem Ubuntu 26.04 existieren weder `/var/log/lastlog` noch `/var/log/wtmp` oder `/var/log/btmp`, und die Programme `last` und `lastlog` sind nicht installiert. Die utmp/wtmp/lastlog-Familie ist abgelöst.
+
+| Nachfolger | Datenbank | Debian 13 | Ubuntu 26.04 |
+|---|---|---|---|
+| `wtmpdb` | `/var/log/wtmp.db` | **`standard`** — installiert, `sshd` schreibt direkt hinein | `optional` — nicht installiert |
+| `lastlog2` | `/var/lib/lastlog/lastlog2.db` | `optional` | `optional` |
+
+Der Pfad der wtmpdb-Datenbank ist ein Debian-Sonderweg: Upstream liegt sie unter `/var/lib/wtmpdb/wtmp.db`, beide Distributionen patchen sie nach `/var/log/wtmp.db` und legen den Upstream-Pfad als Symlink darauf an (belegt aus `libwtmpdb0` und `README.Debian` des Pakets). Als Überwachungsziel taugt nur die echte Datei.
+
+**Folge:** Die Audit-Regel `-w /var/log/lastlog -p wa -k logins` überwacht auf beiden Distributionen eine Datei, die nie entsteht — auch unter Ubuntu, heute. Sie lädt fehlerfrei, weil bei einer Datei das Elternverzeichnis genügt, und liefert dauerhaft null Ereignisse. Der Schlüssel `logins` ist leer, ohne dass irgendetwas darauf hinweist.
+
+Das Modul `logging` überwacht deshalb jetzt die Datenbank, die das System tatsächlich führt, und lässt die Regel weg, wenn es keine führt (mit Warnung). Unter Debian greift damit `wtmpdb`; unter Ubuntu bleibt die Lücke sichtbar, solange `wtmpdb` dort nicht installiert wird.
+
+### 5.7 cron.daily
 
 `logwatch` und `rkhunter` liefern auf beiden Distributionen dieselben Dateien `/etc/cron.daily/00logwatch` bzw. `/etc/cron.daily/rkhunter`. Das Stilllegen des mitgelieferten logwatch-Laufs funktioniert auf Debian unverändert.
 
@@ -203,12 +218,13 @@ Punkt 4 ist umgesetzt: Das Modul `logging` richtet die sudo-Protokollierung und 
 
 Diese Punkte lassen sich aus Paketdaten **nicht** beantworten:
 
-- **Audit-Regel auf `/var/log/lastlog`.** In keiner der beiden Distributionen liefert `libpam-modules` noch ein `pam_lastlog`-Modul. Ob die Datei überhaupt noch existiert und `auditd` die Regel annimmt, muss auf dem System geprüft werden — und zwar **auch unter Ubuntu**. Prüfbefehle: `ls -l /var/log/lastlog` und `auditctl -l | grep lastlog`.
 - **Ob `lynis` unter Debian dasselbe Profil und dieselben Tests fährt.** Debian liefert eine ältere Version (3.1.4 gegen 3.1.6).
 
 Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab und nicht vom Paketindex — der Debian-Installer installiert es, wenn kein Root-Passwort gesetzt wird. Das muss nicht mehr vorab geklärt werden: Das Modul `logging` entscheidet zur Laufzeit anhand der Pfade (Kapitel 7).
 
 Die Frage, welche SSH-Unit im Auslieferungszustand aktiv ist, ist aus den Paketen beantwortet (Kapitel 5.4) und damit hier erledigt. Ein anderes Image kann davon abweichen — es hebt eine Aktivierung aus dem `postinst` aber nicht auf, sondern müsste sie ausdrücklich ändern.
+
+Die Audit-Regel auf `/var/log/lastlog` ist ebenfalls aus den Paketen geklärt (Kapitel 5.6) und im Modul `logging` auf die tatsächlich geführten Anmeldedatenbanken umgezogen.
 
 ## 9. Nächster Schritt
 

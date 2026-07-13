@@ -97,7 +97,10 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 -w /etc/passwd      -p wa -k identity
 -w /etc/shadow      -p wa -k identity
 -w /etc/group       -p wa -k identity
--w /var/log/lastlog -p wa -k logins
+
+# Anmeldehistorie — nur die Datenbank, die das System tatsächlich führt.
+-w /var/log/wtmp.db             -p wa -k logins   # wtmpdb
+-w /var/lib/lastlog/lastlog2.db -p wa -k logins   # lastlog2
 
 # Privilegien-Erhöhung und sudo-Konfiguration (su statt sudo)
 # Die beiden sudoers-Zeilen nur, wenn sudo vorhanden ist (siehe unten).
@@ -115,9 +118,13 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 -e 2
 ```
 
-Die Regeln für Identität, sudoers und lastlog sind das Pflicht-Minimum. Der Watch auf `/usr/bin/su` ergänzt sie um den tatsächlich genutzten Weg der Privilegien-Erhöhung. Da `sudo` nicht genutzt wird, ist zudem jede Änderung an seiner Konfiguration per se verdächtig.
+Die Regeln für Identität, Anmeldehistorie und sudoers sind das Pflicht-Minimum. Der Watch auf `/usr/bin/su` ergänzt sie um den tatsächlich genutzten Weg der Privilegien-Erhöhung. Da `sudo` nicht genutzt wird, ist zudem jede Änderung an seiner Konfiguration per se verdächtig.
 
-Die beiden sudoers-Regeln setzen voraus, dass `sudo` installiert ist: `auditctl` nimmt eine Überwachung nur an, wenn der überwachte Pfad existiert. Auf einem System ohne `sudo` — die Standardinstallation führt es nicht auf jeder Distribution mit — entfallen sie, sonst lädt das gesamte Regelwerk mit Fehler. Der Installer prüft das und lässt sie in diesem Fall weg.
+**Anmeldehistorie.** Die klassische Datei `/var/log/lastlog` gibt es nicht mehr — `pam_lastlog` ist aus `libpam-modules` entfernt, unter Debian 13 wie unter Ubuntu 26.04. An ihre Stelle treten zwei Datenbanken: `wtmpdb` (`/var/log/wtmp.db`; unter Debian die Standard-Anmeldehistorie, `sshd` schreibt direkt hinein) und `lastlog2` (`/var/lib/lastlog/lastlog2.db`). Überwacht wird nur die, deren Paket vorliegt. Führt das System keine der beiden — der Fall auf einer Ubuntu-Standardinstallation —, entfällt die Regel, und die Anmeldungen sind nur im Journal nachweisbar.
+
+Eine Regel auf `/var/log/lastlog` beizubehalten wäre die schlechtere Wahl: Sie würde ohne Fehler laden, weil bei einer Datei das Elternverzeichnis genügt, aber nie greifen. Eine leere Regel sieht in `auditctl -l` wie Abdeckung aus und ist keine.
+
+**sudoers.** Die beiden sudoers-Regeln setzen voraus, dass `sudo` installiert ist. `/etc/sudoers.d` ist ein Verzeichnis, und eine Überwachung eines nicht existierenden Verzeichnisses weist `auditctl` ab — das gesamte Regelwerk lädt dann mit Fehler. Auf einem System ohne `sudo` entfallen sie deshalb. Der Installer prüft das und lässt sie in diesem Fall weg.
 
 Dienst aktivieren — beim Start liest `auditd` die Regeldateien aus `/etc/audit/rules.d/`:
 

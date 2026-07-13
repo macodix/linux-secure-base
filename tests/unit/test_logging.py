@@ -8,7 +8,7 @@ import pytest
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.logging import (
-    AUDIT_RULES,
+    LOGIN_AUDIT_RULES,
     SUDO_AUDIT_RULES,
     Logging,
     _audit_rules,
@@ -35,6 +35,24 @@ def _set_sudo(
         sudoers_d.mkdir()
     monkeypatch.setattr(Logging, "SUDOERS_FILE", str(sudoers))
     monkeypatch.setattr(Logging, "SUDOERS_DIR", str(sudoers_d))
+
+
+def _set_login_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, present: bool
+) -> None:
+    """Lenkt die Vorbedingung der Anmeldehistorie auf tmp_path um.
+
+    Ohne Umlenkung hinge das Ergebnis daran, ob auf dem Testrechner wtmpdb
+    oder lastlog2 installiert ist.
+    """
+    precondition = tmp_path / "wtmpdb"
+    if present:
+        precondition.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        Logging,
+        "LOGIN_RULES",
+        ((str(precondition), "-w /var/log/wtmp.db -p wa -k logins"),),
+    )
 
 
 def _make_logging(
@@ -130,31 +148,72 @@ def test_mailfrom_empty_without_domain() -> None:
 # --- Inhaltsfunktionen ---
 
 
-def test_audit_rules_content_contains_all_rules() -> None:
-    """_audit_rules_content enthält jede Regel aus AUDIT_RULES als eigene Zeile."""
-    content = _audit_rules_content(sudo_present=True)
-    lines = content.splitlines()
-    assert lines == list(AUDIT_RULES)
+_ALL_LOGIN_RULES = tuple(rule for _, rule in LOGIN_AUDIT_RULES)
+
+
+def test_audit_rules_content_contains_every_rule_as_own_line() -> None:
+    """_audit_rules_content schreibt jede Soll-Regel als eigene Zeile."""
+    rules = _audit_rules(sudo_present=True, login_rules=_ALL_LOGIN_RULES)
+    content = _audit_rules_content(sudo_present=True, login_rules=_ALL_LOGIN_RULES)
+    assert content.splitlines() == list(rules)
 
 
 def test_audit_rules_content_ends_with_immutable_rule() -> None:
     """Die Immutable-Regel -e 2 steht als letzte Regel."""
-    assert AUDIT_RULES[-1] == "-e 2"
+    rules = _audit_rules(sudo_present=True, login_rules=_ALL_LOGIN_RULES)
+    assert rules[-1] == "-e 2"
+
+
+def test_audit_rules_contain_the_mandatory_watches() -> None:
+    """Identität, Rechteerhöhung und administrative Konfiguration sind immer dabei."""
+    rules = _audit_rules(sudo_present=False, login_rules=())
+    for rule in (
+        "-w /etc/passwd -p wa -k identity",
+        "-w /etc/shadow -p wa -k identity",
+        "-w /etc/group -p wa -k identity",
+        "-w /usr/bin/su -p x -k priv_esc",
+        "-w /etc/ssh/sshd_config -p wa -k sshd",
+        "-w /etc/audit -p wa -k auditconfig",
+    ):
+        assert rule in rules
 
 
 def test_audit_rules_without_sudo_omit_sudoers_watches() -> None:
     """Ohne sudo entfallen genau die sudoers-Regeln — die übrigen bleiben."""
-    rules = _audit_rules(sudo_present=False)
+    rules = _audit_rules(sudo_present=False, login_rules=_ALL_LOGIN_RULES)
     assert not any(rule in SUDO_AUDIT_RULES for rule in rules)
-    assert rules == tuple(r for r in AUDIT_RULES if r not in SUDO_AUDIT_RULES)
     assert rules[-1] == "-e 2"
     assert "-w /usr/bin/su -p x -k priv_esc" in rules
 
 
 def test_audit_rules_content_without_sudo_omits_sudoers_watches() -> None:
     """Die Regeldatei enthält ohne sudo keine Überwachung eines sudoers-Pfads."""
-    content = _audit_rules_content(sudo_present=False)
+    content = _audit_rules_content(sudo_present=False, login_rules=())
     assert "sudoers" not in content
+
+
+def test_audit_rules_watch_the_login_databases_not_lastlog() -> None:
+    """Überwacht wird die geführte Anmeldedatenbank, nicht /var/log/lastlog."""
+    rules = _audit_rules(sudo_present=True, login_rules=_ALL_LOGIN_RULES)
+    assert "-w /var/log/lastlog -p wa -k logins" not in rules
+    assert "-w /var/log/wtmp.db -p wa -k logins" in rules
+    assert "-w /var/lib/lastlog/lastlog2.db -p wa -k logins" in rules
+
+
+def test_audit_rules_without_login_database_omit_the_logins_watch() -> None:
+    """Führt das System keine Anmeldedatenbank, entfällt die logins-Regel ganz."""
+    content = _audit_rules_content(sudo_present=True, login_rules=())
+    assert "-k logins" not in content
+    assert "lastlog" not in content
+    assert "wtmp" not in content
+
+
+def test_login_audit_rules_pair_precondition_and_rule() -> None:
+    """Jeder Eintrag nennt die Vorbedingung und die Regel, die dann gilt."""
+    preconditions = [precondition for precondition, _ in LOGIN_AUDIT_RULES]
+    assert preconditions == ["/usr/bin/wtmpdb", "/var/lib/lastlog"]
+    for _, rule in LOGIN_AUDIT_RULES:
+        assert rule.endswith("-p wa -k logins")
 
 
 def test_logrotate_content_contains_expected_directives() -> None:
@@ -350,6 +409,7 @@ def test_doc_contains_section_title_and_core_fields(
 ) -> None:
     """doc() enthält Abschnittstitel, Pakete, Dateien, Werte und Dienst."""
     _set_sudo(monkeypatch, tmp_path, present=True)
+    _set_login_db(monkeypatch, tmp_path, present=True)
     values = {
         "journald_max_use": "1G",
         "journald_max_retention": "3month",
@@ -376,6 +436,20 @@ def test_doc_contains_section_title_and_core_fields(
     assert Logging.REPORT_SCRIPT in section
     assert Logging.STOCK_CRON in section
     assert f"{Logging.JOURNAL_DIR} abgelegt" in section
+    assert "-w /var/log/wtmp.db -p wa -k logins" in section
+
+
+def test_doc_without_login_database_names_the_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne Anmeldedatenbank nennt doc() keine logins-Regel, sondern den Grund."""
+    _set_sudo(monkeypatch, tmp_path, present=True)
+    _set_login_db(monkeypatch, tmp_path, present=False)
+    section = Logging.doc({"admin_mail": "admin@example.com"})
+    assert "-k logins" not in section
+    assert "/var/log/lastlog" not in section
+    assert "keine Anmeldehistorie als Datenbank" in section
+    assert "Journal" in section
 
 
 def test_doc_without_sudo_omits_sudo_parts(
@@ -383,6 +457,7 @@ def test_doc_without_sudo_omits_sudo_parts(
 ) -> None:
     """Fehlt sudo, nennt doc() weder sudoers-Regeln noch sudo-Protokollierung."""
     _set_sudo(monkeypatch, tmp_path, present=False)
+    _set_login_db(monkeypatch, tmp_path, present=True)
     section = Logging.doc({"admin_mail": "admin@example.com"})
     assert "-w /etc/sudoers -p wa -k scope" not in section
     assert "-w /etc/sudoers.d -p wa -k scope" not in section

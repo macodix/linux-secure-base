@@ -37,7 +37,11 @@ class _NoOpSystemdAction(SystemdServiceAction):
 
 
 def _make_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, sudo: bool = True
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sudo: bool = True,
+    login_db: bool = True,
 ) -> tuple[Logging, MagicMock]:
     """Baut ein Logging-Modul mit harmlosen Platzhaltern für alle Zielpfade.
 
@@ -47,6 +51,8 @@ def _make_module(
         sudo: Ob das Modul sudo als vorhanden vorfinden soll. Ohne Umlenkung
             hinge das Ergebnis daran, ob auf dem Testrechner sudo installiert
             ist.
+        login_db: Ob das Modul eine Anmeldehistorie-Datenbank vorfinden soll —
+            ebenfalls umgelenkt, aus demselben Grund.
     """
     sudoers = tmp_path / "sudoers"
     sudoers_d = tmp_path / "sudoers.d"
@@ -55,6 +61,15 @@ def _make_module(
         sudoers_d.mkdir()
     monkeypatch.setattr(Logging, "SUDOERS_FILE", str(sudoers))
     monkeypatch.setattr(Logging, "SUDOERS_DIR", str(sudoers_d))
+
+    wtmpdb_bin = tmp_path / "wtmpdb"
+    if login_db:
+        wtmpdb_bin.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        Logging,
+        "LOGIN_RULES",
+        ((str(wtmpdb_bin), "-w /var/log/wtmp.db -p wa -k logins"),),
+    )
 
     journald_conf = tmp_path / "journald.conf"
     journald_conf.write_text("#Storage=auto\n#SystemMaxUse=\n", encoding="utf-8")
@@ -123,6 +138,41 @@ def test_install_all_steps_succeed(
     assert Path(Logging.LOGROTATE_CONF).exists()
     assert Path(Logging.AUDIT_RULES_FILE).exists()
     assert Path(Logging.SUDOLOG_CONF).exists()
+    rules = Path(Logging.AUDIT_RULES_FILE).read_text(encoding="utf-8")
+    assert "-w /var/log/wtmp.db -p wa -k logins" in rules
+    assert "/var/log/lastlog" not in rules
+
+
+def test_install_without_login_database_omits_the_logins_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne Anmeldedatenbank entfällt die logins-Regel — mit Warnung, ohne Fehler."""
+    mod, conn = _make_module(tmp_path, monkeypatch, login_db=False)
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert any("keine Anmeldehistorie-Datenbank vorhanden" in str(m) for m in messages)
+    rules = Path(Logging.AUDIT_RULES_FILE).read_text(encoding="utf-8")
+    assert "-k logins" not in rules
+    assert rules.splitlines()[-1] == "-e 2"
+
+
+def test_check_without_login_database_reports_not_applicable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check wertet die fehlende logins-Regel nicht als Abweichung."""
+    mod, conn = _make_module(tmp_path, monkeypatch, login_db=False)
+    assert mod.start() == 0
+    mod.operation = "check"
+
+    mod.start()
+
+    messages = _sent_messages(conn)
+    assert any("nicht zutreffend" in str(m) for m in messages)
+    assert not any("Audit-Regel -w /var/log/wtmp.db" in str(m) for m in messages)
 
 
 def test_install_without_sudo_omits_sudo_parts(
