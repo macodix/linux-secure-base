@@ -49,6 +49,18 @@ def _make_module(
     monkeypatch.setattr(Logging, "LOGROTATE_CONF", str(tmp_path / "logrotate.conf"))
     monkeypatch.setattr(Logging, "AUDIT_RULES_FILE", str(tmp_path / "audit-rules.conf"))
     monkeypatch.setattr(Logging, "SUDOLOG_CONF", str(tmp_path / "sudolog.conf"))
+    # Reale Zielpfade (/usr/local/sbin, /etc/cron.daily) sind ohne Systemrechte
+    # nicht beschreibbar — im Test auf tmp_path umgelenkt. Der mitgelieferte
+    # logwatch-Cron wird als Platzhalterdatei vorbelegt: PermissionsAction
+    # verlangt ein vorhandenes Ziel.
+    stock_cron = tmp_path / "00logwatch"
+    stock_cron.write_text("#!/bin/bash\n", encoding="utf-8")
+    stock_cron.chmod(0o755)
+    monkeypatch.setattr(Logging, "STOCK_CRON", str(stock_cron))
+    monkeypatch.setattr(
+        Logging, "REPORT_SCRIPT", str(tmp_path / "secure-base-logwatch.sh")
+    )
+    monkeypatch.setattr(Logging, "REPORT_CRON", str(tmp_path / "secure-base-logwatch"))
     monkeypatch.setattr(Logging, "SYSTEMCTL_BIN", "/usr/bin/true")
     monkeypatch.setattr(Logging, "DPKG_BIN", "/usr/bin/true")
     monkeypatch.setattr(Logging, "APT_ACTION_CLS", _NoOpAptAction)

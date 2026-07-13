@@ -1,13 +1,21 @@
 """Modul logging — Protokollierung und Auditing.
 
-Härtet journald (persistentes Journal mit Größen-/Zeitgrenze), richtet
-logwatch als täglichen Mail-Report ein, schreibt die logrotate-Konfig für
-das secure-base-Logfile und aktiviert auditd mit sudo-Protokollierung und
+Härtet journald (persistentes Journal mit Größen-/Zeitgrenze), richtet den
+täglichen Bericht per Mail ein, schreibt die logrotate-Konfig für das
+secure-base-Logfile und aktiviert auditd mit sudo-Protokollierung und
 Audit-Regeln nach konv-system.md Abschnitt 3.4. Betriebsart über den
 Schlüssel operation.
+
+Der Tagesbericht besteht aus einer Zusammenfassung im Mailtext und dem
+vollständigen Logwatch-Bericht als Anhang. Die Zusammenfassung entsteht aus
+dem Journal und nennt die sicherheitsrelevanten Vorgänge des Tages —
+erfolgreiche Anmeldungen, Zwei-Faktor-Vorgänge, Rechteerhöhungen,
+fehlgeschlagene Dienste. Der mitgelieferte Cron-Lauf von logwatch, der den
+vollständigen Bericht in den Mailtext schreibt, wird dafür stillgelegt.
 """
 
 import re
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -16,6 +24,7 @@ from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.line_in_file_action import LineInFileAction
+from pifos.actions.permissions_action import PermissionsAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.actions.write_file_action import WriteFileAction
@@ -80,6 +89,198 @@ def _sudolog_content() -> str:
     return 'Defaults logfile="/var/log/sudo.log"\n'
 
 
+# Berichts-Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
+# als Anhang. Es ersetzt den mitgelieferten Cron-Lauf von logwatch, der den
+# vollständigen Bericht direkt in den Mailtext schreibt.
+#
+# Die Zusammenfassung entsteht aus dem Journal, nicht aus dem Logwatch-Text:
+# die Meldungsmuster von sshd, sudo und pam sind stabil, die Abschnitts-
+# Formatierung von Logwatch ist es nicht.
+#
+# Die Mail wird als MIME-Nachricht selbst gebaut und über sendmail zugestellt.
+# Das Postfix-Relay steht durch das Modul postfix fest zur Verfügung; ein
+# Anhang über den mail-Befehl hinge dagegen an dessen Optionsumfang, der je
+# nach mailx-Herkunft abweicht.
+_REPORT_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+# Von secure-base/logging angelegt — nicht von Hand bearbeiten.
+# cron-Umgebung ist spartanisch — PATH explizit setzen.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ADMIN_MAIL="{admin_mail}"
+MAIL_FROM="{mail_from}"
+FQDN="{fqdn}"
+
+REPORT="$(mktemp)"
+AUTH="$(mktemp)"
+BODY="$(mktemp)"
+trap 'rm -f "$REPORT" "$AUTH" "$BODY"' EXIT
+chmod 0600 "$REPORT" "$AUTH" "$BODY"
+
+DAY="$(date -d yesterday +%F)"
+SINCE="$DAY 00:00:00"
+UNTIL="$(date +%F) 00:00:00"
+
+# Vollständiger Logwatch-Bericht — Anhang der Mail, nicht Mailtext.
+"{logwatch_bin}" --output file --format text --range yesterday --filename "$REPORT"
+
+# Authentifizierungsmeldungen des Berichtstags: Journal-Facility auth (4) und
+# authpriv (10) — dieselbe Quelle, aus der auch auth.log gespeist wird.
+"{journalctl_bin}" --since "$SINCE" --until "$UNTIL" --no-pager -o short-iso \\
+    SYSLOG_FACILITY=4 + SYSLOG_FACILITY=10 >"$AUTH"
+
+# Schreibt einen Abschnitt: $1 Überschrift, Inhalt von stdin. Ohne Inhalt
+# erscheint "(keine)" — eine Überschrift ohne Zeilen wäre missverständlich.
+abschnitt() {{
+    local titel="$1"
+    local inhalt
+    inhalt="$(cat)"
+    printf '%s\\n' "$titel"
+    if [ -z "$inhalt" ]; then
+        printf '  (keine)\\n\\n'
+        return 0
+    fi
+    printf '%s\\n' "$inhalt" | sed 's/^/  /'
+    printf '\\n'
+}}
+
+# Durchsucht die Authentifizierungsmeldungen; kein Treffer ist kein Fehler
+# (grep endet dann mit 1, was unter "set -o pipefail" den Lauf abbräche).
+auth_suche() {{
+    grep -E "$1" "$AUTH" || true
+}}
+
+# Kürzt eine Journal-Zeile: Zeitstempel bleibt, der Rechnername fällt weg.
+kurz() {{
+    awk '{{ $2 = ""; sub("  ", " "); print }}'
+}}
+
+BANS="$("{journalctl_bin}" -u fail2ban --since "$SINCE" --until "$UNTIL" \\
+    --no-pager -q | grep -c ' Ban ' || true)"
+ABGEWIESEN="$(grep -c 'invalid user' "$AUTH" || true)"
+ABGEWIESEN_IPS="$(grep 'invalid user' "$AUTH" \\
+    | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | sort -u | wc -l || true)"
+FEHLER="$("{journalctl_bin}" --since "$SINCE" --until "$UNTIL" -p err \\
+    --no-pager -q -o short-iso || true)"
+
+{{
+    printf 'Tagesbericht %s — %s\\n\\n' "$DAY" "$FQDN"
+    printf 'Der vollständige Logwatch-Bericht liegt dieser Mail als Datei bei.\\n\\n'
+
+    auth_suche 'sshd\\[[0-9]+\\]: Accepted ' | kurz \\
+        | abschnitt 'Erfolgreiche SSH-Anmeldungen'
+
+    auth_suche 'pam_google_auth' | kurz \\
+        | abschnitt 'Zwei-Faktor (TOTP)'
+
+    auth_suche 'Failed [^ ]+ for ' | awk '!/invalid user/' | kurz \\
+        | abschnitt 'Fehlgeschlagene Anmeldungen bekannter Benutzer'
+
+    auth_suche 'sudo:.*(COMMAND=|authentication failure)|su\\[[0-9]+\\]: .*opened' \\
+        | kurz | abschnitt 'Rechteerhöhung (sudo, su)'
+
+    printf 'Sperren durch fail2ban\\n  %s\\n\\n' "$BANS"
+
+    printf 'Abgewiesene Anmeldeversuche (unbekannte Benutzer)\\n'
+    printf '  %s Versuche von %s Adressen — Einzelheiten im Anhang\\n\\n' \\
+        "$ABGEWIESEN" "$ABGEWIESEN_IPS"
+
+    "{systemctl_bin}" list-units --state=failed --no-legend --plain \\
+        | abschnitt 'Fehlgeschlagene Dienste'
+
+    "{journalctl_bin}" -t CRON --since "$SINCE" --until "$UNTIL" --no-pager -q \\
+        -o short-iso | grep -iE 'error|failed' | kurz \\
+        | abschnitt 'Fehlgeschlagene Cron-Läufe' || true
+
+    printf '%s' "$FEHLER" | kurz | head -n 20 \\
+        | abschnitt 'Fehlermeldungen im Journal (Priorität error, höchstens 20)'
+
+    "{df_bin}" -h --local -x tmpfs -x devtmpfs -x squashfs \\
+        | abschnitt 'Plattenplatz'
+}} >"$BODY"
+
+BOUNDARY="secure-base-$(date +%s)-$$"
+{{
+    printf 'From: %s\\n' "$MAIL_FROM"
+    printf 'To: %s\\n' "$ADMIN_MAIL"
+    printf 'Subject: [secure-base] Tagesbericht %s %s\\n' "$FQDN" "$DAY"
+    printf 'MIME-Version: 1.0\\n'
+    printf 'Content-Type: multipart/mixed; boundary="%s"\\n\\n' "$BOUNDARY"
+    printf -- '--%s\\n' "$BOUNDARY"
+    printf 'Content-Type: text/plain; charset=UTF-8\\n'
+    printf 'Content-Transfer-Encoding: base64\\n\\n'
+    "{base64_bin}" "$BODY"
+    printf -- '--%s\\n' "$BOUNDARY"
+    printf 'Content-Type: text/plain; charset=UTF-8\\n'
+    printf 'Content-Disposition: attachment; filename="logwatch-%s.txt"\\n' "$DAY"
+    printf 'Content-Transfer-Encoding: base64\\n\\n'
+    "{base64_bin}" "$REPORT"
+    printf -- '--%s--\\n' "$BOUNDARY"
+}} | "{sendmail_bin}" -t
+"""
+
+
+def _report_script_content(
+    admin_mail: str,
+    mail_from: str,
+    fqdn: str,
+    logwatch_bin: str,
+    journalctl_bin: str,
+    systemctl_bin: str,
+    df_bin: str,
+    base64_bin: str,
+    sendmail_bin: str,
+) -> str:
+    """Baut den Inhalt des Berichts-Skripts.
+
+    Args:
+        admin_mail: Empfänger der Tagesbericht-Mail.
+        mail_from: Absender der Tagesbericht-Mail.
+        fqdn: Rechnername für Betreff und Kopfzeile.
+        logwatch_bin: Pfad zu logwatch.
+        journalctl_bin: Pfad zu journalctl.
+        systemctl_bin: Pfad zu systemctl.
+        df_bin: Pfad zu df.
+        base64_bin: Pfad zu base64.
+        sendmail_bin: Pfad zu sendmail.
+
+    Returns:
+        Vollständiger Skriptinhalt.
+    """
+    return _REPORT_SCRIPT_TEMPLATE.format(
+        admin_mail=admin_mail,
+        mail_from=mail_from,
+        fqdn=fqdn,
+        logwatch_bin=logwatch_bin,
+        journalctl_bin=journalctl_bin,
+        systemctl_bin=systemctl_bin,
+        df_bin=df_bin,
+        base64_bin=base64_bin,
+        sendmail_bin=sendmail_bin,
+    )
+
+
+def _report_cron_content(script_path: str) -> str:
+    """Baut den Inhalt des cron.daily-Eintrags für den Tagesbericht.
+
+    Der Eintrag liegt in cron.daily, nicht in cron.d: der Bericht läuft
+    damit zur selben Tageszeit wie zuvor der mitgelieferte logwatch-Lauf,
+    ohne dass dafür ein eigener Zeitpunkt zu konfigurieren wäre.
+
+    Args:
+        script_path: Pfad des Berichts-Skripts.
+
+    Returns:
+        Vollständiger Inhalt des cron.daily-Eintrags.
+    """
+    return (
+        "#!/bin/sh\n"
+        "# Von secure-base/logging angelegt — nicht von Hand bearbeiten.\n"
+        f"exec {script_path}\n"
+    )
+
+
 def _doc_value(values: dict[str, str], key: str) -> str:
     """Liest einen Wert für den Installationsbericht aus values.
 
@@ -121,6 +322,27 @@ class Logging(Module):
     LOGROTATE_CONF: ClassVar[str] = "/etc/logrotate.d/secure-base"
     AUDIT_RULES_FILE: ClassVar[str] = "/etc/audit/rules.d/secure-base.rules"
     SUDOLOG_CONF: ClassVar[str] = "/etc/sudoers.d/secure-base-sudolog"
+
+    # Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
+    # als Anhang (siehe _REPORT_SCRIPT_TEMPLATE).
+    DF_BIN: ClassVar[str] = "/usr/bin/df"
+    BASE64_BIN: ClassVar[str] = "/usr/bin/base64"
+    SENDMAIL_BIN: ClassVar[str] = "/usr/sbin/sendmail"
+    REPORT_SCRIPT: ClassVar[str] = "/usr/local/sbin/secure-base-logwatch.sh"
+    REPORT_CRON: ClassVar[str] = "/etc/cron.daily/secure-base-logwatch"
+    REPORT_SCRIPT_MODE: ClassVar[int] = 0o700
+    REPORT_CRON_MODE: ClassVar[int] = 0o755
+
+    # Der mitgelieferte Cron-Lauf von logwatch schreibt den vollständigen
+    # Bericht in den Mailtext und ruft logwatch mit "--output mail" auf, was
+    # jede Vorgabe aus logwatch.conf übergeht. Er wird deshalb stillgelegt,
+    # indem ihm das Ausführungsrecht genommen wird (run-parts überspringt
+    # nicht ausführbare Dateien) — die Paketdatei selbst bleibt unangetastet.
+    # Ein Paket-Upgrade kann das Recht zurücksetzen; die Betriebsart check
+    # prüft es deshalb mit.
+    STOCK_CRON: ClassVar[str] = "/etc/cron.daily/00logwatch"
+    STOCK_CRON_MODE_OFF: ClassVar[int] = 0o644
+    STOCK_CRON_MODE_ON: ClassVar[int] = 0o755
 
     # apt-/systemd-Aktionsklassen als Klassenattribute (Begründung wie im
     # Referenzmodul base): Testunterklasse kann sie im Testbaum umlenken.
@@ -203,12 +425,24 @@ class Logging(Module):
             "  - `-e 2 (Immutable — Regeländerungen ohne Reboot gesperrt)`\n"
             f"- `{cls.SUDOLOG_CONF}`:\n"
             '  - `Defaults logfile="/var/log/sudo.log"`\n'
-            "\n**Timer/Cron:** logwatch: täglicher Lauf via "
-            "/etc/cron.daily/00logwatch\n"
+            f"- `{cls.REPORT_SCRIPT}`:\n"
+            "  - `Tagesbericht: Zusammenfassung im Mailtext, vollständiger"
+            " Logwatch-Bericht als Anhang`\n"
+            f"- `{cls.REPORT_CRON}`:\n"
+            "  - `täglicher Aufruf des Berichts-Skripts`\n"
+            "\n**Timer/Cron:** täglicher Lauf via"
+            f" {cls.REPORT_CRON}; der mitgelieferte Lauf {cls.STOCK_CRON} ist"
+            f" stillgelegt (Rechte {oct(cls.STOCK_CRON_MODE_OFF)})\n"
             "\n> Hinweis: systemd-journald wird nicht neu installiert "
             f"(Basis-Infrastruktur); persistentes Journal wird unter "
             f"{cls.JOURNAL_DIR} abgelegt. auditd-Regeln mit -e 2 (Immutable) "
-            "greifen erst nach dem nächsten Reboot.\n"
+            "greifen erst nach dem nächsten Reboot. Die Zusammenfassung im"
+            " Mailtext nennt erfolgreiche SSH-Anmeldungen, Zwei-Faktor-Vorgänge,"
+            " fehlgeschlagene Anmeldungen bekannter Benutzer, sudo/su,"
+            " fail2ban-Sperren, fehlgeschlagene Dienste und Cron-Läufe,"
+            " Journal-Fehler und Plattenplatz; die Aufzählung der abgewiesenen"
+            " Anmeldeversuche unbekannter Benutzer steht als Summe im Text und"
+            " vollständig im Anhang.\n"
         )
 
     def _validate(self) -> None:
@@ -243,6 +477,27 @@ class Logging(Module):
         if not sep:
             return ""
         return f"root@{domain}"
+
+    def _report_script(self, mailfrom: str) -> str:
+        """Baut den Inhalt des Berichts-Skripts mit den Werten dieses Laufs.
+
+        Args:
+            mailfrom: Absender-Adresse (Rückgabe von _mailfrom()).
+
+        Returns:
+            Vollständiger Skriptinhalt.
+        """
+        return _report_script_content(
+            admin_mail=self.admin_mail,
+            mail_from=mailfrom,
+            fqdn=self.fqdn,
+            logwatch_bin=self.LOGWATCH_BIN,
+            journalctl_bin=self.JOURNALCTL_BIN,
+            systemctl_bin=self.SYSTEMCTL_BIN,
+            df_bin=self.DF_BIN,
+            base64_bin=self.BASE64_BIN,
+            sendmail_bin=self.SENDMAIL_BIN,
+        )
 
     def _logwatch_directives(self, mailfrom: str) -> list[tuple[str, str]]:
         """Baut die Soll-Direktiven der logwatch-Konfiguration.
@@ -331,6 +586,30 @@ class Logging(Module):
             )
         steps += [
             (
+                "Berichts-Skript schreiben",
+                WriteFileAction(
+                    dst=self.REPORT_SCRIPT,
+                    content=self._report_script(mailfrom),
+                    mode=self.REPORT_SCRIPT_MODE,
+                    overwrite=True,
+                    safe_mode=False,
+                ),
+            ),
+            (
+                "Berichts-Cron schreiben",
+                WriteFileAction(
+                    dst=self.REPORT_CRON,
+                    content=_report_cron_content(self.REPORT_SCRIPT),
+                    mode=self.REPORT_CRON_MODE,
+                    overwrite=True,
+                    safe_mode=False,
+                ),
+            ),
+            (
+                "mitgelieferten logwatch-Cron stilllegen",
+                PermissionsAction(path=self.STOCK_CRON, mode=self.STOCK_CRON_MODE_OFF),
+            ),
+            (
                 "logrotate-Konfig schreiben",
                 WriteFileAction(
                     dst=self.LOGROTATE_CONF,
@@ -406,6 +685,7 @@ class Logging(Module):
         """
         steps: list[tuple[str, _Step]] = [
             ("journald-Direktiven zurücknehmen", self._step_remove_journald),
+            ("Tagesbericht zurücknehmen", self._step_remove_report),
             ("logwatch entfernen", self._step_remove_logwatch),
             ("logrotate-Konfig entfernen", self._step_remove_logrotate),
             ("Audit-Regeln entfernen", self._step_remove_audit_rules),
@@ -451,6 +731,27 @@ class Logging(Module):
             self.SYSTEMD_ACTION_CLS(
                 operation="restart", unit="systemd-journald", timeout=30
             )
+        )
+
+    def _step_remove_report(self) -> int:
+        """Entfernt Berichts-Skript und -Cron und gibt den logwatch-Cron frei.
+
+        Der mitgelieferte Cron-Lauf bekommt sein Ausführungsrecht zurück,
+        damit nach dem Rückbau wieder der Zustand vor der Installation
+        gilt — vorausgesetzt, das Paket bleibt (sonst entfernt der Schritt
+        "logwatch entfernen" die Datei ohnehin mit).
+
+        Returns:
+            0 bei Erfolg, 1 bei Fehlschlag.
+        """
+        if self._remove_file_if_exists(self.REPORT_CRON) != 0:
+            return 1
+        if self._remove_file_if_exists(self.REPORT_SCRIPT) != 0:
+            return 1
+        if not Path(self.STOCK_CRON).exists():
+            return 0
+        return self.run_action(
+            PermissionsAction(path=self.STOCK_CRON, mode=self.STOCK_CRON_MODE_ON)
         )
 
     def _step_remove_logwatch(self) -> int:
@@ -679,6 +980,9 @@ class Logging(Module):
             ok &= self._check_file_line(
                 self.LOGWATCH_CONF, f"{key} = {value}", f"logwatch {key}"
             )
+        ok &= self._check_report_script(mailfrom)
+        ok &= self._check_report_cron()
+        ok &= self._check_stock_cron_disabled()
         ok &= self._check_file_exists(self.LOGROTATE_CONF, "logrotate-Konfig")
         ok &= self._check_installed("auditd", "Paket auditd")
         ok &= self._check_value(
@@ -742,6 +1046,101 @@ class Logging(Module):
             return True
         self.send_message(
             LogLevel.ERROR, "logging", f"{label}: nicht gesetzt (soll: {expected_line})"
+        )
+        return False
+
+    def _check_report_script(self, mailfrom: str) -> bool:
+        """Prüft Inhalt und Rechte des Berichts-Skripts.
+
+        Args:
+            mailfrom: Absender-Adresse (Rückgabe von _mailfrom()).
+
+        Returns:
+            True bei übereinstimmendem Inhalt und korrekten Rechten.
+        """
+        try:
+            content = Path(self.REPORT_SCRIPT).read_text(encoding="utf-8")
+        except OSError:
+            self.send_message(
+                LogLevel.ERROR,
+                "logging",
+                f"Berichts-Skript: fehlt oder nicht lesbar ({self.REPORT_SCRIPT})",
+            )
+            return False
+        if content != self._report_script(mailfrom):
+            self.send_message(
+                LogLevel.ERROR,
+                "logging",
+                f"Berichts-Skript: Inhalt weicht vom Soll ab ({self.REPORT_SCRIPT})",
+            )
+            return False
+        self.send_message(LogLevel.INFO, "logging", "Berichts-Skript: Inhalt OK")
+        return self._check_mode(
+            self.REPORT_SCRIPT, self.REPORT_SCRIPT_MODE, "Berichts-Skript"
+        )
+
+    def _check_report_cron(self) -> bool:
+        """Prüft Inhalt und Rechte des cron.daily-Eintrags für den Tagesbericht.
+
+        Returns:
+            True bei übereinstimmendem Inhalt und korrekten Rechten.
+        """
+        if not self._check_file_line(
+            self.REPORT_CRON, f"exec {self.REPORT_SCRIPT}", "Berichts-Cron"
+        ):
+            return False
+        return self._check_mode(
+            self.REPORT_CRON, self.REPORT_CRON_MODE, "Berichts-Cron"
+        )
+
+    def _check_stock_cron_disabled(self) -> bool:
+        """Prüft, ob der mitgelieferte logwatch-Cron stillgelegt ist.
+
+        Ist die Datei nicht vorhanden, ist nichts stillzulegen. Ist sie
+        ausführbar, würde sie neben dem Tagesbericht eine zweite Mail mit
+        dem vollständigen Bericht verschicken — etwa nachdem ein
+        Paket-Upgrade die Rechte zurückgesetzt hat.
+
+        Returns:
+            True, wenn die Datei fehlt oder nicht ausführbar ist.
+        """
+        path = Path(self.STOCK_CRON)
+        if not path.exists():
+            self.send_message(
+                LogLevel.INFO,
+                "logging",
+                f"mitgelieferter logwatch-Cron nicht vorhanden ({self.STOCK_CRON})",
+            )
+            return True
+        return self._check_mode(
+            self.STOCK_CRON, self.STOCK_CRON_MODE_OFF, "mitgelieferter logwatch-Cron"
+        )
+
+    def _check_mode(self, path: str, expected_mode: int, label: str) -> bool:
+        """Prüft die Rechte eines Dateisystemobjekts.
+
+        Args:
+            path: Zu prüfender Pfad.
+            expected_mode: Erwartete Rechte.
+            label: Beschreibung für die Meldung.
+
+        Returns:
+            True bei Übereinstimmung, sonst False.
+        """
+        try:
+            current = stat.S_IMODE(Path(path).stat().st_mode)
+        except OSError:
+            self.send_message(LogLevel.ERROR, "logging", f"{label}: fehlt ({path})")
+            return False
+        if current == expected_mode:
+            self.send_message(
+                LogLevel.INFO, "logging", f"{label}: Rechte {oct(current)} — OK"
+            )
+            return True
+        self.send_message(
+            LogLevel.ERROR,
+            "logging",
+            f"{label}: Rechte {oct(current)}, erwartet {oct(expected_mode)}",
         )
         return False
 

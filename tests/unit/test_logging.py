@@ -12,6 +12,8 @@ from secure_base.modules.logging import (
     Logging,
     _audit_rules_content,
     _logrotate_content,
+    _report_cron_content,
+    _report_script_content,
     _sudolog_content,
 )
 
@@ -332,7 +334,10 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert "-e 2 (Immutable" in section
     assert f"`{Logging.SUDOLOG_CONF}`" in section
     assert 'Defaults logfile="/var/log/sudo.log"' in section
-    assert "**Timer/Cron:** logwatch" in section
+    assert "**Timer/Cron:** täglicher Lauf via" in section
+    assert Logging.REPORT_CRON in section
+    assert Logging.REPORT_SCRIPT in section
+    assert Logging.STOCK_CRON in section
     assert f"{Logging.JOURNAL_DIR} abgelegt" in section
 
 
@@ -355,3 +360,101 @@ def test_doc_never_leaks_unrelated_secret_values() -> None:
     section = Logging.doc(values)
     assert "GEHEIM-X" not in section
     assert "relay_password" not in section
+
+
+# --- Tagesbericht (Skript und Cron) ---
+
+
+def _script() -> str:
+    """Baut einen Skriptinhalt mit festen Werten für die Inhaltsprüfungen."""
+    return _report_script_content(
+        admin_mail="admin@example.com",
+        mail_from="root@example.com",
+        fqdn="server.example.com",
+        logwatch_bin="/usr/bin/logwatch",
+        journalctl_bin="/usr/bin/journalctl",
+        systemctl_bin="/usr/bin/systemctl",
+        df_bin="/usr/bin/df",
+        base64_bin="/usr/bin/base64",
+        sendmail_bin="/usr/sbin/sendmail",
+    )
+
+
+def test_report_script_writes_logwatch_report_to_a_file_not_to_mail() -> None:
+    """logwatch schreibt in eine Datei — der volle Bericht geht als Anhang mit."""
+    content = _script()
+    assert '"/usr/bin/logwatch" --output file --format text' in content
+    assert "--output mail" not in content
+
+
+def test_report_script_summary_covers_the_agreed_sections() -> None:
+    """Die Zusammenfassung enthält die vereinbarten Abschnitte."""
+    content = _script()
+    for title in (
+        "Erfolgreiche SSH-Anmeldungen",
+        "Zwei-Faktor (TOTP)",
+        "Fehlgeschlagene Anmeldungen bekannter Benutzer",
+        "Rechteerhöhung (sudo, su)",
+        "Sperren durch fail2ban",
+        "Abgewiesene Anmeldeversuche (unbekannte Benutzer)",
+        "Fehlgeschlagene Dienste",
+        "Fehlgeschlagene Cron-Läufe",
+        "Plattenplatz",
+    ):
+        assert title in content
+
+
+def test_report_script_excludes_unknown_users_from_the_failed_logins_section() -> None:
+    """Bot-Versuche auf unbekannte Namen zählen nicht als fehlgeschlagene Anmeldung."""
+    content = _script()
+    assert "awk '!/invalid user/'" in content
+
+
+def test_report_script_reads_auth_messages_from_the_journal() -> None:
+    """Die Zusammenfassung stammt aus dem Journal (Facility auth/authpriv)."""
+    content = _script()
+    assert "SYSLOG_FACILITY=4 + SYSLOG_FACILITY=10" in content
+
+
+def test_report_script_sends_a_mime_mail_with_the_report_attached() -> None:
+    """Die Mail hat zwei Teile: Zusammenfassung als Text, Bericht als Anhang."""
+    content = _script()
+    assert "Content-Type: multipart/mixed" in content
+    assert "Content-Disposition: attachment" in content
+    assert '"/usr/sbin/sendmail" -t' in content
+
+
+def test_report_cron_content_calls_the_report_script() -> None:
+    """Der cron.daily-Eintrag ruft das Berichts-Skript auf."""
+    content = _report_cron_content("/usr/local/sbin/secure-base-logwatch.sh")
+    assert content.startswith("#!/bin/sh\n")
+    assert "exec /usr/local/sbin/secure-base-logwatch.sh\n" in content
+
+
+def test_build_report_script_uses_the_configured_values() -> None:
+    """Das gebaute Skript enthält Empfänger, Absender und Rechnernamen des Laufs."""
+    mod = _make_logging(fqdn="srv.example.com", admin_mail="admin@example.com")
+    content = mod._report_script("root@example.com")
+    assert 'ADMIN_MAIL="admin@example.com"' in content
+    assert 'MAIL_FROM="root@example.com"' in content
+    assert 'FQDN="srv.example.com"' in content
+
+
+def test_check_stock_cron_disabled_accepts_a_missing_file(tmp_path: Path) -> None:
+    """Fehlt der mitgelieferte logwatch-Cron, ist nichts stillzulegen."""
+    mod = _make_logging()
+    mod.STOCK_CRON = str(tmp_path / "fehlt")  # type: ignore[misc]
+    assert mod._check_stock_cron_disabled() is True
+
+
+def test_check_stock_cron_disabled_rejects_an_executable_file(tmp_path: Path) -> None:
+    """Ein ausführbarer logwatch-Cron würde eine zweite Mail verschicken."""
+    mod = _make_logging()
+    stock = tmp_path / "00logwatch"
+    stock.write_text("#!/bin/bash\n", encoding="utf-8")
+    stock.chmod(0o755)
+    mod.STOCK_CRON = str(stock)  # type: ignore[misc]
+    assert mod._check_stock_cron_disabled() is False
+
+    stock.chmod(0o644)
+    assert mod._check_stock_cron_disabled() is True

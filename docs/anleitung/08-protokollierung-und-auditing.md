@@ -1,6 +1,6 @@
 # Protokollierung und Auditing
 
-Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `logwatch` als tägliche Mail-Zusammenfassung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs.
+Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `logwatch` als tägliche Auswertung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs. Den täglichen Bericht verschickt ein eigenes Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang (Kapitel 3).
 
 ## 1. journald persistent
 
@@ -42,9 +42,34 @@ Detail = Med
 Range = yesterday
 ```
 
-`logwatch` läuft per Distro-Default täglich aus `cron.daily`. Der Versand nutzt das Postfix aus Kapitel 2 der Installationsanleitung. Erster Probelauf: `logwatch --output mail`.
+Der Versand nutzt das Postfix aus Kapitel 2 der Installationsanleitung.
 
-## 3. auditd
+## 3. Tagesbericht: Zusammenfassung im Mailtext, Logwatch-Bericht als Anhang
+
+Der vollständige Logwatch-Bericht umfasst leicht zweitausend Zeilen, von denen über neunzig Prozent Aufzählungen abgewiesener Anmeldeversuche und HTTP-Scanner sind. Diese Hosts hat `fail2ban` bereits gesperrt, die Aufzählung ändert an keiner Entscheidung etwas. Steht sie im Mailtext, wird der Bericht nicht mehr gelesen und verdeckt damit das Wenige, worauf es ankommt.
+
+Deshalb verschickt ein eigenes Skript den Bericht: Der Mailtext trägt eine Zusammenfassung der sicherheitsrelevanten Vorgänge, der vollständige Logwatch-Bericht liegt als Datei bei und ist damit bei Bedarf sofort greifbar.
+
+Die Zusammenfassung nennt erfolgreiche SSH-Anmeldungen mit Benutzer, Quell-IP und Zeit, die Zwei-Faktor-Vorgänge (angenommene wie abgelehnte TOTP-Codes), fehlgeschlagene Anmeldungen bekannter Benutzer, `sudo`- und `su`-Aufrufe, die Zahl der fail2ban-Sperren, fehlgeschlagene Dienste und Cron-Läufe, Journal-Fehler und den Plattenplatz. Die abgewiesenen Anmeldeversuche unbekannter Benutzer erscheinen nur als Summe — sie stehen vollständig im Anhang.
+
+Ihre Quelle ist das Journal, nicht der Logwatch-Text: Die Meldungsmuster von `sshd`, `sudo` und `pam` sind stabil, die Abschnitts-Formatierung von Logwatch ist es nicht.
+
+Skript `/usr/local/sbin/secure-base-logwatch.sh` anlegen (Mode 700). Es erzeugt den Logwatch-Bericht mit `--output file`, baut die Zusammenfassung aus `journalctl` und verschickt beides als MIME-Mail über `sendmail`. Der cron.daily-Eintrag `/etc/cron.daily/secure-base-logwatch` (Mode 755) ruft es auf:
+
+```
+#!/bin/sh
+exec /usr/local/sbin/secure-base-logwatch.sh
+```
+
+Der mitgelieferte Lauf `/etc/cron.daily/00logwatch` schreibt den vollständigen Bericht in den Mailtext und ruft `logwatch` mit `--output mail` auf, was jede Vorgabe aus `logwatch.conf` übergeht. Er wird stillgelegt, indem ihm das Ausführungsrecht genommen wird — `run-parts` überspringt nicht ausführbare Dateien, die Paketdatei selbst bleibt unangetastet:
+
+```
+chmod 644 /etc/cron.daily/00logwatch
+```
+
+Ein Paket-Upgrade kann dieses Recht zurücksetzen. Dann kommen zwei Mails, und der Abgleich (`check`) des Moduls `logging` meldet es.
+
+## 4. auditd
 
 `auditd` protokolliert administrative Änderungen nachweisbar. Das Regelset bleibt klein und auf administrative Vorgänge ausgerichtet.
 
@@ -88,7 +113,7 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 
 Überprüfung: `auditctl -l` listet die Soll-Regeln vollständig, `auditctl -s` meldet `enabled 2`. Wegen des Immutable-Modus (`-e 2`) verlangt jede Regeländerung einen Reboot.
 
-## 4. sudo-Protokollierung
+## 5. sudo-Protokollierung
 
 `sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`), seine Aufrufe werden aber dennoch protokolliert. In `/etc/sudoers.d/secure-base-sudolog` (Mode 440):
 
@@ -96,6 +121,6 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 Defaults logfile="/var/log/sudo.log"
 ```
 
-## 5. Log-Rotation
+## 6. Log-Rotation
 
 Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` rotiert (`weekly`, `rotate 8` — acht Wochen Vorhaltung). `journald` und `auditd` verwalten die Rotation ihrer Logs selbst.

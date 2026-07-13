@@ -13,7 +13,11 @@ Die Protokollierung besteht aus mehreren Komponenten aus den Distro-Paketquellen
 
 `journald` läuft persistent (`Storage=persistent`), begrenzt auf 1 GB Plattenverbrauch (`SystemMaxUse=1G`) und drei Monate Aufbewahrung (`MaxRetentionSec=3month`). Damit überleben Logs den Reboot und die Mindest-Aufbewahrung sicherheitsrelevanter Ereignisse von drei Monaten ist erfüllt.
 
-`logwatch` erzeugt täglich aus `cron.daily` eine Mail-Zusammenfassung des Vortags und versendet diese an die Administrator Email Adresse. Der Detailgrad ist mittel (`Detail = Med`).
+`logwatch` wertet die Logs des Vortags aus (Detailgrad mittel, `Detail = Med`). Sein Bericht geht nicht als Mailtext hinaus: Über neunzig Prozent davon sind Aufzählungen abgewiesener Anmeldeversuche und HTTP-Scanner, die `fail2ban` bereits gesperrt hat. Ein Bericht, der zu über neunzig Prozent aus Rauschen besteht, wird nicht gelesen.
+
+Stattdessen verschickt `/usr/local/sbin/secure-base-logwatch.sh` täglich aus `cron.daily` einen Tagesbericht an die Administrator Email Adresse: Der Mailtext trägt eine Zusammenfassung der sicherheitsrelevanten Vorgänge, der vollständige Logwatch-Bericht liegt als Datei bei. Die Zusammenfassung nennt erfolgreiche SSH-Anmeldungen mit Benutzer, Quell-IP und Zeit, die Zwei-Faktor-Vorgänge, fehlgeschlagene Anmeldungen bekannter Benutzer, `sudo`- und `su`-Aufrufe, die Zahl der fail2ban-Sperren, fehlgeschlagene Dienste und Cron-Läufe, Journal-Fehler und den Plattenplatz. Abgewiesene Anmeldeversuche unbekannter Benutzer erscheinen nur als Summe.
+
+Quelle der Zusammenfassung ist das Journal, nicht der Logwatch-Text: Die Meldungsmuster von `sshd`, `sudo` und `pam` sind stabil, die Abschnitts-Formatierung von Logwatch ist es nicht. Der mitgelieferte Lauf `/etc/cron.daily/00logwatch` ist stillgelegt (Ausführungsrecht entzogen), sonst käme der vollständige Bericht ein zweites Mal als Mailtext.
 
 `auditd` protokolliert sicherheitskritische Aktivitäten; das Regelset ist auf administrative Vorgänge beschränkt und nach dem Laden bis zum Reboot unveränderlich (`-e 2`).
 
