@@ -188,6 +188,22 @@ Die Erfassung ist in beiden Distributionen vollständig und doppelungsfrei, auf 
 
 `logwatch` und `rkhunter` liefern auf beiden Distributionen dieselben Dateien `/etc/cron.daily/00logwatch` bzw. `/etc/cron.daily/rkhunter`. Das Stilllegen des mitgelieferten logwatch-Laufs funktioniert auf Debian unverändert.
 
+### 5.8 lynis: ältere Version, gleicher Prüfumfang
+
+Debian liefert `lynis` 3.1.4, Ubuntu 3.1.6. Der Versionsunterschied hat keine Wirkung auf die Härtungsprüfung:
+
+| Gegenstand | Befund |
+|---|---|
+| Profil `/etc/lynis/default.prf` | in beiden Paketen **byte-identisch**; Debian bringt kein eigenes Profil mit |
+| Plugins | in beiden dieselben |
+| Testdateien | 43 in beiden |
+| registrierte Test-IDs | 473 in beiden, **deckungsgleiche Menge** — keine ID existiert nur in einer Version |
+| `include/consts` (Berichtspfad) | identisch — `/var/log/lynis-report.dat` gilt auf beiden |
+
+Inhaltlich unterscheiden sich sieben Testdateien, aber nur in Kleinigkeiten: In `tests_logging` etwa ist der Prozessname des Wazuh-Agenten korrigiert (`wazuh-agent` → `wazuh-agentd`), und ein fehlendes `logrotate` wird in 3.1.6 als „nicht gefunden" statt als Warnung gewertet. Solche Nuancen können den Hardening-Index um wenige Punkte verschieben, ändern aber nichts an Funktion oder Vergleichbarkeit des Prüfnachweises.
+
+Das Modul `lynis` ist ohnehin unempfindlich: Es setzt kein Profil, wertet die Ausgabe nicht aus und pinnt keine Version.
+
 ## 6. Was widerlegt wurde
 
 Drei Annahmen aus der ersten, gedächtnisbasierten Einschätzung haben der Prüfung **nicht** standgehalten:
@@ -218,21 +234,20 @@ Punkt 4 ist umgesetzt: Das Modul `logging` richtet die sudo-Protokollierung und 
 
 ## 8. Offen — nur auf einem laufenden Debian 13 zu klären
 
-Diese Punkte lassen sich aus Paketdaten **nicht** beantworten:
+Keine mehr. Alle vier Punkte, die hier zunächst standen, sind aus den Paketen selbst beantwortet:
 
-- **Ob `lynis` unter Debian dasselbe Profil und dieselben Tests fährt.** Debian liefert eine ältere Version (3.1.4 gegen 3.1.6).
+| Ursprüngliche Frage | Antwort |
+|---|---|
+| Welche SSH-Unit ist im Auslieferungszustand aktiv? | Debian `ssh.service`, Ubuntu `ssh.socket` — belegt aus den `postinst`-Skripten (Kapitel 5.4) |
+| Nimmt `auditd` die Regel auf `/var/log/lastlog` an? | Die Datei gibt es nicht mehr; die Regel ist auf die geführte Anmeldedatenbank umgezogen (Kapitel 5.6) |
+| Ist `sudo` auf dem Debian-Image installiert? | Muss nicht vorab feststehen — das Modul `logging` entscheidet zur Laufzeit anhand der Pfade (Kapitel 7) |
+| Fährt `lynis` unter Debian dieselben Tests? | Ja — gleiches Profil, gleiche 473 Test-IDs (Kapitel 5.8) |
 
-Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab und nicht vom Paketindex — der Debian-Installer installiert es, wenn kein Root-Passwort gesetzt wird. Das muss nicht mehr vorab geklärt werden: Das Modul `logging` entscheidet zur Laufzeit anhand der Pfade (Kapitel 7).
-
-Die Frage, welche SSH-Unit im Auslieferungszustand aktiv ist, ist aus den Paketen beantwortet (Kapitel 5.4) und damit hier erledigt. Ein anderes Image kann davon abweichen — es hebt eine Aktivierung aus dem `postinst` aber nicht auf, sondern müsste sie ausdrücklich ändern.
-
-Die Audit-Regel auf `/var/log/lastlog` ist ebenfalls aus den Paketen geklärt (Kapitel 5.6) und im Modul `logging` auf die tatsächlich geführten Anmeldedatenbanken umgezogen.
+Was ein laufendes Debian 13 noch zeigen muss, ist der Installationslauf selbst: ob alle Module durchlaufen und ihr `check` grün meldet. Das ist ein Praxislauf, keine offene Sachfrage.
 
 ## 9. Nächster Schritt
 
-Die fünf Punkte aus Kapitel 7 sind abgearbeitet. Dazu kamen die AppArmor-Aussagen (Kapitel 5.5), die auf Ubuntu festgelegt waren, sachlich aber für beide Distributionen gelten — sie sind jetzt neutral formuliert.
-
-Offen bleiben die vier Fragen aus Kapitel 8, die sich nur auf einem laufenden Debian 13 beantworten lassen.
+Die fünf Punkte aus Kapitel 7 sind abgearbeitet. Dazu kamen die AppArmor-Aussagen (Kapitel 5.5), die auf Ubuntu festgelegt waren, sachlich aber für beide Distributionen gelten — sie sind jetzt neutral formuliert. Sachfragen sind keine mehr offen (Kapitel 8). Aus steht der Installationslauf auf einem Debian 13.
 
 Die Erkennung der Distribution liegt in `secure_base.distro`. Der Installer fragt sie als ersten Schritt jedes Laufs ab und bricht auf einer nicht unterstützten Distribution mit Code 2 ab, bevor er die Konfiguration liest oder ein Modul startet. Das Modul `unattended` fragt sie zusätzlich ab, weil es zwischen den beiden Benennungen der Paketquellen wählen muss.
 
