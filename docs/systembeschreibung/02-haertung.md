@@ -16,7 +16,9 @@ Dieses Dokument legt die Anforderungen an die Härtung des Linux Grundsystems fe
 
 ## 1. Maßstab und Geltung
 
-Die Härtung folgt dem BSI-Grundschutz als Referenz für die Auswahl der Maßnahmen. Die technische Konfiguration wird mit dem CIS-Benchmark für Ubuntu Server (Level 1) geprüft. CIS Level 1 liefert die konkrete, testbare Konfigurations-Checkliste.
+Die Härtung folgt dem BSI-Grundschutz als Referenz für die Auswahl der Maßnahmen. Die technische Konfiguration wird mit dem CIS-Benchmark (Level 1) geprüft. CIS Level 1 liefert die konkrete, testbare Konfigurations-Checkliste.
+
+Der Benchmark ist distributionsspezifisch: Maßgeblich ist der Benchmark der eingesetzten Distribution — der *CIS Ubuntu Linux Benchmark* auf Ubuntu, der *CIS Debian Linux Benchmark* auf Debian. Liegt für den eingesetzten Stand noch kein Benchmark vor, gilt der des jüngsten veröffentlichten Stands derselben Distribution. Die Auswahl der Maßnahmen ändert das nicht — sie folgt dem BSI-Grundschutz und ist für beide Distributionen dieselbe.
 
 Der Maßstab ist verbindlicher Soll-Maßstab, d. h. *begründete* Abweichungen können möglich sein.
 
@@ -73,7 +75,7 @@ Dienste, die keine root-Rechte benötigen (Postfix, nginx), laufen unter einem e
 
 ## 8. Härtungsprüfung
 
-Die Härtungsprüfung erfolgt mit `lynis` (`lynis audit system`) als Standard-Audit-Werkzeug, ergänzt um den Abgleich mit der CIS-Konfigurations-Checkliste (Ubuntu Server Level 1). Der Lauf wird zeitbasiert automatisiert (cron) und sein Ergebnis abgelegt.
+Die Härtungsprüfung erfolgt mit `lynis` (`lynis audit system`) als Standard-Audit-Werkzeug, ergänzt um den Abgleich mit der CIS-Konfigurations-Checkliste (Level 1) der eingesetzten Distribution (Kapitel 1). `lynis` erkennt die Distribution selbst und braucht dafür keine Vorgabe. Der Lauf wird zeitbasiert automatisiert (cron) und sein Ergebnis abgelegt.
 
 Der Befund je BSI-Maßnahmenklasse wird mit Schweregrad und Handlungsempfehlung festgehalten. Der Prüflauf erfolgt monatlich.
 
@@ -88,3 +90,4 @@ Dateien, die der Normalbetrieb erzeugt und `rkhunter` als verdächtig meldet, si
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
 | 0.02 | 2026-06-22 | macodix | base-Grundhärtung (sysctl, usb-Blacklist, autofs, NTP) und konkrete sshd-Sollwerte ergänzt; AppArmor-Aktivierung durch base benannt. |
 | 0.03 | 2026-07-13 | macodix | Aussage zu sudo distributionsneutral gefasst: nicht genutzt, nicht nachinstalliert, Überwachung nur wenn vorhanden. |
+| 0.04 | 2026-07-13 | macodix | Härtungsmaßstab: CIS-Benchmark der eingesetzten Distribution (Ubuntu bzw. Debian) statt fest Ubuntu. |

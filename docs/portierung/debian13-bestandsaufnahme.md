@@ -163,11 +163,13 @@ Drei Annahmen aus der ersten, gedächtnisbasierten Einschätzung haben der Prüf
 | 2 | Neustart-Kennzeichen außerhalb des Kernels | `unattended.py` `/var/run/reboot-required` | nur bei Kernel-Updates gesetzt |
 | 3 | Systemprotokolle als Dateien | `logging.py` (Paketliste) | ohne `rsyslog` nicht vorhanden — **erledigt** |
 | 4 | `sudo` und `/etc/sudoers.d` | `logging.py` `SUDOLOG_CONF`, `AUDIT_RULES` | nicht garantiert installiert — **erledigt** |
-| 5 | Härtungsmaßstab | Doku, `lynis`-Profil | CIS-Benchmark für Debian statt Ubuntu |
+| 5 | Härtungsmaßstab | Doku | CIS-Benchmark für Debian statt Ubuntu — **erledigt** |
 
 Punkt 3 ist umgesetzt, und zwar ohne Verzweigung: Das Modul `logging` installiert `rsyslog` mit. Unter Ubuntu ist es ohnehin vorhanden, der Schritt ändert dort nichts. Damit existieren die Protokolldateien unter `/var/log` auf beiden Distributionen, und der angehängte Logwatch-Bericht behält seine Quellen. Beim Rückbau bleibt `rsyslog` bestehen — es schreibt Dateien, die auch Werkzeuge außerhalb von secure-base lesen, und auf einem Teil der Distributionen gehört es zur Standardinstallation.
 
 Für die Zusammenfassung im Tagesbericht war das ohnehin unkritisch: Sie liest aus dem Journal.
+
+Punkt 5 betrifft nur die Dokumentation. Maßgeblich ist jetzt der CIS-Benchmark der eingesetzten Distribution (Level 1) — auf Ubuntu der *CIS Ubuntu Linux Benchmark*, auf Debian der *CIS Debian Linux Benchmark*. Am Code ändert das nichts: `lynis` erkennt die Distribution selbst, und das Modul setzt kein Profil. Die Auswahl der Maßnahmen bleibt für beide Distributionen dieselbe, sie folgt dem BSI-Grundschutz.
 
 Punkt 1 ist umgesetzt: Das Modul `unattended` schreibt unter Debian einen `Origins-Pattern`-Block mit Origin, Codename und Label, unter Ubuntu weiterhin die Kurzform `Allowed-Origins`. Welche Distribution läuft, stellt `secure_base.distro` aus `/etc/os-release` fest; auf einer nicht unterstützten Distribution bricht das Modul ab, statt eine der beiden Benennungen zu unterstellen. `check` prüft die Datei am Soll der laufenden Distribution — eine unter Ubuntu geschriebene Datei fällt auf Debian als Abweichung auf.
 
@@ -185,7 +187,9 @@ Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab un
 
 ## 9. Nächster Schritt
 
-Von den fünf Punkten aus Kapitel 7 sind drei umgesetzt, darunter der einzige Blocker. Offen ist noch der Härtungsmaßstab (Punkt 5); Punkt 2 ist reine Dokumentation.
+Die fünf Punkte aus Kapitel 7 sind abgearbeitet. Offen bleiben die vier Fragen aus Kapitel 8, die sich nur auf einem laufenden Debian 13 beantworten lassen.
+
+Nicht durchgesehen sind die Aussagen zu AppArmor: Systembeschreibung und Anleitung sprechen dort von den „von Ubuntu mitgelieferten Profilen" und davon, dass Ubuntu kein Profil für `sshd` und `nginx` mitliefert. Ob das für Debian 13 gleichermaßen gilt, ist nicht geprüft; die Formulierungen sind in jedem Fall auf Ubuntu festgelegt.
 
 Die Erkennung der Distribution liegt in `secure_base.distro`. Der Installer fragt sie als ersten Schritt jedes Laufs ab und bricht auf einer nicht unterstützten Distribution mit Code 2 ab, bevor er die Konfiguration liest oder ein Modul startet. Das Modul `unattended` fragt sie zusätzlich ab, weil es zwischen den beiden Benennungen der Paketquellen wählen muss.
 

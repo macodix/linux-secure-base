@@ -1,6 +1,6 @@
 # Härtungsprüfung
 
-Der Prüflauf erfolgt monatlich mit `lynis`, ergänzt um den Abgleich mit der CIS-Checkliste für Ubuntu Server Level 1. Der datierte Befund ist der Prüfnachweis.
+Der Prüflauf erfolgt monatlich mit `lynis`, ergänzt um den Abgleich mit der CIS-Checkliste (Level 1) der eingesetzten Distribution — dem *CIS Ubuntu Linux Benchmark* auf Ubuntu, dem *CIS Debian Linux Benchmark* auf Debian. Der datierte Befund ist der Prüfnachweis.
 
 ```
 apt install lynis
