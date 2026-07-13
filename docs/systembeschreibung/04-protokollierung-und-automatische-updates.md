@@ -9,9 +9,11 @@ Dieses Dokument beschreibt die persistente Protokollierung mit Auditing und die 
 
 ## 1. Protokollierung und Auditing
 
-Die Protokollierung besteht aus mehreren Komponenten aus den Distro-Paketquellen: `journald`, `rsyslog`, `logwatch` und `auditd`, ergänzt um die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs.
+Die Protokollierung besteht aus mehreren Komponenten aus den Distro-Paketquellen: `journald`, `rsyslog`, `wtmpdb`, `logwatch` und `auditd`, ergänzt um die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs.
 
 `rsyslog` schreibt die Protokolldateien unter `/var/log` (`auth.log`, `syslog`, `mail.log`), die Quelle des Logwatch-Berichts sind. Es gehört nicht auf jeder Distribution zur Standardinstallation und wird deshalb installiert, falls es fehlt; beim Rückbau bleibt es bestehen. `journald` läuft daneben und ist die Quelle der Zusammenfassung im Tagesbericht.
+
+`wtmpdb` führt die Anmeldehistorie in einer SQLite-Datenbank unter `/var/log/wtmp.db` (lesbar mit `last`), zusammen mit `libpam-wtmpdb` für die Erfassung über PAM. Die klassischen Dateien `/var/log/wtmp` und `/var/log/lastlog` sind entfallen. Beide Pakete werden installiert, falls sie fehlen, und beim Rückbau nicht entfernt. Die Datenbank ist zugleich das Ziel der Audit-Regel `logins`: Sie überlebt die Rotation des Journals und ist gegen Manipulation überwachbar.
 
 `journald` läuft persistent (`Storage=persistent`), begrenzt auf 1 GB Plattenverbrauch (`SystemMaxUse=1G`) und drei Monate Aufbewahrung (`MaxRetentionSec=3month`). Damit überleben Logs den Reboot und die Mindest-Aufbewahrung sicherheitsrelevanter Ereignisse von drei Monaten ist erfüllt.
 
@@ -44,3 +46,4 @@ Ein fehlgeschlagenes Upgrade meldet `unattended-upgrades` per Mail (`MailReport 
 | 0.03 | 2026-07-13 | macodix | sudo-Protokollierung und sudoers-Audit-Regeln nur, wenn sudo vorhanden ist. |
 | 0.04 | 2026-07-13 | macodix | Erlaubte Paketquellen je Distribution (Allowed-Origins unter Ubuntu, Origins-Pattern unter Debian). |
 | 0.05 | 2026-07-13 | macodix | rsyslog als Bestandteil der Protokollierung aufgenommen. |
+| 0.06 | 2026-07-13 | macodix | wtmpdb als Anmeldehistorie aufgenommen; Audit-Regel auf deren Datenbank statt auf /var/log/lastlog. |

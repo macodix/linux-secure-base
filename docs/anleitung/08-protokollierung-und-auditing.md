@@ -1,6 +1,6 @@
 # Protokollierung und Auditing
 
-Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `rsyslog` als Schreiber der Protokolldateien unter `/var/log`, `logwatch` als tägliche Auswertung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs. Den täglichen Bericht verschickt ein eigenes Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang (Kapitel 4).
+Mehrere Komponenten aus den Distro-Paketquellen: `journald` als persistentes Systemlog, `rsyslog` als Schreiber der Protokolldateien unter `/var/log`, `wtmpdb` als Anmeldehistorie, `logwatch` als tägliche Auswertung, `auditd` für die Nachweisbarkeit administrativer Tätigkeiten, dazu die Protokollierung von `sudo`-Aufrufen und die Rotation des secure-base-Logs. Den täglichen Bericht verschickt ein eigenes Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang (Kapitel 5).
 
 ## 1. journald persistent
 
@@ -27,7 +27,7 @@ systemctl restart systemd-journald
 
 ## 2. rsyslog
 
-`rsyslog` schreibt die Protokolldateien unter `/var/log` (`auth.log`, `syslog`, `mail.log`). Sie sind die Quelle des Logwatch-Berichts (Kapitel 3) und werden von Werkzeugen außerhalb von secure-base gelesen.
+`rsyslog` schreibt die Protokolldateien unter `/var/log` (`auth.log`, `syslog`, `mail.log`). Sie sind die Quelle des Logwatch-Berichts (Kapitel 4) und werden von Werkzeugen außerhalb von secure-base gelesen.
 
 ```
 apt install rsyslog
@@ -38,7 +38,23 @@ Nicht jede Distribution führt `rsyslog` in der Standardinstallation mit — unt
 
 `journald` (Kapitel 1) bleibt daneben bestehen und ist die Quelle der Zusammenfassung im Tagesbericht.
 
-## 3. logwatch als täglicher Mail-Report
+## 3. Anmeldehistorie (wtmpdb)
+
+Die klassische Anmeldehistorie aus `/var/log/wtmp`, `/var/log/btmp` und `/var/log/lastlog` gibt es nicht mehr: `pam_lastlog` ist aus `libpam-modules` entfernt, und die utmp-Dateien sind ersatzlos entfallen (ihr 32-Bit-Zeitformat läuft 2038 über). Ohne Nachfolger gäbe es weder `last` noch eine Datei, die sich mit `auditd` überwachen ließe.
+
+```
+apt install wtmpdb libpam-wtmpdb
+```
+
+`wtmpdb` führt die Anmelde-, Boot- und Shutdown-Zeiten in einer SQLite-Datenbank unter `/var/log/wtmp.db` und bringt `last` mit. `libpam-wtmpdb` trägt die Anmeldungen über PAM ein; die mitgelieferte PAM-Vorgabe wird unverändert übernommen.
+
+Unter Debian 13 gehören beide Pakete zur Standardinstallation, und `sshd` schreibt zusätzlich direkt über `libwtmpdb0` — die dortige PAM-Vorgabe lässt SSH-Sitzungen deshalb aus, um doppelte Einträge zu vermeiden. Unter Ubuntu ist `sshd` nicht gegen `libwtmpdb0` gebunden; dort erfasst das PAM-Modul auch die SSH-Anmeldungen. In beiden Fällen landet jede Anmeldung genau einmal in der Datenbank.
+
+Zwei Gründe für die Nachinstallation, auch wo sie nicht zum Distributionsstandard gehört: Die Datenbank überlebt die Rotation des Journals (dort gilt `MaxRetentionSec`), und sie ist ein Objekt, das die Audit-Regel überwachen kann (Kapitel 6). Ohne sie bliebe der Audit-Schlüssel `logins` leer.
+
+Überprüfung: `last` listet die Anmeldungen, `ls -l /var/log/wtmp.db` zeigt die Datenbank.
+
+## 4. logwatch als täglicher Mail-Report
 
 ```
 apt install logwatch
@@ -57,7 +73,7 @@ Range = yesterday
 
 Der Versand nutzt das Postfix aus Kapitel 2 der Installationsanleitung.
 
-## 4. Tagesbericht: Zusammenfassung im Mailtext, Logwatch-Bericht als Anhang
+## 5. Tagesbericht: Zusammenfassung im Mailtext, Logwatch-Bericht als Anhang
 
 Der vollständige Logwatch-Bericht umfasst leicht zweitausend Zeilen, von denen über neunzig Prozent Aufzählungen abgewiesener Anmeldeversuche und HTTP-Scanner sind. Diese Hosts hat `fail2ban` bereits gesperrt, die Aufzählung ändert an keiner Entscheidung etwas. Steht sie im Mailtext, wird der Bericht nicht mehr gelesen und verdeckt damit das Wenige, worauf es ankommt.
 
@@ -82,7 +98,7 @@ chmod 644 /etc/cron.daily/00logwatch
 
 Ein Paket-Upgrade kann dieses Recht zurücksetzen. Dann kommen zwei Mails, und der Abgleich (`check`) des Moduls `logging` meldet es.
 
-## 5. auditd
+## 6. auditd
 
 `auditd` protokolliert administrative Änderungen nachweisbar. Das Regelset bleibt klein und auf administrative Vorgänge ausgerichtet.
 
@@ -120,7 +136,7 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 
 Die Regeln für Identität, Anmeldehistorie und sudoers sind das Pflicht-Minimum. Der Watch auf `/usr/bin/su` ergänzt sie um den tatsächlich genutzten Weg der Privilegien-Erhöhung. Da `sudo` nicht genutzt wird, ist zudem jede Änderung an seiner Konfiguration per se verdächtig.
 
-**Anmeldehistorie.** Die klassische Datei `/var/log/lastlog` gibt es nicht mehr — `pam_lastlog` ist aus `libpam-modules` entfernt, unter Debian 13 wie unter Ubuntu 26.04. An ihre Stelle treten zwei Datenbanken: `wtmpdb` (`/var/log/wtmp.db`; unter Debian die Standard-Anmeldehistorie, `sshd` schreibt direkt hinein) und `lastlog2` (`/var/lib/lastlog/lastlog2.db`). Überwacht wird nur die, deren Paket vorliegt. Führt das System keine der beiden — der Fall auf einer Ubuntu-Standardinstallation —, entfällt die Regel, und die Anmeldungen sind nur im Journal nachweisbar.
+**Anmeldehistorie.** Die klassische Datei `/var/log/lastlog` gibt es nicht mehr — `pam_lastlog` ist aus `libpam-modules` entfernt, unter Debian 13 wie unter Ubuntu 26.04. An ihre Stelle tritt `wtmpdb` (Kapitel 3); überwacht wird dessen Datenbank `/var/log/wtmp.db`. Ist stattdessen `lastlog2` installiert, gilt dessen Datenbank `/var/lib/lastlog/lastlog2.db`. Führt das System keine der beiden, entfällt die Regel, und die Anmeldungen sind nur im Journal nachweisbar.
 
 Eine Regel auf `/var/log/lastlog` beizubehalten wäre die schlechtere Wahl: Sie würde ohne Fehler laden, weil bei einer Datei das Elternverzeichnis genügt, aber nie greifen. Eine leere Regel sieht in `auditctl -l` wie Abdeckung aus und ist keine.
 
@@ -136,7 +152,7 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 
 Überprüfung: `auditctl -l` listet die Soll-Regeln vollständig, `auditctl -s` meldet `enabled 2`. Wegen des Immutable-Modus (`-e 2`) verlangt jede Regeländerung einen Reboot.
 
-## 6. sudo-Protokollierung
+## 7. sudo-Protokollierung
 
 `sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`), seine Aufrufe werden aber dennoch protokolliert. In `/etc/sudoers.d/secure-base-sudolog` (Mode 440):
 
@@ -146,6 +162,6 @@ Defaults logfile="/var/log/sudo.log"
 
 Nur auf einem System, auf dem `sudo` vorhanden ist. Fehlt es, entfällt dieser Schritt — `sudo` wird dafür nicht nachinstalliert.
 
-## 7. Log-Rotation
+## 8. Log-Rotation
 
 Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` rotiert (`weekly`, `rotate 8` — acht Wochen Vorhaltung). `journald` und `auditd` verwalten die Rotation ihrer Logs selbst.

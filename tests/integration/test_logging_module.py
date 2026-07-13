@@ -125,6 +125,7 @@ def test_install_all_steps_succeed(
     assert "auditd starten" in messages
     assert "rsyslog installieren" in messages
     assert "rsyslog starten" in messages
+    assert "Anmeldehistorie installieren" in messages
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
     assert Path(Logging.JOURNALD_CONF).read_text(encoding="utf-8").splitlines() == [
         "Storage=persistent",
@@ -324,6 +325,9 @@ def test_uninstall_removes_all_present_artifacts(
     # rsyslog schreibt die Protokolldateien und wird nie zurückgebaut.
     assert any("rsyslog bleibt installiert" in str(m) for m in messages)
     assert not any("rsyslog entfernen" in str(m) for m in messages)
+    # wtmpdb führt die Anmeldehistorie — ebenfalls kein Rückbau.
+    assert any("wtmpdb bleibt installiert" in str(m) for m in messages)
+    assert not any("wtmpdb entfernen" in str(m) for m in messages)
     assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
 
 

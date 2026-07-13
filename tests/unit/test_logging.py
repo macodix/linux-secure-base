@@ -208,6 +208,11 @@ def test_audit_rules_without_login_database_omit_the_logins_watch() -> None:
     assert "wtmp" not in content
 
 
+def test_login_history_packages_cover_database_and_pam() -> None:
+    """Installiert werden die Datenbank selbst und ihre PAM-Anbindung."""
+    assert Logging.LOGIN_HISTORY_PACKAGES == ("wtmpdb", "libpam-wtmpdb")
+
+
 def test_login_audit_rules_pair_precondition_and_rule() -> None:
     """Jeder Eintrag nennt die Vorbedingung und die Regel, die dann gilt."""
     preconditions = [precondition for precondition, _ in LOGIN_AUDIT_RULES]
@@ -417,7 +422,7 @@ def test_doc_contains_section_title_and_core_fields(
     }
     section = Logging.doc(values)
     assert section.startswith("\n## Protokollierung und Auditing\n\n")
-    assert "**Pakete:** rsyslog, logwatch, auditd" in section
+    assert "**Pakete:** rsyslog, wtmpdb, libpam-wtmpdb, logwatch, auditd" in section
     assert "**Dienste:** rsyslog, auditd (enabled, aktiv nach install)" in section
     assert f"`{Logging.JOURNALD_CONF}`" in section
     assert "Storage = persistent" in section

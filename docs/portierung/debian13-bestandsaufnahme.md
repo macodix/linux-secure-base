@@ -180,7 +180,9 @@ Der Pfad der wtmpdb-Datenbank ist ein Debian-Sonderweg: Upstream liegt sie unter
 
 **Folge:** Die Audit-Regel `-w /var/log/lastlog -p wa -k logins` überwacht auf beiden Distributionen eine Datei, die nie entsteht — auch unter Ubuntu, heute. Sie lädt fehlerfrei, weil bei einer Datei das Elternverzeichnis genügt, und liefert dauerhaft null Ereignisse. Der Schlüssel `logins` ist leer, ohne dass irgendetwas darauf hinweist.
 
-Das Modul `logging` überwacht deshalb jetzt die Datenbank, die das System tatsächlich führt, und lässt die Regel weg, wenn es keine führt (mit Warnung). Unter Debian greift damit `wtmpdb`; unter Ubuntu bleibt die Lücke sichtbar, solange `wtmpdb` dort nicht installiert wird.
+Das Modul `logging` installiert deshalb `wtmpdb` und `libpam-wtmpdb` mit und überwacht deren Datenbank. Unter Debian ändert das nichts (beide sind `standard`), unter Ubuntu schließt es die Lücke. Führt ein System wider Erwarten keine Anmeldedatenbank, entfällt die Regel mit Warnung, statt ins Leere zu zeigen.
+
+Die Erfassung ist in beiden Distributionen vollständig und doppelungsfrei, auf verschiedenen Wegen: Debians `openssh-server` hängt von `libwtmpdb0` ab, `sshd` schreibt dort selbst in die Datenbank — die PAM-Vorgabe trägt deshalb `skip_if=sshd`. Ubuntus `openssh-server` hängt nicht von `libwtmpdb0` ab, dafür trägt die Ubuntu-PAM-Vorgabe kein `skip_if`, sodass das PAM-Modul die SSH-Anmeldungen erfasst.
 
 ### 5.7 cron.daily
 

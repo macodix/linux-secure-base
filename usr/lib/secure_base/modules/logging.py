@@ -17,9 +17,11 @@ die beiden Audit-Regeln auf die sudoers-Pfade — richtet das Modul nur ein,
 wenn sudo auf dem System vorhanden ist. Administriert wird über su; sudo
 gehört nicht auf jeder Distribution zur Standardinstallation.
 
-Ebenso die Audit-Regel auf die Anmeldehistorie: Überwacht wird die Datenbank,
-die das System tatsächlich führt (wtmpdb oder lastlog2). Die frühere Regel auf
-/var/log/lastlog griff ins Leere — die Datei gibt es nicht mehr.
+Die Anmeldehistorie führt wtmpdb (/var/log/wtmp.db, lesbar mit last); das Modul
+installiert die Pakete mit. Die frühere Datei /var/log/lastlog gibt es nicht
+mehr — pam_lastlog ist aus libpam-modules entfernt. Die Audit-Regel überwacht
+deshalb die Datenbank, die das System tatsächlich führt (wtmpdb oder lastlog2),
+und entfällt, wenn es keine führt.
 
 Der Tagesbericht besteht aus einer Zusammenfassung im Mailtext und dem
 vollständigen Logwatch-Bericht als Anhang. Die Zusammenfassung entsteht aus
@@ -408,6 +410,14 @@ class Logging(Module):
     SUDOERS_DIR: ClassVar[str] = "/etc/sudoers.d"
     # Anmeldehistorie: (Vorbedingung, Regel) — siehe LOGIN_AUDIT_RULES.
     LOGIN_RULES: ClassVar[tuple[tuple[str, str], ...]] = LOGIN_AUDIT_RULES
+    # Pakete der Anmeldehistorie. wtmpdb führt die Datenbank und bringt "last"
+    # mit; libpam-wtmpdb trägt die Anmeldungen über PAM ein. Unter Debian 13
+    # gehören beide zur Standardinstallation (Priorität "standard") und sshd
+    # schreibt zusätzlich direkt über libwtmpdb0 — die mitgelieferte
+    # PAM-Vorgabe lässt sshd-Sitzungen deshalb aus. Unter Ubuntu 26.04 sind
+    # beide "optional" und sshd ist nicht gegen libwtmpdb0 gebunden; dort
+    # erfasst das PAM-Modul auch die SSH-Anmeldungen.
+    LOGIN_HISTORY_PACKAGES: ClassVar[tuple[str, ...]] = ("wtmpdb", "libpam-wtmpdb")
 
     # Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
     # als Anhang (siehe _REPORT_SCRIPT_TEMPLATE).
@@ -542,7 +552,7 @@ class Logging(Module):
         )
         return (
             "\n## Protokollierung und Auditing\n\n"
-            "**Pakete:** rsyslog, logwatch, auditd\n\n"
+            "**Pakete:** rsyslog, wtmpdb, libpam-wtmpdb, logwatch, auditd\n\n"
             "\n**Dienste:** rsyslog, auditd (enabled, aktiv nach install)\n"
             "**Dateien/Einstellungen:**\n\n"
             f"- `{cls.JOURNALD_CONF}`:\n"
@@ -577,6 +587,9 @@ class Logging(Module):
             f"{cls.JOURNAL_DIR} abgelegt. rsyslog schreibt die Protokolldateien "
             "unter /var/log, aus denen der angehängte Logwatch-Bericht entsteht; "
             "es wird installiert, falls es fehlt, und beim Rückbau nicht entfernt. "
+            "wtmpdb führt die Anmeldehistorie (/var/log/wtmp.db, lesbar mit last) "
+            "— ebenfalls installiert, falls es fehlt, und beim Rückbau nicht "
+            "entfernt; die Audit-Regel überwacht diese Datenbank. "
             "auditd-Regeln mit -e 2 (Immutable) "
             "greifen erst nach dem nächsten Reboot. Die Zusammenfassung im"
             " Mailtext nennt erfolgreiche SSH-Anmeldungen, Zwei-Faktor-Vorgänge,"
@@ -710,6 +723,10 @@ class Logging(Module):
                 self.SYSTEMD_ACTION_CLS(operation="start", unit="rsyslog", timeout=60),
             ),
             (
+                "Anmeldehistorie installieren",
+                self.APT_ACTION_CLS(packages=list(self.LOGIN_HISTORY_PACKAGES)),
+            ),
+            (
                 "logwatch installieren",
                 self.APT_ACTION_CLS(packages=["logwatch"]),
             ),
@@ -739,15 +756,6 @@ class Logging(Module):
                 )
             )
         sudo_present = self._sudo_present()
-        login_rules = self._login_rules()
-        if not login_rules:
-            self.send_message(
-                LogLevel.WARN,
-                "logging",
-                "keine Anmeldehistorie-Datenbank vorhanden (weder wtmpdb noch"
-                " lastlog2) — Audit-Regel dafür entfällt; Anmeldungen stehen im"
-                " Journal",
-            )
         steps += [
             (
                 "Berichts-Skript schreiben",
@@ -806,11 +814,28 @@ class Logging(Module):
                 "sudo nicht vorhanden — sudo-Protokollierung und sudoers-Audit-"
                 "Regeln entfallen",
             )
-        steps += [
+        steps.append(
             (
                 "auditd installieren",
                 self.APT_ACTION_CLS(packages=["auditd"]),
-            ),
+            )
+        )
+        if self._run_steps(steps) != 0:
+            return 1
+
+        # Erst jetzt steht fest, welche Anmeldehistorie das System führt: Die
+        # Pakete dafür installiert der Schritt oben, die Vorbedingung der Regel
+        # ist also vorher noch nicht erfüllt.
+        login_rules = self._login_rules()
+        if not login_rules:
+            self.send_message(
+                LogLevel.WARN,
+                "logging",
+                "keine Anmeldehistorie-Datenbank vorhanden (weder wtmpdb noch"
+                " lastlog2) — Audit-Regel dafür entfällt; Anmeldungen stehen im"
+                " Journal",
+            )
+        audit_steps: list[tuple[str, Action]] = [
             (
                 "Audit-Regeln schreiben",
                 WriteFileAction(
@@ -830,6 +855,17 @@ class Logging(Module):
                 self.SYSTEMD_ACTION_CLS(operation="start", unit="auditd", timeout=60),
             ),
         ]
+        return self._run_steps(audit_steps)
+
+    def _run_steps(self, steps: list[tuple[str, Action]]) -> int:
+        """Führt die Schritte der Reihe nach aus und bricht beim ersten Fehler ab.
+
+        Args:
+            steps: Paare aus Beschriftung und Aktion.
+
+        Returns:
+            0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
+        """
         for label, action in steps:
             self.send_message(LogLevel.INFO, "logging", label)
             if self.run_action(action) != 0:
@@ -848,11 +884,12 @@ class Logging(Module):
         """Nimmt die eigenen Änderungen von _install zurück.
 
         systemd-journald bleibt bestehen (Basis-Infrastruktur) — nur die
-        eigenen Direktiven werden zurückgenommen. rsyslog bleibt ebenfalls
-        bestehen: Es schreibt die Protokolldateien unter /var/log, auf die
-        auch Werkzeuge außerhalb von secure-base zugreifen, und auf einem Teil
-        der Distributionen gehört es zur Standardinstallation — ein Rückbau
-        träfe dort einen Zustand, den das Modul nicht hergestellt hat.
+        eigenen Direktiven werden zurückgenommen. rsyslog und die Pakete der
+        Anmeldehistorie (wtmpdb, libpam-wtmpdb) bleiben ebenfalls bestehen:
+        Sie schreiben Dateien, auf die auch Werkzeuge außerhalb von
+        secure-base zugreifen, und auf einem Teil der Distributionen gehören
+        sie zur Standardinstallation — ein Rückbau träfe dort einen Zustand,
+        den das Modul nicht hergestellt hat.
         logwatch und auditd werden nur entfernt, wenn sie installiert sind
         (wie im Bash-Original). /var/log/sudo.log bleibt als Datensicherung
         erhalten.
@@ -882,6 +919,12 @@ class Logging(Module):
             "logging",
             "rsyslog bleibt installiert (Schreiber der Protokolldateien unter"
             " /var/log)",
+        )
+        self.send_message(
+            LogLevel.INFO,
+            "logging",
+            "wtmpdb bleibt installiert (Anmeldehistorie) — die Datenbank"
+            " /var/log/wtmp.db bleibt erhalten",
         )
         if self._sudo_present():
             self.send_message(
@@ -1168,6 +1211,8 @@ class Logging(Module):
             "active",
             "rsyslog-Dienst",
         )
+        for package in self.LOGIN_HISTORY_PACKAGES:
+            ok &= self._check_installed(package, f"Paket {package}")
         ok &= self._check_installed("logwatch", "Paket logwatch")
         # Der Aufruf steht im Berichts-Skript und im Funktionstest — ein
         # falscher Pfad fällt sonst erst auf, wenn der Nachtlauf ausbleibt.
