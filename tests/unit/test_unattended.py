@@ -7,11 +7,25 @@ import pytest
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.unattended import (
+    DEBIAN_ORIGINS_BLOCK,
+    UBUNTU_ORIGINS_BLOCK,
     Unattended,
     _periodic_conf_content,
     _timer_override_content,
     _uu_conf_content,
 )
+
+_UBUNTU_OS_RELEASE = 'ID=ubuntu\nVERSION_ID="26.04"\nVERSION_CODENAME=resolute\n'
+_DEBIAN_OS_RELEASE = 'ID=debian\nVERSION_ID="13"\nVERSION_CODENAME=trixie\n'
+
+
+def _set_distro(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, os_release: str
+) -> None:
+    """Lenkt die Distributionserkennung auf eine eigene os-release-Datei um."""
+    path = tmp_path / "os-release"
+    path.write_text(os_release, encoding="utf-8")
+    monkeypatch.setattr(Unattended, "OS_RELEASE", str(path))
 
 
 def _make_unattended(
@@ -148,9 +162,11 @@ def test_validate_warns_on_time_order() -> None:
 # --- Inhaltsfunktionen ---
 
 
-def test_uu_conf_content_contains_allowed_origins_and_directives() -> None:
-    """_uu_conf_content enthält Allowed-Origins-Block und alle vier Direktiven."""
-    content = _uu_conf_content("admin@example.com", "true", "23:45")
+def test_uu_conf_content_contains_origins_block_and_directives() -> None:
+    """_uu_conf_content enthält den übergebenen Quellen-Block und alle Direktiven."""
+    content = _uu_conf_content(
+        "admin@example.com", "true", "23:45", UBUNTU_ORIGINS_BLOCK
+    )
     assert "${distro_id}:${distro_codename}" in content
     assert "${distro_id}:${distro_codename}-security" in content
     assert "${distro_id}:${distro_codename}-updates" in content
@@ -158,6 +174,70 @@ def test_uu_conf_content_contains_allowed_origins_and_directives() -> None:
     assert 'Unattended-Upgrade::Automatic-Reboot-Time "23:45";' in content
     assert 'Unattended-Upgrade::Mail "admin@example.com";' in content
     assert 'Unattended-Upgrade::MailReport "only-on-error";' in content
+
+
+def test_uu_conf_content_takes_the_debian_block_verbatim() -> None:
+    """Der Debian-Block landet unverändert in der Datei."""
+    content = _uu_conf_content(
+        "admin@example.com", "false", "23:45", DEBIAN_ORIGINS_BLOCK
+    )
+    assert DEBIAN_ORIGINS_BLOCK in content
+    assert "Allowed-Origins" not in content
+
+
+def test_ubuntu_origins_block_uses_allowed_origins() -> None:
+    """Ubuntu: Kurzform Allowed-Origins, drei Quellen, kein -proposed."""
+    assert UBUNTU_ORIGINS_BLOCK.startswith("Unattended-Upgrade::Allowed-Origins {")
+    assert "-proposed" not in UBUNTU_ORIGINS_BLOCK
+    assert "-backports" not in UBUNTU_ORIGINS_BLOCK
+
+
+def test_debian_origins_block_uses_origins_pattern_with_labels() -> None:
+    """Debian: Origins-Pattern mit Label und Codename statt der Kurzform.
+
+    Die Kurzform vergleicht Origin mit der Suite. Debians Suite heißt "stable"
+    bzw. "stable-security", nicht wie der Codename — sie träfe nichts.
+    """
+    assert DEBIAN_ORIGINS_BLOCK.startswith("Unattended-Upgrade::Origins-Pattern {")
+    assert (
+        'origin=Debian,codename=${distro_codename},label=Debian"'
+        in DEBIAN_ORIGINS_BLOCK
+    )
+    assert (
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
+        in DEBIAN_ORIGINS_BLOCK
+    )
+    assert (
+        "origin=Debian,codename=${distro_codename}-updates,label=Debian"
+        in DEBIAN_ORIGINS_BLOCK
+    )
+    assert "${distro_id}" not in DEBIAN_ORIGINS_BLOCK
+    assert "-proposed" not in DEBIAN_ORIGINS_BLOCK
+    assert "-backports" not in DEBIAN_ORIGINS_BLOCK
+
+
+# --- Distributionszweig ---
+
+
+def test_origins_block_follows_the_running_distro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_origins_block liefert je Distribution den passenden Block."""
+    mod = _make_unattended()
+    _set_distro(monkeypatch, tmp_path, _UBUNTU_OS_RELEASE)
+    assert mod._origins_block() == UBUNTU_ORIGINS_BLOCK
+    _set_distro(monkeypatch, tmp_path, _DEBIAN_OS_RELEASE)
+    assert mod._origins_block() == DEBIAN_ORIGINS_BLOCK
+
+
+def test_origins_block_rejects_unsupported_distro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auf einer fremden Distribution bricht das Modul ab, statt zu raten."""
+    mod = _make_unattended()
+    _set_distro(monkeypatch, tmp_path, "ID=fedora\n")
+    with pytest.raises(ModuleError, match="wird nicht unterstützt"):
+        mod._origins_block()
 
 
 def test_periodic_conf_content_contains_all_directives() -> None:

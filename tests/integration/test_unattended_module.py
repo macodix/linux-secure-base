@@ -43,9 +43,20 @@ class _FailingSystemdAction(SystemdServiceAction):
 
 
 def _make_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, distro: str = "ubuntu"
 ) -> tuple[Unattended, MagicMock]:
-    """Baut ein Unattended-Modul mit harmlosen Platzhaltern für alle Systembefehle."""
+    """Baut ein Unattended-Modul mit harmlosen Platzhaltern für alle Systembefehle.
+
+    Args:
+        tmp_path: Testverzeichnis für alle Zielpfade.
+        monkeypatch: pytest-Umlenkung der Klassenattribute.
+        distro: Distribution, die das Modul vorfinden soll ("ubuntu" oder
+            "debian"). Ohne Umlenkung hinge das Ergebnis daran, auf welcher
+            Distribution der Test läuft.
+    """
+    os_release = tmp_path / "os-release"
+    os_release.write_text(f"ID={distro}\n", encoding="utf-8")
+    monkeypatch.setattr(Unattended, "OS_RELEASE", str(os_release))
     monkeypatch.setattr(Unattended, "APT_GET_BIN", "/usr/bin/true")
     monkeypatch.setattr(Unattended, "DPKG_BIN", "/usr/bin/true")
     monkeypatch.setattr(Unattended, "SYSTEMCTL_BIN", "/usr/bin/true")
@@ -105,6 +116,68 @@ def test_install_all_steps_succeed(
     assert Path(tmp_path / "20auto-upgrades").exists()
     assert Path(tmp_path / "apt-daily.timer.d" / "secure-base.conf").exists()
     assert Path(tmp_path / "apt-daily-upgrade.timer.d" / "secure-base.conf").exists()
+    conf = Path(tmp_path / "50unattended-upgrades").read_text(encoding="utf-8")
+    assert "Unattended-Upgrade::Allowed-Origins" in conf
+
+
+def test_install_on_debian_writes_origins_pattern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unter Debian schreibt install den Origins-Pattern-Block, nicht die Kurzform."""
+    mod, _ = _make_module(tmp_path, monkeypatch, distro="debian")
+
+    result = mod.start()
+
+    assert result == 0
+    conf = Path(tmp_path / "50unattended-upgrades").read_text(encoding="utf-8")
+    assert "Unattended-Upgrade::Origins-Pattern" in conf
+    assert "Allowed-Origins" not in conf
+    assert "label=Debian-Security" in conf
+    assert 'Unattended-Upgrade::Mail "admin@example.com";' in conf
+
+
+def test_check_on_debian_accepts_the_debian_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check auf Debian bewertet den Debian-Block als Soll, nicht als Abweichung."""
+    mod, conn = _make_module(tmp_path, monkeypatch, distro="debian")
+    assert mod.start() == 0
+    mod.operation = "check"
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert "50unattended-upgrades: OK" in messages
+
+
+def test_check_rejects_the_wrong_distro_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine unter Ubuntu geschriebene Datei fällt auf Debian als Abweichung auf."""
+    mod, _ = _make_module(tmp_path, monkeypatch, distro="ubuntu")
+    assert mod.start() == 0
+
+    mod, conn = _make_module(tmp_path, monkeypatch, distro="debian")
+    mod.operation = "check"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert "50unattended-upgrades: Inhalt weicht vom Soll ab" in messages
+
+
+def test_install_on_unsupported_distro_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auf einer fremden Distribution bricht install ab, bevor er etwas schreibt."""
+    mod, _ = _make_module(tmp_path, monkeypatch, distro="fedora")
+
+    with pytest.raises(ModuleError, match="wird nicht unterstützt"):
+        mod.start()
+
+    assert not Path(tmp_path / "50unattended-upgrades").exists()
 
 
 def test_install_stops_at_first_failed_step(

@@ -159,13 +159,15 @@ Drei Annahmen aus der ersten, gedächtnisbasierten Einschätzung haben der Prüf
 
 | # | Gegenstand | Fundstelle | Debian 13 |
 |---|---|---|---|
-| 1 | Origins der automatischen Updates | `unattended.py` `_ALLOWED_ORIGINS_BLOCK` | andere Direktive, andere Syntax — **Blocker** |
+| 1 | Origins der automatischen Updates | `unattended.py` `DEBIAN_ORIGINS_BLOCK` | andere Direktive, andere Syntax — **erledigt** |
 | 2 | Neustart-Kennzeichen außerhalb des Kernels | `unattended.py` `/var/run/reboot-required` | nur bei Kernel-Updates gesetzt |
 | 3 | Systemprotokolle als Dateien | `postfix.py`, `users.py` `MAIL_LOG`; Logwatch-Anhang | ohne `rsyslog` nicht vorhanden |
 | 4 | `sudo` und `/etc/sudoers.d` | `logging.py` `SUDOLOG_CONF`, `AUDIT_RULES` | nicht garantiert installiert — **erledigt** |
 | 5 | Härtungsmaßstab | Doku, `lynis`-Profil | CIS-Benchmark für Debian statt Ubuntu |
 
 Punkt 3 ist für den Tagesbericht unkritisch: Die Zusammenfassung liest bereits aus dem Journal. Betroffen ist nur der angehängte Logwatch-Bericht, der ohne `rsyslog` kaum noch Quellen hätte.
+
+Punkt 1 ist umgesetzt: Das Modul `unattended` schreibt unter Debian einen `Origins-Pattern`-Block mit Origin, Codename und Label, unter Ubuntu weiterhin die Kurzform `Allowed-Origins`. Welche Distribution läuft, stellt `secure_base.distro` aus `/etc/os-release` fest; auf einer nicht unterstützten Distribution bricht das Modul ab, statt eine der beiden Benennungen zu unterstellen. `check` prüft die Datei am Soll der laufenden Distribution — eine unter Ubuntu geschriebene Datei fällt auf Debian als Abweichung auf.
 
 Punkt 4 ist umgesetzt: Das Modul `logging` richtet die sudo-Protokollierung und die beiden Audit-Regeln auf die sudoers-Pfade nur ein, wenn `sudo` auf dem System vorhanden ist. Maßgeblich sind die Pfade selbst, nicht die Distribution — `auditctl` nimmt eine Überwachung nur an, wenn der überwachte Pfad existiert, und ohne sudoers.d gäbe es kein Ziel für die Protokollierungs-Konfiguration. `sudo` wird dafür nicht nachinstalliert. Administriert wird über `su`, dessen Sitzungen das Journal mit dem aufrufenden Benutzer protokolliert.
 
@@ -181,6 +183,6 @@ Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab un
 
 ## 9. Nächster Schritt
 
-Erst mit dieser Faktenbasis lässt sich sinnvoll entscheiden, **was** herausgelöst wird. Die Liste in Kapitel 7 ist kurz — fünf Punkte, davon ein Blocker. Ein Umbau ist nicht nötig: Alle Pfade, Pakete und Unit-Namen liegen bereits als überschreibbare Klassenattribute vor.
+Von den fünf Punkten aus Kapitel 7 sind zwei umgesetzt, darunter der einzige Blocker. Offen sind noch die Systemprotokolle als Dateien (`rsyslog`, Punkt 3) und der Härtungsmaßstab (Punkt 5); Punkt 2 ist reine Dokumentation.
 
-Zu entwerfen sind noch: die Erkennung der Distribution, der Ort der distributionsabhängigen Werte, und das Verhalten auf einer nicht unterstützten Distribution — der Installer läuft heute ungeprüft auf allem.
+Die Erkennung der Distribution liegt in `secure_base.distro` und wird bisher nur vom Modul `unattended` abgefragt. Der Installer selbst prüft die Distribution noch nicht — er läuft ungeprüft auf jedem System an und bricht erst ab, wenn das erste Modul eine distributionsabhängige Entscheidung trifft.

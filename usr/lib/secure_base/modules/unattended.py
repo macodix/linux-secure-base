@@ -1,10 +1,15 @@
 """Modul unattended — automatisierte Sicherheitsupdates.
 
 Aktualisiert den Paketstand, installiert und härtet unattended-upgrades
-(Allowed-Origins, automatischer Reboot, Mail-Report) sowie zwei
+(erlaubte Paketquellen, automatischer Reboot, Mail-Report) sowie zwei
 gepinnte systemd-Timer-Overrides (apt-daily / apt-daily-upgrade), damit
 der Upgrade-Lauf vor dem Reboot greift. Betriebsart über den Schlüssel
 operation.
+
+Die erlaubten Paketquellen sind der einzige distributionsabhängige Teil:
+Ubuntu und Debian benennen ihre Archive verschieden, und die beiden Formate
+sind nicht ineinander überführbar (siehe UBUNTU_ORIGINS_BLOCK und
+DEBIAN_ORIGINS_BLOCK). Welcher Block gilt, entscheidet secure_base.distro.
 """
 
 import contextlib
@@ -23,6 +28,8 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
+from secure_base.distro import DEBIAN, OS_RELEASE_FILE, distro_id
+
 # Kontrollierter PATH für apt-get-Aufrufe außerhalb der AptAction (SIC-06).
 _CONTROLLED_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -32,10 +39,12 @@ _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$")
 # Grobe Plausibilität einer HH:MM-Uhrzeit (24h, anchored).
 _HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
-# Aktiver Allowed-Origins-Block. ${distro_id}/${distro_codename} sind
-# woertlicher apt.conf-Text, keine Python-Platzhalter — deshalb als
-# gewöhnliche Zeichenkette, nicht als f-string.
-_ALLOWED_ORIGINS_BLOCK = (
+# Erlaubte Paketquellen unter Ubuntu. Die Kurzform Allowed-Origins vergleicht
+# "Origin:Archiv"; unter Ubuntu trägt jedes Archiv den Codenamen als Suite
+# (resolute, resolute-security, resolute-updates), die Kurzform trifft also.
+# ${distro_id}/${distro_codename} sind wörtlicher apt.conf-Text, keine
+# Python-Platzhalter — deshalb gewöhnliche Zeichenketten, keine f-strings.
+UBUNTU_ORIGINS_BLOCK = (
     "Unattended-Upgrade::Allowed-Origins {\n"
     '    "${distro_id}:${distro_codename}";\n'
     '    "${distro_id}:${distro_codename}-security";\n'
@@ -43,9 +52,37 @@ _ALLOWED_ORIGINS_BLOCK = (
     "};\n"
 )
 
+# Erlaubte Paketquellen unter Debian. Die Kurzform ist hier unbrauchbar: Debian
+# führt als Suite "stable" bzw. "stable-security", nicht den Codenamen — der
+# Vergleich träfe nichts, und der Server liefe ohne Sicherheitsupdates weiter,
+# ohne Fehlermeldung. Origins-Pattern vergleicht stattdessen die Felder der
+# Release-Dateien einzeln (belegt aus den Archiv-Release-Dateien: Hauptarchiv
+# origin=Debian/label=Debian/codename=trixie, Sicherheitsarchiv
+# label=Debian-Security/codename=trixie-security, Updates label=Debian/
+# codename=trixie-updates).
+DEBIAN_ORIGINS_BLOCK = (
+    "Unattended-Upgrade::Origins-Pattern {\n"
+    '    "origin=Debian,codename=${distro_codename},label=Debian";\n'
+    '    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";\n'
+    '    "origin=Debian,codename=${distro_codename}-updates,label=Debian";\n'
+    "};\n"
+)
 
-def _uu_conf_content(admin_mail: str, auto_reboot: str, auto_reboot_time: str) -> str:
-    """Baut den Inhalt von 50unattended-upgrades."""
+
+def _uu_conf_content(
+    admin_mail: str, auto_reboot: str, auto_reboot_time: str, origins_block: str
+) -> str:
+    """Baut den Inhalt von 50unattended-upgrades.
+
+    Args:
+        admin_mail: Empfänger des Fehlerberichts.
+        auto_reboot: "true" oder "false".
+        auto_reboot_time: Uhrzeit des automatischen Neustarts (HH:MM).
+        origins_block: Block der erlaubten Paketquellen der Distribution.
+
+    Returns:
+        Vollständiger Dateiinhalt.
+    """
     head = "# Von secure-base/unattended angelegt — nicht von Hand bearbeiten.\n"
     directives = (
         f'Unattended-Upgrade::Automatic-Reboot "{auto_reboot}";\n'
@@ -53,7 +90,7 @@ def _uu_conf_content(admin_mail: str, auto_reboot: str, auto_reboot_time: str) -
         f'Unattended-Upgrade::Mail "{admin_mail}";\n'
         'Unattended-Upgrade::MailReport "only-on-error";\n'
     )
-    return head + _ALLOWED_ORIGINS_BLOCK + directives
+    return head + origins_block + directives
 
 
 def _periodic_conf_content() -> str:
@@ -123,6 +160,8 @@ class Unattended(Module):
     )
     REBOOT_REQUIRED_FILE: ClassVar[str] = "/var/run/reboot-required"
     REBOOT_REQUIRED_PKGS_FILE: ClassVar[str] = "/var/run/reboot-required.pkgs"
+    # Quelle der Distributionskennung; wie die Pfade oben testumlenkbar.
+    OS_RELEASE: ClassVar[str] = OS_RELEASE_FILE
 
     # Zeitgrenzen für die Betriebsart test (SIC-05); als Klassenattribute
     # testbar wie die Programmpfade oben.
@@ -241,12 +280,29 @@ class Unattended(Module):
                 "nach dem Reboot laufen.",
             )
 
+    def _origins_block(self) -> str:
+        """Liefert den Block der erlaubten Paketquellen der laufenden Distribution.
+
+        Returns:
+            DEBIAN_ORIGINS_BLOCK unter Debian, sonst UBUNTU_ORIGINS_BLOCK.
+
+        Raises:
+            ModuleError: Wenn die Distribution nicht unterstützt wird.
+        """
+        current = distro_id(self.OS_RELEASE)
+        if current == DEBIAN:
+            return DEBIAN_ORIGINS_BLOCK
+        return UBUNTU_ORIGINS_BLOCK
+
     def _install(self) -> int:
         """Aktualisiert den Paketstand und richtet unattended-upgrades ein.
 
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt oder wenn
             danach ein Neustart aussteht.
+
+        Raises:
+            ModuleError: Wenn die Distribution nicht unterstützt wird.
         """
         env = {
             "DEBIAN_FRONTEND": "noninteractive",
@@ -254,6 +310,7 @@ class Unattended(Module):
             "PATH": _CONTROLLED_PATH,
         }
         reboot_flag = "true" if self.auto_reboot == "yes" else "false"
+        origins_block = self._origins_block()
         steps: list[tuple[str, Action]] = [
             (
                 "Paketindex aktualisieren",
@@ -276,7 +333,10 @@ class Unattended(Module):
                 WriteFileAction(
                     dst=self.UU_CONF,
                     content=_uu_conf_content(
-                        self.admin_mail, reboot_flag, self.auto_reboot_time
+                        self.admin_mail,
+                        reboot_flag,
+                        self.auto_reboot_time,
+                        origins_block,
                     ),
                     mode=0o644,
                     overwrite=True,
@@ -574,6 +634,9 @@ class Unattended(Module):
 
         Returns:
             0 bei vollständiger Übereinstimmung, sonst 1.
+
+        Raises:
+            ModuleError: Wenn die Distribution nicht unterstützt wird.
         """
         ok = True
         ok &= self._check_command_succeeds(
@@ -583,7 +646,12 @@ class Unattended(Module):
         reboot_flag = "true" if self.auto_reboot == "yes" else "false"
         ok &= self._check_file_content(
             self.UU_CONF,
-            _uu_conf_content(self.admin_mail, reboot_flag, self.auto_reboot_time),
+            _uu_conf_content(
+                self.admin_mail,
+                reboot_flag,
+                self.auto_reboot_time,
+                self._origins_block(),
+            ),
             "50unattended-upgrades",
         )
         ok &= self._check_file_content(

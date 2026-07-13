@@ -4,7 +4,9 @@
 apt install unattended-upgrades
 ```
 
-In `/etc/apt/apt.conf.d/50unattended-upgrades` setzen:
+In `/etc/apt/apt.conf.d/50unattended-upgrades` setzen — die erlaubten Paketquellen sind der einzige distributionsabhängige Teil der gesamten Einrichtung.
+
+Unter Ubuntu:
 
 ```
 Unattended-Upgrade::Allowed-Origins {
@@ -12,7 +14,23 @@ Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";
     "${distro_id}:${distro_codename}-updates";
 };
-[...]
+```
+
+Unter Debian:
+
+```
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-updates,label=Debian";
+};
+```
+
+Die Kurzform `Allowed-Origins` vergleicht „Origin:Archiv". Unter Ubuntu heißt das Archiv wie der Codename (`resolute`, `resolute-security`), die Kurzform trifft also. Debian führt als Archiv `stable` und `stable-security` — der Codename steht dort in einem eigenen Feld. Die Kurzform träfe nichts, und der Server liefe ohne automatische Sicherheitsupdates weiter, ohne Fehlermeldung. `Origins-Pattern` vergleicht deshalb die Felder der Release-Dateien einzeln.
+
+In beiden Fällen ergänzen:
+
+```
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-Time "23:45";
 [...]

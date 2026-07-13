@@ -25,7 +25,9 @@ Ist `sudo` auf dem System vorhanden, wird seine Nutzung ergänzend über `/etc/s
 
 ## 2. Automatische Sicherheitsupdates
 
-Sicherheitsupdates werden durch die Installatio von `unattended-upgrades` automatisch installiert. Die erlaubten Quellen sind auf die Distro-Stände `${distro_codename}`, `-security` und `-updates` beschränkt, `-proposed` und `-backports` bleiben ausgeschlossen.
+Sicherheitsupdates werden durch die Installatio von `unattended-upgrades` automatisch installiert. Die erlaubten Quellen sind auf den Release-Stand der Distribution sowie deren `-security`- und `-updates`-Archive beschränkt, `-proposed` und `-backports` bleiben ausgeschlossen.
+
+Wie die Quellen benannt werden, hängt als einziger Punkt der Einrichtung von der Distribution ab. Ubuntu benennt sie mit der Kurzform `Allowed-Origins` („Origin:Archiv"), da dort das Archiv den Codenamen trägt. Debian führt als Archiv `stable` bzw. `stable-security` und den Codenamen in einem eigenen Feld; dort greift nur `Origins-Pattern`, das die Felder der Release-Dateien einzeln vergleicht. Die laufende Distribution wird aus `/etc/os-release` festgestellt; auf einer nicht unterstützten Distribution bricht das Modul ab, statt eine der beiden Benennungen zu unterstellen.
 
 Die Default-Sequenz für Update ist 23:15 Paketlisten aktualisieren (`apt update ), 23:30 Upgrade (`apt upgrade`), 23:45 Reboot (bei Bedarf). Dafür werden `apt-daily.timer` und `apt-daily-upgrade.timer` auf feste Zeiten gesetzt und ihr Streuwert (`RandomizedDelaySec`) auf 0 gestellt. Die periodische Ausführung wird über `/etc/apt/apt.conf.d/20auto-upgrades` aktiviert.
 
@@ -38,3 +40,4 @@ Ein fehlgeschlagenes Upgrade meldet `unattended-upgrades` per Mail (`MailReport 
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
 | 0.02 | 2026-06-22 | macodix | sudo-Protokollierung und Log-Rotation ergänzt. |
 | 0.03 | 2026-07-13 | macodix | sudo-Protokollierung und sudoers-Audit-Regeln nur, wenn sudo vorhanden ist. |
+| 0.04 | 2026-07-13 | macodix | Erlaubte Paketquellen je Distribution (Allowed-Origins unter Ubuntu, Origins-Pattern unter Debian). |
