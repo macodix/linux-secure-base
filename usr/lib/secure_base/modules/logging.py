@@ -6,6 +6,11 @@ secure-base-Logfile und aktiviert auditd mit sudo-Protokollierung und
 Audit-Regeln nach konv-system.md Abschnitt 3.4. Betriebsart über den
 Schlüssel operation.
 
+Die sudo-Bestandteile — die Protokollierungs-Konfiguration in sudoers.d und
+die beiden Audit-Regeln auf die sudoers-Pfade — richtet das Modul nur ein,
+wenn sudo auf dem System vorhanden ist. Administriert wird über su; sudo
+gehört nicht auf jeder Distribution zur Standardinstallation.
+
 Der Tagesbericht besteht aus einer Zusammenfassung im Mailtext und dem
 vollständigen Logwatch-Bericht als Anhang. Die Zusammenfassung entsteht aus
 dem Journal und nennt die sicherheitsrelevanten Vorgänge des Tages —
@@ -63,10 +68,39 @@ AUDIT_RULES: tuple[str, ...] = (
     "-e 2",
 )
 
+# Regeln, die einen sudoers-Pfad überwachen: auditctl nimmt eine Überwachung
+# nur an, wenn der Pfad existiert. Ohne sudo würde das Regelwerk sonst mit
+# Fehler geladen, statt die übrigen Regeln zu setzen.
+SUDO_AUDIT_RULES: tuple[str, ...] = (
+    "-w /etc/sudoers -p wa -k scope",
+    "-w /etc/sudoers.d -p wa -k scope",
+)
 
-def _audit_rules_content() -> str:
-    """Baut den Inhalt der Audit-Regeldatei."""
-    return "".join(f"{rule}\n" for rule in AUDIT_RULES)
+
+def _audit_rules(sudo_present: bool) -> tuple[str, ...]:
+    """Liefert die Soll-Regeln für das vorliegende System.
+
+    Args:
+        sudo_present: Ob sudo auf dem System vorhanden ist.
+
+    Returns:
+        AUDIT_RULES, ohne die sudoers-Regeln, wenn sudo fehlt.
+    """
+    if sudo_present:
+        return AUDIT_RULES
+    return tuple(rule for rule in AUDIT_RULES if rule not in SUDO_AUDIT_RULES)
+
+
+def _audit_rules_content(sudo_present: bool) -> str:
+    """Baut den Inhalt der Audit-Regeldatei.
+
+    Args:
+        sudo_present: Ob sudo auf dem System vorhanden ist.
+
+    Returns:
+        Regeldatei-Inhalt, eine Regel je Zeile.
+    """
+    return "".join(f"{rule}\n" for rule in _audit_rules(sudo_present))
 
 
 def _logrotate_content() -> str:
@@ -325,6 +359,11 @@ class Logging(Module):
     LOGROTATE_CONF: ClassVar[str] = "/etc/logrotate.d/secure-base"
     AUDIT_RULES_FILE: ClassVar[str] = "/etc/audit/rules.d/secure-base.rules"
     SUDOLOG_CONF: ClassVar[str] = "/etc/sudoers.d/secure-base-sudolog"
+    # Prüfziele für die sudo-Vorbedingung: die Konfigurationsdatei und das
+    # Einbindeverzeichnis von sudo. Beide sind zugleich die Pfade, die die
+    # sudoers-Audit-Regeln überwachen.
+    SUDOERS_FILE: ClassVar[str] = "/etc/sudoers"
+    SUDOERS_DIR: ClassVar[str] = "/etc/sudoers.d"
 
     # Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
     # als Anhang (siehe _REPORT_SCRIPT_TEMPLATE).
@@ -384,6 +423,19 @@ class Logging(Module):
         return self._install()
 
     @classmethod
+    def _sudo_present(cls) -> bool:
+        """Prüft, ob sudo auf dem System vorhanden ist.
+
+        Maßgeblich sind die Pfade, nicht der Paketstatus: die sudoers.d-Datei
+        braucht das Einbindeverzeichnis, die beiden Audit-Regeln brauchen die
+        überwachten Pfade.
+
+        Returns:
+            True, wenn sudoers-Datei und sudoers.d-Verzeichnis vorliegen.
+        """
+        return Path(cls.SUDOERS_FILE).exists() and Path(cls.SUDOERS_DIR).is_dir()
+
+    @classmethod
     def doc(cls, values: dict[str, str]) -> str:
         """Markdown-Abschnitt für den Installationsbericht.
 
@@ -402,6 +454,25 @@ class Logging(Module):
         journald_max_use = _doc_value(values, "journald_max_use")
         journald_max_retention = _doc_value(values, "journald_max_retention")
         admin_mail = _doc_value(values, "admin_mail")
+        sudo_present = cls._sudo_present()
+        sudo_audit_doc = (
+            "  - `-w /etc/sudoers -p wa -k scope`\n"
+            "  - `-w /etc/sudoers.d -p wa -k scope`\n"
+            if sudo_present
+            else ""
+        )
+        sudolog_doc = (
+            f'- `{cls.SUDOLOG_CONF}`:\n  - `Defaults logfile="/var/log/sudo.log"`\n'
+            if sudo_present
+            else ""
+        )
+        sudo_hinweis = (
+            ""
+            if sudo_present
+            else " sudo ist auf diesem System nicht vorhanden — die"
+            " sudo-Protokollierung und die beiden Audit-Regeln auf die"
+            " sudoers-Pfade entfallen (administriert wird über su)."
+        )
         return (
             "\n## Protokollierung und Auditing\n\n"
             "**Pakete:** logwatch, auditd\n\n"
@@ -419,15 +490,13 @@ class Logging(Module):
             f"- `{cls.LOGROTATE_CONF}`:\n"
             "  - `logrotate-Konfig für /var/log/secure-base/secure-base.log`\n"
             f"- `{cls.AUDIT_RULES_FILE}`:\n"
-            "  - `-w /etc/sudoers -p wa -k scope`\n"
-            "  - `-w /etc/sudoers.d -p wa -k scope`\n"
+            f"{sudo_audit_doc}"
             "  - `-w /etc/passwd -p wa -k identity`\n"
             "  - `-w /etc/shadow -p wa -k identity`\n"
             "  - `-w /etc/group -p wa -k identity`\n"
             "  - `-w /var/log/lastlog -p wa -k logins`\n"
             "  - `-e 2 (Immutable — Regeländerungen ohne Reboot gesperrt)`\n"
-            f"- `{cls.SUDOLOG_CONF}`:\n"
-            '  - `Defaults logfile="/var/log/sudo.log"`\n'
+            f"{sudolog_doc}"
             f"- `{cls.REPORT_SCRIPT}`:\n"
             "  - `Tagesbericht: Zusammenfassung im Mailtext, vollständiger"
             " Logwatch-Bericht als Anhang`\n"
@@ -445,7 +514,7 @@ class Logging(Module):
             " fail2ban-Sperren, fehlgeschlagene Dienste und Cron-Läufe,"
             " Journal-Fehler und Plattenplatz; die Aufzählung der abgewiesenen"
             " Anmeldeversuche unbekannter Benutzer steht als Summe im Text und"
-            " vollständig im Anhang.\n"
+            f" vollständig im Anhang.{sudo_hinweis}\n"
         )
 
     def _validate(self) -> None:
@@ -587,6 +656,7 @@ class Logging(Module):
                     ),
                 )
             )
+        sudo_present = self._sudo_present()
         steps += [
             (
                 "Berichts-Skript schreiben",
@@ -624,16 +694,28 @@ class Logging(Module):
                     safe_mode=False,
                 ),
             ),
-            (
-                "sudo-Protokollierung einrichten",
-                WriteFileAction(
-                    dst=self.SUDOLOG_CONF,
-                    content=_sudolog_content(),
-                    mode=0o440,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
+        ]
+        if sudo_present:
+            steps.append(
+                (
+                    "sudo-Protokollierung einrichten",
+                    WriteFileAction(
+                        dst=self.SUDOLOG_CONF,
+                        content=_sudolog_content(),
+                        mode=0o440,
+                        overwrite=True,
+                        safe_mode=False,
+                    ),
+                )
+            )
+        else:
+            self.send_message(
+                LogLevel.INFO,
+                "logging",
+                "sudo nicht vorhanden — sudo-Protokollierung und sudoers-Audit-"
+                "Regeln entfallen",
+            )
+        steps += [
             (
                 "auditd installieren",
                 self.APT_ACTION_CLS(packages=["auditd"]),
@@ -642,7 +724,7 @@ class Logging(Module):
                 "Audit-Regeln schreiben",
                 WriteFileAction(
                     dst=self.AUDIT_RULES_FILE,
-                    content=_audit_rules_content(),
+                    content=_audit_rules_content(sudo_present),
                     mode=0o640,
                     overwrite=True,
                     safe_mode=False,
@@ -700,12 +782,13 @@ class Logging(Module):
             if step() != 0:
                 self.send_message(LogLevel.ERROR, "logging", f"fehlgeschlagen: {label}")
                 return 1
-        self.send_message(
-            LogLevel.WARN,
-            "logging",
-            "/var/log/sudo.log bleibt erhalten (Audit-Datensicherung) — bei Bedarf"
-            " manuell entfernen.",
-        )
+        if self._sudo_present():
+            self.send_message(
+                LogLevel.WARN,
+                "logging",
+                "/var/log/sudo.log bleibt erhalten (Audit-Datensicherung) — bei Bedarf"
+                " manuell entfernen.",
+            )
         return 0
 
     def _step_remove_journald(self) -> int:
@@ -994,15 +1077,23 @@ class Logging(Module):
         ok &= self._check_value(
             [self.SYSTEMCTL_BIN, "is-active", "--", "auditd"], "active", "auditd-Dienst"
         )
-        for rule in AUDIT_RULES:
+        sudo_present = self._sudo_present()
+        for rule in _audit_rules(sudo_present):
             ok &= self._check_file_line(
                 self.AUDIT_RULES_FILE, rule, f"Audit-Regel {rule}"
             )
-        ok &= self._check_file_line(
-            self.SUDOLOG_CONF,
-            'Defaults logfile="/var/log/sudo.log"',
-            "sudo-Protokollierung",
-        )
+        if sudo_present:
+            ok &= self._check_file_line(
+                self.SUDOLOG_CONF,
+                'Defaults logfile="/var/log/sudo.log"',
+                "sudo-Protokollierung",
+            )
+        else:
+            self.send_message(
+                LogLevel.INFO,
+                "logging",
+                "sudo nicht vorhanden — sudo-Protokollierung nicht zutreffend",
+            )
         return 0 if ok else 1
 
     def _check_value(self, command: list[str], expected: str, label: str) -> bool:

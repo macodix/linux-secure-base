@@ -87,6 +87,7 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 -w /var/log/lastlog -p wa -k logins
 
 # Privilegien-Erhöhung und sudo-Konfiguration (su statt sudo)
+# Die beiden sudoers-Zeilen nur, wenn sudo vorhanden ist (siehe unten).
 -w /usr/bin/su    -p x  -k priv_esc
 -w /etc/sudoers   -p wa -k scope
 -w /etc/sudoers.d -p wa -k scope
@@ -102,6 +103,8 @@ Regeldatei `/etc/audit/rules.d/secure-base.rules` anlegen:
 ```
 
 Die Regeln für Identität, sudoers und lastlog sind das Pflicht-Minimum. Der Watch auf `/usr/bin/su` ergänzt sie um den tatsächlich genutzten Weg der Privilegien-Erhöhung. Da `sudo` nicht genutzt wird, ist zudem jede Änderung an seiner Konfiguration per se verdächtig.
+
+Die beiden sudoers-Regeln setzen voraus, dass `sudo` installiert ist: `auditctl` nimmt eine Überwachung nur an, wenn der überwachte Pfad existiert. Auf einem System ohne `sudo` — die Standardinstallation führt es nicht auf jeder Distribution mit — entfallen sie, sonst lädt das gesamte Regelwerk mit Fehler. Der Installer prüft das und lässt sie in diesem Fall weg.
 
 Dienst aktivieren — beim Start liest `auditd` die Regeldateien aus `/etc/audit/rules.d/`:
 
@@ -120,6 +123,8 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 ```
 Defaults logfile="/var/log/sudo.log"
 ```
+
+Nur auf einem System, auf dem `sudo` vorhanden ist. Fehlt es, entfällt dieser Schritt — `sudo` wird dafür nicht nachinstalliert.
 
 ## 6. Log-Rotation
 

@@ -162,10 +162,12 @@ Drei Annahmen aus der ersten, gedächtnisbasierten Einschätzung haben der Prüf
 | 1 | Origins der automatischen Updates | `unattended.py` `_ALLOWED_ORIGINS_BLOCK` | andere Direktive, andere Syntax — **Blocker** |
 | 2 | Neustart-Kennzeichen außerhalb des Kernels | `unattended.py` `/var/run/reboot-required` | nur bei Kernel-Updates gesetzt |
 | 3 | Systemprotokolle als Dateien | `postfix.py`, `users.py` `MAIL_LOG`; Logwatch-Anhang | ohne `rsyslog` nicht vorhanden |
-| 4 | `sudo` und `/etc/sudoers.d` | `logging.py` `SUDOLOG_CONF` | nicht garantiert installiert |
+| 4 | `sudo` und `/etc/sudoers.d` | `logging.py` `SUDOLOG_CONF`, `AUDIT_RULES` | nicht garantiert installiert — **erledigt** |
 | 5 | Härtungsmaßstab | Doku, `lynis`-Profil | CIS-Benchmark für Debian statt Ubuntu |
 
 Punkt 3 ist für den Tagesbericht unkritisch: Die Zusammenfassung liest bereits aus dem Journal. Betroffen ist nur der angehängte Logwatch-Bericht, der ohne `rsyslog` kaum noch Quellen hätte.
+
+Punkt 4 ist umgesetzt: Das Modul `logging` richtet die sudo-Protokollierung und die beiden Audit-Regeln auf die sudoers-Pfade nur ein, wenn `sudo` auf dem System vorhanden ist. Maßgeblich sind die Pfade selbst, nicht die Distribution — `auditctl` nimmt eine Überwachung nur an, wenn der überwachte Pfad existiert, und ohne sudoers.d gäbe es kein Ziel für die Protokollierungs-Konfiguration. `sudo` wird dafür nicht nachinstalliert. Administriert wird über `su`, dessen Sitzungen das Journal mit dem aufrufenden Benutzer protokolliert.
 
 ## 8. Offen — nur auf einem laufenden Debian 13 zu klären
 
@@ -173,8 +175,9 @@ Diese Punkte lassen sich aus Paketdaten **nicht** beantworten:
 
 - **Audit-Regel auf `/var/log/lastlog`.** In keiner der beiden Distributionen liefert `libpam-modules` noch ein `pam_lastlog`-Modul. Ob die Datei überhaupt noch existiert und `auditd` die Regel annimmt, muss auf dem System geprüft werden — und zwar **auch unter Ubuntu**. Prüfbefehle: `ls -l /var/log/lastlog` und `auditctl -l | grep lastlog`.
 - **Verhalten bei aktiver SSH-Socket-Aktivierung.** Beide liefern `ssh.socket` mit. Welche Unit im Auslieferungszustand aktiv ist, entscheidet das Preset des jeweiligen Images. Bei aktiver Socket-Aktivierung läuft kein dauerhafter `sshd`-Prozess — der monit-Check `check process sshd matching "sshd"` würde dann Daueralarm auslösen.
-- **Ob `sudo` auf dem konkreten Debian-Image installiert ist.** Der Debian-Installer installiert es, wenn kein Root-Passwort gesetzt wird. Das hängt vom Image ab, nicht vom Paketindex.
 - **Ob `lynis` unter Debian dasselbe Profil und dieselben Tests fährt.** Debian liefert eine ältere Version (3.1.4 gegen 3.1.6).
+
+Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab und nicht vom Paketindex — der Debian-Installer installiert es, wenn kein Root-Passwort gesetzt wird. Das muss nicht mehr vorab geklärt werden: Das Modul `logging` entscheidet zur Laufzeit anhand der Pfade (Kapitel 7).
 
 ## 9. Nächster Schritt
 

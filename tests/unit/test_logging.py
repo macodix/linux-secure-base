@@ -9,13 +9,32 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.logging import (
     AUDIT_RULES,
+    SUDO_AUDIT_RULES,
     Logging,
+    _audit_rules,
     _audit_rules_content,
     _logrotate_content,
     _report_cron_content,
     _report_script_content,
     _sudolog_content,
 )
+
+
+def _set_sudo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, present: bool
+) -> None:
+    """Lenkt die sudo-Vorbedingung auf tmp_path um — vorhanden oder fehlend.
+
+    Ohne Umlenkung hinge das Ergebnis daran, ob auf dem Testrechner sudo
+    installiert ist.
+    """
+    sudoers = tmp_path / "sudoers"
+    sudoers_d = tmp_path / "sudoers.d"
+    if present:
+        sudoers.write_text("", encoding="utf-8")
+        sudoers_d.mkdir()
+    monkeypatch.setattr(Logging, "SUDOERS_FILE", str(sudoers))
+    monkeypatch.setattr(Logging, "SUDOERS_DIR", str(sudoers_d))
 
 
 def _make_logging(
@@ -113,7 +132,7 @@ def test_mailfrom_empty_without_domain() -> None:
 
 def test_audit_rules_content_contains_all_rules() -> None:
     """_audit_rules_content enthält jede Regel aus AUDIT_RULES als eigene Zeile."""
-    content = _audit_rules_content()
+    content = _audit_rules_content(sudo_present=True)
     lines = content.splitlines()
     assert lines == list(AUDIT_RULES)
 
@@ -121,6 +140,21 @@ def test_audit_rules_content_contains_all_rules() -> None:
 def test_audit_rules_content_ends_with_immutable_rule() -> None:
     """Die Immutable-Regel -e 2 steht als letzte Regel."""
     assert AUDIT_RULES[-1] == "-e 2"
+
+
+def test_audit_rules_without_sudo_omit_sudoers_watches() -> None:
+    """Ohne sudo entfallen genau die sudoers-Regeln — die übrigen bleiben."""
+    rules = _audit_rules(sudo_present=False)
+    assert not any(rule in SUDO_AUDIT_RULES for rule in rules)
+    assert rules == tuple(r for r in AUDIT_RULES if r not in SUDO_AUDIT_RULES)
+    assert rules[-1] == "-e 2"
+    assert "-w /usr/bin/su -p x -k priv_esc" in rules
+
+
+def test_audit_rules_content_without_sudo_omits_sudoers_watches() -> None:
+    """Die Regeldatei enthält ohne sudo keine Überwachung eines sudoers-Pfads."""
+    content = _audit_rules_content(sudo_present=False)
+    assert "sudoers" not in content
 
 
 def test_logrotate_content_contains_expected_directives() -> None:
@@ -311,8 +345,11 @@ def test_remove_file_if_exists_returns_zero_for_missing_file(tmp_path: Path) -> 
 # --- doc ---
 
 
-def test_doc_contains_section_title_and_core_fields() -> None:
+def test_doc_contains_section_title_and_core_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """doc() enthält Abschnittstitel, Pakete, Dateien, Werte und Dienst."""
+    _set_sudo(monkeypatch, tmp_path, present=True)
     values = {
         "journald_max_use": "1G",
         "journald_max_retention": "3month",
@@ -339,6 +376,21 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert Logging.REPORT_SCRIPT in section
     assert Logging.STOCK_CRON in section
     assert f"{Logging.JOURNAL_DIR} abgelegt" in section
+
+
+def test_doc_without_sudo_omits_sudo_parts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fehlt sudo, nennt doc() weder sudoers-Regeln noch sudo-Protokollierung."""
+    _set_sudo(monkeypatch, tmp_path, present=False)
+    section = Logging.doc({"admin_mail": "admin@example.com"})
+    assert "-w /etc/sudoers -p wa -k scope" not in section
+    assert "-w /etc/sudoers.d -p wa -k scope" not in section
+    assert "/var/log/sudo.log" not in section
+    assert "sudo ist auf diesem System nicht vorhanden" in section
+    # Die übrigen Audit-Regeln stehen unverändert im Bericht.
+    assert "-w /etc/passwd -p wa -k identity" in section
+    assert "-e 2 (Immutable" in section
 
 
 def test_doc_marks_missing_values_as_leer_default() -> None:

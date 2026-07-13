@@ -37,9 +37,25 @@ class _NoOpSystemdAction(SystemdServiceAction):
 
 
 def _make_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, sudo: bool = True
 ) -> tuple[Logging, MagicMock]:
-    """Baut ein Logging-Modul mit harmlosen Platzhaltern für alle Zielpfade."""
+    """Baut ein Logging-Modul mit harmlosen Platzhaltern für alle Zielpfade.
+
+    Args:
+        tmp_path: Testverzeichnis für alle Zielpfade.
+        monkeypatch: pytest-Umlenkung der Klassenattribute.
+        sudo: Ob das Modul sudo als vorhanden vorfinden soll. Ohne Umlenkung
+            hinge das Ergebnis daran, ob auf dem Testrechner sudo installiert
+            ist.
+    """
+    sudoers = tmp_path / "sudoers"
+    sudoers_d = tmp_path / "sudoers.d"
+    if sudo:
+        sudoers.write_text("", encoding="utf-8")
+        sudoers_d.mkdir()
+    monkeypatch.setattr(Logging, "SUDOERS_FILE", str(sudoers))
+    monkeypatch.setattr(Logging, "SUDOERS_DIR", str(sudoers_d))
+
     journald_conf = tmp_path / "journald.conf"
     journald_conf.write_text("#Storage=auto\n#SystemMaxUse=\n", encoding="utf-8")
 
@@ -105,6 +121,42 @@ def test_install_all_steps_succeed(
     assert Path(Logging.LOGROTATE_CONF).exists()
     assert Path(Logging.AUDIT_RULES_FILE).exists()
     assert Path(Logging.SUDOLOG_CONF).exists()
+
+
+def test_install_without_sudo_omits_sudo_parts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne sudo entfallen sudo-Protokollierung und sudoers-Audit-Regeln."""
+    mod, conn = _make_module(tmp_path, monkeypatch, sudo=False)
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert not any(str(m).startswith("fehlgeschlagen:") for m in messages)
+    assert any("sudo nicht vorhanden" in str(m) for m in messages)
+    assert "sudo-Protokollierung einrichten" not in messages
+    assert not Path(Logging.SUDOLOG_CONF).exists()
+    rules = Path(Logging.AUDIT_RULES_FILE).read_text(encoding="utf-8")
+    assert "sudoers" not in rules
+    assert "-w /etc/passwd -p wa -k identity" in rules
+    assert rules.splitlines()[-1] == "-e 2"
+
+
+def test_check_without_sudo_reports_not_applicable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check bewertet die fehlende sudo-Protokollierung nicht als Abweichung."""
+    mod, conn = _make_module(tmp_path, monkeypatch, sudo=False)
+    assert mod.start() == 0
+    mod.operation = "check"
+
+    mod.start()
+
+    messages = _sent_messages(conn)
+    assert any("sudo-Protokollierung nicht zutreffend" in str(m) for m in messages)
+    assert not any("sudo-Protokollierung: nicht gesetzt" in str(m) for m in messages)
+    assert not any("Audit-Regel -w /etc/sudoers" in str(m) for m in messages)
 
 
 def test_install_stops_at_first_failed_step(

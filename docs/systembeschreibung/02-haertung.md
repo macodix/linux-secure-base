@@ -38,7 +38,7 @@ flowchart TB
 
 Interaktiver Login erfolgt nicht ohne zweiten Faktor. Für SSH ist das Public-Key plus TOTP über PAM (`pam_google_authenticator.so` aus `libpam-google-authenticator`). Passwort-Authentifizierung und Root-Login per SSH sind abgeschaltet. Der SSH Authentifizierungs Stack: `AuthenticationMethods publickey,keyboard-interactive`, `KbdInteractiveAuthentication yes` und `UsePAM yes`.
 
-Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. `sudo` gehört zur Ubuntu-Standardinstallation und bleibt installiert, weil der CIS-Benchmark es erwartet, wird aber nicht genutzt. Der Hauptbenutzer ist kein Mitglied administrativer Gruppen (insbesondere nicht der Gruppe `sudo`). Änderungen an der sudo-Konfiguration werden durch `auditd` überwacht.
+Administrative Tätigkeiten laufen über den Wechsel zum Root-Konto per `su`. `sudo` wird nicht genutzt. Gehört es zur Standardinstallation der Distribution, bleibt es installiert — der CIS-Benchmark erwartet es. Nachinstalliert wird es nicht. Der Hauptbenutzer ist kein Mitglied administrativer Gruppen (insbesondere nicht der Gruppe `sudo`). Ist `sudo` vorhanden, überwacht `auditd` Änderungen an seiner Konfiguration.
 
 Der SSH-Zugang ist auf eine eigene Gruppe beschränkt (`AllowGroups ssh-users`). Die Konfiguration für den Login ist restriktiv (`PermitRootLogin no`, `PasswordAuthentication no`, `PermitEmptyPasswords no`, `MaxAuthTries 3`, `LoginGraceTime 60`, `ClientAliveInterval 300`, `ClientAliveCountMax 0`) und mit `sshd -T` überprüfbar.
 
@@ -87,3 +87,4 @@ Dateien, die der Normalbetrieb erzeugt und `rkhunter` als verdächtig meldet, si
 |---|---|---|---|
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
 | 0.02 | 2026-06-22 | macodix | base-Grundhärtung (sysctl, usb-Blacklist, autofs, NTP) und konkrete sshd-Sollwerte ergänzt; AppArmor-Aktivierung durch base benannt. |
+| 0.03 | 2026-07-13 | macodix | Aussage zu sudo distributionsneutral gefasst: nicht genutzt, nicht nachinstalliert, Überwachung nur wenn vorhanden. |

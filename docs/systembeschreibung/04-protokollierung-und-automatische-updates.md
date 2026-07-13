@@ -21,7 +21,7 @@ Quelle der Zusammenfassung ist das Journal, nicht der Logwatch-Text: Die Meldung
 
 `auditd` protokolliert sicherheitskritische Aktivitäten; das Regelset ist auf administrative Vorgänge beschränkt und nach dem Laden bis zum Reboot unveränderlich (`-e 2`).
 
-Ergänzend wird die Nutzung von `sudo` über `/etc/sudoers.d/secure-base-sudolog` nach `/var/log/sudo.log` protokolliert — auch wenn `sudo` für die Administration nicht genutzt wird, bleibt damit jede Nutzung nachvollziehbar. Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` wöchentlich rotiert (acht Wochen Vorhaltung); `journald` und `auditd` verwalten ihre Logs selbst.
+Ist `sudo` auf dem System vorhanden, wird seine Nutzung ergänzend über `/etc/sudoers.d/secure-base-sudolog` nach `/var/log/sudo.log` protokolliert, und das Audit-Regelset überwacht `/etc/sudoers` und `/etc/sudoers.d`. Administriert wird zwar über `su`, aber damit bleibt jede Nutzung von `sudo` nachvollziehbar. Fehlt `sudo`, entfallen beide Bestandteile; nachinstalliert wird es nicht. Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` wöchentlich rotiert (acht Wochen Vorhaltung); `journald` und `auditd` verwalten ihre Logs selbst.
 
 ## 2. Automatische Sicherheitsupdates
 
@@ -37,3 +37,4 @@ Ein fehlgeschlagenes Upgrade meldet `unattended-upgrades` per Mail (`MailReport 
 |---|---|---|---|
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
 | 0.02 | 2026-06-22 | macodix | sudo-Protokollierung und Log-Rotation ergänzt. |
+| 0.03 | 2026-07-13 | macodix | sudo-Protokollierung und sudoers-Audit-Regeln nur, wenn sudo vorhanden ist. |
