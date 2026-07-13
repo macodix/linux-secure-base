@@ -315,7 +315,10 @@ class Logging(Module):
     SYSTEMCTL_BIN: ClassVar[str] = "/usr/bin/systemctl"
     DPKG_BIN: ClassVar[str] = "/usr/bin/dpkg"
     JOURNALCTL_BIN: ClassVar[str] = "/usr/bin/journalctl"
-    LOGWATCH_BIN: ClassVar[str] = "/usr/bin/logwatch"
+    # /usr/sbin, nicht /usr/bin: das Paket logwatch legt den Aufruf unter
+    # /usr/sbin/logwatch ab (Symlink auf logwatch.pl). Weder Ubuntu 26.04 noch
+    # Debian 13 führen /usr/sbin und /usr/bin zusammen — der Pfad muss stimmen.
+    LOGWATCH_BIN: ClassVar[str] = "/usr/sbin/logwatch"
     JOURNALD_CONF: ClassVar[str] = "/etc/systemd/journald.conf"
     LOGWATCH_CONF: ClassVar[str] = "/etc/logwatch/conf/logwatch.conf"
     JOURNAL_DIR: ClassVar[str] = "/var/log/journal"
@@ -976,6 +979,9 @@ class Logging(Module):
         )
         ok &= self._check_dir_exists(self.JOURNAL_DIR, "journald-Persistenzverzeichnis")
         ok &= self._check_installed("logwatch", "Paket logwatch")
+        # Der Aufruf steht im Berichts-Skript und im Funktionstest — ein
+        # falscher Pfad fällt sonst erst auf, wenn der Nachtlauf ausbleibt.
+        ok &= self._check_file_exists(self.LOGWATCH_BIN, "logwatch-Programm")
         for key, value in self._logwatch_directives(mailfrom):
             ok &= self._check_file_line(
                 self.LOGWATCH_CONF, f"{key} = {value}", f"logwatch {key}"

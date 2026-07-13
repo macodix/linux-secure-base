@@ -371,7 +371,7 @@ def _script() -> str:
         admin_mail="admin@example.com",
         mail_from="root@example.com",
         fqdn="server.example.com",
-        logwatch_bin="/usr/bin/logwatch",
+        logwatch_bin="/usr/sbin/logwatch",
         journalctl_bin="/usr/bin/journalctl",
         systemctl_bin="/usr/bin/systemctl",
         df_bin="/usr/bin/df",
@@ -383,7 +383,7 @@ def _script() -> str:
 def test_report_script_writes_logwatch_report_to_a_file_not_to_mail() -> None:
     """logwatch schreibt in eine Datei — der volle Bericht geht als Anhang mit."""
     content = _script()
-    assert '"/usr/bin/logwatch" --output file --format text' in content
+    assert '"/usr/sbin/logwatch" --output file --format text' in content
     assert "--output mail" not in content
 
 
@@ -458,3 +458,15 @@ def test_check_stock_cron_disabled_rejects_an_executable_file(tmp_path: Path) ->
 
     stock.chmod(0o644)
     assert mod._check_stock_cron_disabled() is True
+
+
+def test_logwatch_bin_points_to_the_path_the_package_ships() -> None:
+    """Das Paket logwatch legt den Aufruf unter /usr/sbin ab, nicht unter /usr/bin.
+
+    Belegt aus den Paketdateien beider Zieldistributionen: Debian 13 und
+    Ubuntu 26.04 liefern beide /usr/sbin/logwatch (Symlink auf logwatch.pl)
+    und führen /usr/sbin und /usr/bin nicht zusammen.
+    """
+    assert Logging.LOGWATCH_BIN == "/usr/sbin/logwatch"
+    mod = _make_logging()
+    assert Logging.LOGWATCH_BIN in mod._report_script("root@example.com")
