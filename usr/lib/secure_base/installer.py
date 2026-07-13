@@ -11,10 +11,11 @@ from typing import cast
 
 from pifos.caller import ModuleHandle, PifosCaller
 from pifos.config.config import Config
-from pifos.errors import ConfigError
+from pifos.errors import ConfigError, ModuleError
 from pifos.ipc import LogLevel, MessageKind
 
 from secure_base.config_setup import ensure_config, fill_missing, module_config
+from secure_base.distro import distro_id
 from secure_base.module_spec import ModuleSpec
 from secure_base.modules.ufw import Ufw
 from secure_base.selection import select_modules
@@ -350,10 +351,21 @@ def main(args: argparse.Namespace) -> int:
         args: Geparste Kommandozeilenargumente.
 
     Returns:
-        0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einem ändernden
-        Aufruf ohne Systemrechte, mit fehlerhafter Auswahl oder
-        ungültiger Konfiguration.
+        0 bei Erfolg, 1 bei einem Modulfehler, 2 auf einer nicht
+        unterstützten Distribution, bei einem ändernden Aufruf ohne
+        Systemrechte, mit fehlerhafter Auswahl oder ungültiger
+        Konfiguration.
     """
+    # Distribution vor allem anderen: Die Module setzen Paketnamen, Pfade und
+    # Archiv-Benennungen von Ubuntu oder Debian voraus. Auf einer anderen
+    # Distribution bricht der Lauf hier ab, statt in der Mitte der Module.
+    try:
+        distro = distro_id()
+    except ModuleError as exc:
+        logger.error("%s", exc)
+        return 2
+    logger.debug("Distribution: %s", distro)
+
     # Systemrechte nur für tatsächlich ändernde Läufe; check und test
     # sind rein lesend, der Trockenlauf führt nichts aus (wie der
     # Bash-Vorgänger).

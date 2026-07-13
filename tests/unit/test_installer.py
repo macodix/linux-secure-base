@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 import secure_base.installer as installer_module
 from pifos.config.config import Config
-from pifos.errors import ConfigError
+from pifos.errors import ConfigError, ModuleError
 from pifos.ipc import IpcMessage, LogLevel, MessageKind
 from secure_base.installer import LsbInstaller, _send_install_report, main
 from secure_base.module_spec import ModuleSpec
@@ -93,6 +93,12 @@ class _StubInstaller:
 def _no_install_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verhindert echten Berichtsversand (Dateisystem/sendmail) in Tests."""
     monkeypatch.setattr(installer_module, "_send_install_report", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _supported_distro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stellt eine unterstützte Distribution, unabhängig vom Testrechner."""
+    monkeypatch.setattr(installer_module, "distro_id", lambda: "ubuntu")
 
 
 def _base_args(**overrides: object) -> argparse.Namespace:
@@ -228,6 +234,38 @@ def test_main_requires_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ohne Systemrechte bricht main mit Exitcode 2 ab."""
     monkeypatch.setattr("os.geteuid", lambda: 1000)
     assert main(_base_args()) == 2
+
+
+def test_main_aborts_on_unsupported_distro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auf einer nicht unterstützten Distribution bricht main mit Exitcode 2 ab."""
+
+    def _raise() -> str:
+        raise ModuleError("Distribution 'fedora' wird nicht unterstützt")
+
+    monkeypatch.setattr(installer_module, "distro_id", _raise)
+    called = False
+
+    def _ensure_config(path: Path) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(installer_module, "ensure_config", _ensure_config)
+
+    assert main(_base_args()) == 2
+    # Vor der Konfiguration, damit auf einer fremden Distribution nichts
+    # angelegt oder verändert wird.
+    assert not called
+
+
+def test_main_checks_distro_before_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Die Distributionsprüfung greift auch ohne Systemrechte."""
+
+    def _raise() -> str:
+        raise ModuleError("Distribution 'fedora' wird nicht unterstützt")
+
+    monkeypatch.setattr(installer_module, "distro_id", _raise)
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    assert main(_base_args(command="check")) == 2
 
 
 def test_main_returns_2_when_config_missing(monkeypatch: pytest.MonkeyPatch) -> None:

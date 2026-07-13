@@ -187,4 +187,6 @@ Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab un
 
 Von den fünf Punkten aus Kapitel 7 sind drei umgesetzt, darunter der einzige Blocker. Offen ist noch der Härtungsmaßstab (Punkt 5); Punkt 2 ist reine Dokumentation.
 
-Die Erkennung der Distribution liegt in `secure_base.distro` und wird bisher nur vom Modul `unattended` abgefragt. Der Installer selbst prüft die Distribution noch nicht — er läuft ungeprüft auf jedem System an und bricht erst ab, wenn das erste Modul eine distributionsabhängige Entscheidung trifft.
+Die Erkennung der Distribution liegt in `secure_base.distro`. Der Installer fragt sie als ersten Schritt jedes Laufs ab und bricht auf einer nicht unterstützten Distribution mit Code 2 ab, bevor er die Konfiguration liest oder ein Modul startet. Das Modul `unattended` fragt sie zusätzlich ab, weil es zwischen den beiden Benennungen der Paketquellen wählen muss.
+
+Geprüft wird die Kennung (`ID`), nicht die Version. Ubuntu 26.04 und Debian 13 sind die Stände, mit denen der Installer abgeglichen ist; ältere Stände derselben Distribution weist er nicht ab.

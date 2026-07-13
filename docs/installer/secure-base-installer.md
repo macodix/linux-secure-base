@@ -1,6 +1,6 @@
 # secure-base-installer
 
-Der secure-base-installer richtet ein gehärtetes Ubuntu-Grundsystem in einem Lauf ein. Dieses Dokument beschreibt seine Bedienung und seinen Aufbau: den Aufruf, die Grundlage pifos, den Ablauf eines Laufs, das Modulmuster, die Konfiguration, die Betriebsarten, die Bedienoberfläche und den Installationsbericht. Bezug und Echtheitsprüfung des Pakets stehen in der [README](../../README.md), die eingerichteten Zielzustände in der [Systembeschreibung](../systembeschreibung/INDEX.md).
+Der secure-base-installer richtet ein gehärtetes Linux-Grundsystem in einem Lauf ein. Dieses Dokument beschreibt seine Bedienung und seinen Aufbau: den Aufruf, die Grundlage pifos, den Ablauf eines Laufs, das Modulmuster, die Konfiguration, die Betriebsarten, die Bedienoberfläche und den Installationsbericht. Bezug und Echtheitsprüfung des Pakets stehen in der [README](../../README.md), die eingerichteten Zielzustände in der [Systembeschreibung](../systembeschreibung/INDEX.md).
 
 ## Inhaltsverzeichnis
 1. Grundlage pifos
@@ -29,18 +29,21 @@ sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PF
 
 Der Installer benötigt Systemrechte (`sudo`) und bricht ohne sie ab, bevor er etwas ändert.
 
+Unterstützt sind Ubuntu und Debian. Die Module setzen deren Paketnamen, Pfade und Archiv-Benennungen voraus. Der Installer stellt die laufende Distribution aus `/etc/os-release` fest und bricht auf jeder anderen mit Code 2 ab, bevor er etwas liest oder ändert.
+
 ## 3. Ablauf eines Laufs
 
 Der Einstiegspunkt `bin/secure-base-installer` liest die Kommandozeile und ruft `main` auf. Ein Lauf durchläuft:
 
-1. Rechteprüfung — `install` und `uninstall` ohne Trockenlauf verlangen Systemrechte und brechen sonst mit Code 2 ab, bevor etwas geändert wird; `check` und `test` sind rein lesend.
-2. Konfiguration bereitstellen — fehlt die Datei, wird die Vorlage kopiert (Kapitel 5).
-3. Modulauswahl — feste Reihenfolge aus der Registratur, gefiltert nach den Aktivierungslisten und der Kommandozeile (Kapitel 4).
-4. Fehlende Pflichtwerte klären — dialogische Abfrage, Rückschreiben mit Rechten 0600 (Kapitel 5).
-5. Module ausführen — je Modul Start, Statusmeldungen, Ergebnis (Kapitel 7). `install` und `uninstall` bauen aufeinander auf und brechen nach einem Modulfehler ab; `check` und `test` laufen vollständig durch.
-6. Abschluss — bei `install` der Installationsbericht (Kapitel 8) und, nach vollständig erfolgreichem Lauf, die Abfrage zur ufw-Aktivierung (Kapitel 7).
+1. Distributionsprüfung — auf einer nicht unterstützten Distribution Abbruch mit Code 2, vor jedem anderen Schritt.
+2. Rechteprüfung — `install` und `uninstall` ohne Trockenlauf verlangen Systemrechte und brechen sonst mit Code 2 ab, bevor etwas geändert wird; `check` und `test` sind rein lesend.
+3. Konfiguration bereitstellen — fehlt die Datei, wird die Vorlage kopiert (Kapitel 5).
+4. Modulauswahl — feste Reihenfolge aus der Registratur, gefiltert nach den Aktivierungslisten und der Kommandozeile (Kapitel 4).
+5. Fehlende Pflichtwerte klären — dialogische Abfrage, Rückschreiben mit Rechten 0600 (Kapitel 5).
+6. Module ausführen — je Modul Start, Statusmeldungen, Ergebnis (Kapitel 7). `install` und `uninstall` bauen aufeinander auf und brechen nach einem Modulfehler ab; `check` und `test` laufen vollständig durch.
+7. Abschluss — bei `install` der Installationsbericht (Kapitel 8) und, nach vollständig erfolgreichem Lauf, die Abfrage zur ufw-Aktivierung (Kapitel 7).
 
-Der Rückgabewert ist 0 bei Erfolg, 1 bei einem Modulfehler, 2 bei fehlenden Rechten, fehlerhafter Auswahl oder ungültiger Konfiguration.
+Der Rückgabewert ist 0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einer nicht unterstützten Distribution, fehlenden Rechten, fehlerhafter Auswahl oder ungültiger Konfiguration.
 
 ## 4. Module
 
@@ -83,3 +86,4 @@ Nach jedem `install`-Lauf legt der Installer einen Bericht unter `/var/log/secur
 |---|---|---|---|
 | 0.01 | 2026-07-10 | macodix | Erstanlage des Installer-Konzepts. |
 | 0.02 | 2026-07-13 | macodix | Kapitel Aufruf aufgenommen (bisher `installer/README.md`, Verzeichnis entfernt). |
+| 0.03 | 2026-07-13 | macodix | Distributionsprüfung als erster Schritt jedes Laufs. |
