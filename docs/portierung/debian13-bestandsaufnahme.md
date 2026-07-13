@@ -139,9 +139,21 @@ enabled = true
 
 Das sshd-Jail liest also auf beiden Distributionen aus dem Journal, nicht aus `/var/log/auth.log`. Das fehlende `rsyslog` unter Debian trifft fail2ban **nicht**.
 
-### 5.4 SSH
+### 5.4 SSH: Socket-Aktivierung
 
-Beide Pakete liefern `ssh.service` **und** `ssh.socket` (Ubuntu zusätzlich `sshd.service` als Alias). Beide Vorgabekonfigurationen enthalten `Include /etc/ssh/sshd_config.d/*.conf`. Kein Unterschied.
+Beide Pakete liefern `ssh.service` **und** `ssh.socket` mit, und beide Vorgabekonfigurationen enthalten `Include /etc/ssh/sshd_config.d/*.conf`. Welche Unit im Auslieferungszustand aktiv ist, entscheidet aber das `postinst` des Pakets — und dort sind die beiden Distributionen exakt gegenläufig:
+
+| | Debian 13 | Ubuntu 26.04 |
+|---|---|---|
+| bei Neuinstallation aktiviert | **`ssh.service`** | **`ssh.socket`** |
+| nur aktiviert, wenn schon vorher installiert | `ssh.socket` | `ssh.service` |
+| Betriebsart | klassischer Daemon | Socket-Aktivierung |
+
+Belegt aus den `postinst`-Skripten beider Pakete: Der Aufruf `deb-systemd-helper --quiet was-enabled <unit>` liefert bei einer Neuinstallation `true` und aktiviert die Unit. Er steht in Debian für `ssh.service`, in Ubuntu für `ssh.socket`. Die jeweils andere Unit steht hinter `deb-systemd-helper debian-installed <unit>` und wird deshalb nur aktiviert, wenn sie aus einer früheren Installation bereits eingerichtet war.
+
+Der Unterschied setzt sich in den Unit-Dateien fort. Ubuntus `ssh.socket` lauscht auf `0.0.0.0:22` und `[::]:22` mit `FreeBind=yes` und trägt `RequiredBy=ssh.service`; dazu liefert Ubuntu einen Generator `sshd-socket-generator`, der die `Port`- und `ListenAddress`-Angaben aus `sshd_config` in ein Drop-in für `ssh.socket` überträgt. Debians `ssh.socket` hat fest `ListenStream=22` und keinen Generator — eine abweichende `Port`-Angabe in `sshd_config` bliebe dort ohne Wirkung. Das deckt sich mit den Vorbehalten, die auf der Debian-Seite gegen die Socket-Aktivierung vorgebracht wurden.
+
+**Folge für secure-base: keine.** Auf Debian läuft `sshd` als dauerhafter Prozess, der monit-Check `check process sshd matching "sshd"` greift also. Auf Ubuntu ändert sich nichts gegenüber heute. Der Port bleibt in beiden Fällen 22.
 
 ### 5.5 AppArmor
 
@@ -192,10 +204,11 @@ Punkt 4 ist umgesetzt: Das Modul `logging` richtet die sudo-Protokollierung und 
 Diese Punkte lassen sich aus Paketdaten **nicht** beantworten:
 
 - **Audit-Regel auf `/var/log/lastlog`.** In keiner der beiden Distributionen liefert `libpam-modules` noch ein `pam_lastlog`-Modul. Ob die Datei überhaupt noch existiert und `auditd` die Regel annimmt, muss auf dem System geprüft werden — und zwar **auch unter Ubuntu**. Prüfbefehle: `ls -l /var/log/lastlog` und `auditctl -l | grep lastlog`.
-- **Verhalten bei aktiver SSH-Socket-Aktivierung.** Beide liefern `ssh.socket` mit. Welche Unit im Auslieferungszustand aktiv ist, entscheidet das Preset des jeweiligen Images. Bei aktiver Socket-Aktivierung läuft kein dauerhafter `sshd`-Prozess — der monit-Check `check process sshd matching "sshd"` würde dann Daueralarm auslösen.
 - **Ob `lynis` unter Debian dasselbe Profil und dieselben Tests fährt.** Debian liefert eine ältere Version (3.1.4 gegen 3.1.6).
 
 Ob `sudo` auf dem konkreten Debian-Image installiert ist, hängt vom Image ab und nicht vom Paketindex — der Debian-Installer installiert es, wenn kein Root-Passwort gesetzt wird. Das muss nicht mehr vorab geklärt werden: Das Modul `logging` entscheidet zur Laufzeit anhand der Pfade (Kapitel 7).
+
+Die Frage, welche SSH-Unit im Auslieferungszustand aktiv ist, ist aus den Paketen beantwortet (Kapitel 5.4) und damit hier erledigt. Ein anderes Image kann davon abweichen — es hebt eine Aktivierung aus dem `postinst` aber nicht auf, sondern müsste sie ausdrücklich ändern.
 
 ## 9. Nächster Schritt
 
