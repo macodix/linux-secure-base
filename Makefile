@@ -21,6 +21,16 @@ SIGNING_KEY := cert@martinhenkel.net
 
 DIST_NAME := secure-base-installer-$(VERSION)
 
+# Inhalt des Auslieferungspakets: nur was auf dem Zielsystem gebraucht wird —
+# Entry-Point, Konfigurationsvorlage, Programmcode, dazu die Lizenz (GPL-3.0),
+# die README (Bezug, Echtheitsprüfung, Installation) und die Bedienungs- und
+# Aufbaubeschreibung des Installers. Test- und Bauwerkzeuge, Systembeschreibung,
+# Einrichtungsanleitung und Umstellungsanleitungen bleiben im Repository.
+# pyproject.toml gehört dazu, weil bin/secure-base-installer die Version zur
+# Laufzeit daraus liest (einzige Quelle der Version, siehe VERSION oben).
+DIST_CONTENT := bin etc usr LICENSE README.md pyproject.toml \
+	docs/installer/secure-base-installer.md
+
 check:
 	ruff format --check $(SOURCES) $(wildcard bin/*)
 	ruff check $(SOURCES) $(wildcard bin/*)
@@ -46,7 +56,7 @@ dist:
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	pkgdir="$$tmpdir/$(DIST_NAME)"; \
 	mkdir -p "$$pkgdir"; \
-	git archive HEAD | tar -x -C "$$pkgdir"; \
+	git archive HEAD $(DIST_CONTENT) | tar -x -C "$$pkgdir"; \
 	rm -rf "$$pkgdir/usr/lib/secure_base/_vendor" "$$pkgdir/usr/lib/pifos"; \
 	git clone --branch $(PIFOS_TAG) --depth 1 $(PIFOS_REPO) "$$tmpdir/pifos"; \
 	actual_commit=$$(git -C "$$tmpdir/pifos" rev-parse HEAD); \
