@@ -35,3 +35,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 01 [umstellungen/01-f5278f8-nach-fd1824e-sicherungsablagen-var-backup.md](umstellungen/01-f5278f8-nach-fd1824e-sicherungsablagen-var-backup.md) — lokale Sicherungsablagen nach `/var/backup`, PostgreSQL-Einzeldumps, verstecktes restic-Konfigverzeichnis
 
 02 [umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md](umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md) — rkhunter-Ausnahmen für bekannte Fehlalarme (systemd, PostgreSQL)
+
+03 [umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md](umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md) — Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang
