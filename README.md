@@ -79,7 +79,7 @@ tar xzf secure-base-installer-<version>.tar.gz
 sudo secure-base-installer-<version>/bin/secure-base-installer install
 ```
 
-Details zur Bedienung: [`installer/README.md`](installer/README.md).
+Details zur Bedienung: [`docs/installer/secure-base-installer.md`](docs/installer/secure-base-installer.md).
 
 
 ## Lizenz
