@@ -64,8 +64,8 @@ Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es e
 **Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts. In der Entwicklungsphase gibt es dort den rollierenden **Testbau** (`testbau`) — er wird bei jedem Entwicklungsstand ersetzt; `secure-base-installer --version` und die Datei `BUILD-INFO` im Paket nennen Commit und Datum des Baus. Versionierte Release-Stände (rc/final) erscheinen erst wieder, wenn ein Stand den Servertest vollständig bestanden hat.
 
 ```sh
-wget https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.1.tar.gz
-wget https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.1.tar.gz.asc
+wget https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.2.tar.gz
+wget https://github.com/macodix/linux-secure-base/releases/download/testbau/secure-base-installer-0.1.2.tar.gz.asc
 wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/SIGNING-KEY.asc
 ```
 
