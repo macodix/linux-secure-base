@@ -4,9 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "secure-base-installer"
-version = "0.1.0-dev"
+# Einzige Quelle der Version ist secure_base.__version__ — sie wird von hier
+# abgeleitet, damit das Auslieferungspaket ohne pyproject.toml auskommt.
+dynamic = ["version"]
 description = "Linux Secure Base — Installer für ein gehärtetes Grundsystem"
 requires-python = ">=3.13"
+
+[tool.setuptools.dynamic]
+version = { attr = "secure_base.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["usr/lib"]

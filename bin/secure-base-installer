@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Einstiegspunkt des LSB-Installers.
+"""Einstiegspunkt des secure-base-installers.
 
 Aufruf: secure-base-installer [OPTIONEN] {install|check} [MODUL ...]
 """
@@ -7,7 +7,6 @@ Aufruf: secure-base-installer [OPTIONEN] {install|check} [MODUL ...]
 import argparse
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 # Keine Bytecode-Ablagen (__pycache__) im Paketbaum — der Baum bleibt so,
@@ -27,19 +26,19 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "usr" / "lib"))
 sys.path.insert(0, str(_ROOT / "usr" / "lib" / "secure_base" / "_vendor"))
 
+from secure_base import __version__  # noqa: E402  (nach Suchpfad-Erweiterung)
 from secure_base.installer import main  # noqa: E402  (nach Suchpfad-Erweiterung)
 
 
 def _version() -> str:
     """Liest Version und Bau-Kennung des Paketbaums.
 
-    Die pyproject.toml ist die einzige Quelle der Version (auch der
-    Paketbau liest sie). Die Datei BUILD-INFO schreibt der Paketbau
-    (Commit und Datum); sie identifiziert den Testbau eindeutig und
-    fehlt im reinen Arbeitsbaum.
+    Einzige Quelle der Version ist secure_base.__version__; pyproject.toml
+    und Paketbau leiten sie von dort ab. Die Datei BUILD-INFO schreibt der
+    Paketbau (Commit und Datum); sie identifiziert den Testbau eindeutig
+    und fehlt im reinen Arbeitsbaum.
     """
-    with (_ROOT / "pyproject.toml").open("rb") as fh:
-        version = str(tomllib.load(fh)["project"]["version"])
+    version = __version__
     build_info = _ROOT / "BUILD-INFO"
     if build_info.exists():
         version += f" ({build_info.read_text(encoding='utf-8').strip()})"

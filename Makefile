@@ -2,8 +2,9 @@
 
 SOURCES := usr/lib/secure_base tests
 
-# Version des Auslieferungspakets: einzige Quelle ist pyproject.toml.
-VERSION := $(shell python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+# Version des Auslieferungspakets: einzige Quelle ist secure_base.__version__
+# (pyproject.toml leitet sie von dort ab).
+VERSION := $(shell python3 -c "import sys; sys.path.insert(0, 'usr/lib'); import secure_base; print(secure_base.__version__)")
 
 # pifos-Bezug für das Ein-Schritt-Paket (Plan Abschnitt 2.2): fester,
 # geprüfter Versions-Tag; bei einer Anhebung hier ändern.
@@ -26,9 +27,7 @@ DIST_NAME := secure-base-installer-$(VERSION)
 # die README (Bezug, Echtheitsprüfung, Installation) und die Bedienungs- und
 # Aufbaubeschreibung des Installers. Test- und Bauwerkzeuge, Systembeschreibung,
 # Einrichtungsanleitung und Umstellungsanleitungen bleiben im Repository.
-# pyproject.toml gehört dazu, weil bin/secure-base-installer die Version zur
-# Laufzeit daraus liest (einzige Quelle der Version, siehe VERSION oben).
-DIST_CONTENT := bin etc usr LICENSE README.md pyproject.toml \
+DIST_CONTENT := bin etc usr LICENSE README.md \
 	docs/installer/secure-base-installer.md
 
 check:
