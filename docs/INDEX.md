@@ -37,3 +37,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 02 [umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md](umstellungen/02-fd1824e-nach-02f7865-rkhunter-ausnahmen.md) — rkhunter-Ausnahmen für bekannte Fehlalarme (systemd, PostgreSQL)
 
 03 [umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md](umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md) — Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang
+
+04 [umstellungen/04-12e22af-nach-286d19c-anmeldehistorie-und-rsyslog.md](umstellungen/04-12e22af-nach-286d19c-anmeldehistorie-und-rsyslog.md) — Anmeldehistorie (wtmpdb) statt der entfallenen lastlog-Datei, rsyslog sichergestellt, Debian-Unterstützung
