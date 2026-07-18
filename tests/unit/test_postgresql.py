@@ -95,10 +95,13 @@ def test_validate_rejects_invalid_pg_dump_time() -> None:
         mod._validate()
 
 
-def test_uninstall_is_config_independent() -> None:
+def test_uninstall_is_config_independent(tmp_path: Path) -> None:
     """start() ruft bei operation='uninstall' _validate() nicht auf."""
     mod = _make_module(operation="uninstall", timezone="Nirgendwo/Erfunden")
     mod.PG_ETC_BASE = "/nichts-vorhanden"  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_DIR = str(tmp_path / "fehlt-dump")  # type: ignore[misc]
     assert mod.start() == 0
 
 
@@ -842,6 +845,9 @@ def test_uninstall_returns_zero_without_cluster(tmp_path: Path) -> None:
     """Ohne Cluster gibt es nichts zurückzunehmen; _uninstall liefert 0."""
     mod = _make_module(operation="uninstall")
     mod.PG_ETC_BASE = str(tmp_path / "nichts")  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_DIR = str(tmp_path / "fehlt-dump")  # type: ignore[misc]
     conn = mod._conn
     assert mod._uninstall() == 0
     messages = [call.args[0].payload for call in conn.send.call_args_list]  # type: ignore[attr-defined]
@@ -871,6 +877,9 @@ def test_uninstall_leaves_pg_hba_untouched_and_removes_own_conf_d_file(
 
     mod = _make_module(operation="uninstall")
     mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_DIR = str(tmp_path / "fehlt-dump")  # type: ignore[misc]
     mod.SYSTEMD_ACTION_CLS = _NoOpSystemdAction  # type: ignore[misc]
 
     result = mod._uninstall()
@@ -900,6 +909,9 @@ def test_uninstall_warns_about_pg_hba_and_names_backup_recovery_path(
 
     mod = _make_module(operation="uninstall")
     mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_DIR = str(tmp_path / "fehlt-dump")  # type: ignore[misc]
     mod.SYSTEMD_ACTION_CLS = _NoOpSystemdAction  # type: ignore[misc]
     conn = mod._conn
 
@@ -924,6 +936,9 @@ def test_uninstall_short_circuits_when_own_conf_file_already_removed(
 
     mod = _make_module(operation="uninstall")
     mod.PG_ETC_BASE = str(etc_base)  # type: ignore[misc]
+    mod.DUMP_CRON_PATH = str(tmp_path / "fehlt.cron")  # type: ignore[misc]
+    mod.DUMP_SCRIPT_PATH = str(tmp_path / "fehlt.sh")  # type: ignore[misc]
+    mod.DUMP_DIR = str(tmp_path / "fehlt-dump")  # type: ignore[misc]
     mod.SYSTEMD_ACTION_CLS = "sollte-nicht-verwendet-werden"  # type: ignore[misc,assignment]
 
     assert mod._uninstall() == 0
