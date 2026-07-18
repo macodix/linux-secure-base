@@ -61,11 +61,11 @@ gpg --verify secure-base-installer-<version>.tar.gz.asc secure-base-installer-<v
 
 Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es enthält den Installer, den Bausatz pifos und die benötigten Fremdbibliotheken bereits fertig zusammengestellt — kein `pip`, kein Netzzugang und keine vorherige pifos-Einrichtung auf dem Zielsystem nötig.
 
-**Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts, je Version unter einem eigenen Etikett (`v0.1.2`). `secure-base-installer --version` und die Datei `BUILD-INFO` im Paket nennen zusätzlich Commit und Datum des Baus.
+**Herunterladen:** Archiv und Signatur liegen auf der [Releases-Seite](https://github.com/macodix/linux-secure-base/releases) des Projekts, je Version unter einem eigenen Etikett (`v0.1.3`). `secure-base-installer --version` und die Datei `BUILD-INFO` im Paket nennen zusätzlich Commit und Datum des Baus.
 
 ```sh
-wget https://github.com/macodix/linux-secure-base/releases/download/v0.1.2/secure-base-installer-0.1.2.tar.gz
-wget https://github.com/macodix/linux-secure-base/releases/download/v0.1.2/secure-base-installer-0.1.2.tar.gz.asc
+wget https://github.com/macodix/linux-secure-base/releases/download/v0.1.3/secure-base-installer-0.1.3.tar.gz
+wget https://github.com/macodix/linux-secure-base/releases/download/v0.1.3/secure-base-installer-0.1.3.tar.gz.asc
 wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/SIGNING-KEY.asc
 ```
 
