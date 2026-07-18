@@ -7,22 +7,18 @@ pifos ist die Grundlage des Installers (siehe [secure-base-installer](secure-bas
 | Feld | Wert |
 |------|------|
 | Quelle | `https://github.com/macodix/pifos.git` |
-| Tag | `v0.1.0` |
-| Commit | `35538b7a43a328e7274b1af66eeb6db36086cabf` |
-| Übernommen am | 2026-07-18 |
+| Tag | `v0.1.1` |
+| Commit | `a11e79c0790f856af69e1c2a6751f5ac660080e6` |
+| Übernommen am | 2026-07-19 |
 | Ziel im Repo | `usr/lib/pifos/` |
 
-pifos wird als eigenständiges Projekt weiterentwickelt. Die eingebettete Kopie ist ein festgehaltener Stand dieses Projekts plus der unten gelisteten lokalen Anpassungen. Kurzfassung der Herkunft direkt neben dem Code: `usr/lib/pifos/VENDOR.md`.
+pifos wird als eigenständiges Projekt weiterentwickelt. Die eingebettete Kopie ist ein festgehaltener Upstream-Stand. Kurzfassung der Herkunft direkt neben dem Code: `usr/lib/pifos/VENDOR.md`.
 
 ## 2. Lokale Anpassungen
 
-Änderungen an der eingebetteten Kopie gegenüber dem Upstream-Stand — bei jedem Upgrade erneut anzuwenden bzw. gegen den neuen Stand zu prüfen:
+**Keine.** Der Code unter `usr/lib/pifos/` entspricht code-seitig genau dem Upstream-Stand `v0.1.1` (`diff -rq` gegen den Tag bestätigt: keine Abweichung); einzige nicht zu Upstream gehörende Datei ist `usr/lib/pifos/VENDOR.md` (Metadaten).
 
-| # | Datei | Änderung | Grund |
-|---|-------|----------|-------|
-| 1 | `usr/lib/pifos/module.py` (`Module.run_action`) | Bei Fehlschlag Ursache (Returncode + stderr) als ERROR-Meldung an den Aufrufer melden, statt die `ActionError` zu verschlucken und nur `1` zurückzugeben. Zusätzlich Hilfsmethode `_action_failure_detail`. | Ohne dies enthielt die Logdatei nur „fehlgeschlagen: <Schritt>", nicht die eigentliche Werkzeug-Fehlermeldung (z. B. von apt). Regressionstest: `tests/unit/test_pifos_run_action_logging.py`. |
-
-**Stand:** Anpassung 1 ist upstream eingebracht (pifos Tag `v0.1.1`, Commit `a11e79c`). Beim Anheben der eingebetteten Kopie auf `v0.1.1` entfällt der lokale Delta (siehe Abschnitt 4).
+Der frühere lokale Delta an `module.py` (Fehler-Logging in `run_action`, Returncode + stderr als ERROR ans Log, Hilfsmethode `_action_failure_detail`) ist mit `v0.1.1` in den Upstream eingeflossen. Regressionstest weiterhin: `tests/unit/test_pifos_run_action_logging.py`.
 
 ## 3. Einbindung
 
