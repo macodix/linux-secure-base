@@ -1,9 +1,9 @@
-# pifos — Provenienz des vendorten Standes
+# pifos — Herkunft der eingebetteten Kopie
 
-Dieser `pifos`-Baum ist eine ins Repository übernommene (vendorte) Kopie eines
-Upstream-Standes plus einem lokalen Delta. Zweck dieser Datei: die Herkunft
-maschinell und im Review nachprüfbar machen (ersetzt die frühere Commit-
-Verifikation zur Bauzeit). Ausführliche Beschreibung: [../../../docs/installer/pifos-vendoring.md](../../../docs/installer/pifos-vendoring.md).
+Dieser `pifos`-Baum ist eine ins Repository übernommene (eingebettete) Kopie
+eines Upstream-Standes plus einem lokalen Delta. Zweck dieser Datei: die
+Herkunft im Review nachprüfbar machen (ersetzt die frühere Commit-Verifikation
+zur Bauzeit). Ausführlich: [../../../docs/installer/pifos-vendoring.md](../../../docs/installer/pifos-vendoring.md).
 
 ## Basis (Upstream)
 
@@ -24,7 +24,7 @@ folgende Delta an `module.py` bestehen bleiben.
 
 ```diff
 --- a/usr/lib/pifos/module.py   (Basis 35538b7)
-+++ b/usr/lib/pifos/module.py   (vendored)
++++ b/usr/lib/pifos/module.py   (eingebettet)
 @@ run_action / _action_failure_detail
      def run_action(self, action: Action) -> int:
 -        try:
@@ -60,5 +60,21 @@ folgende Delta an `module.py` bestehen bleiben.
 
 Zweck des Deltas: gescheiterte Werkzeugaufrufe (z. B. apt) melden Returncode
 und stderr als ERROR ins Log, statt nur den Rückgabewert `1`. Regressionstest:
-`tests/unit/test_pifos_run_action_logging.py`. Der Delta sollte upstream
-eingebracht werden; danach entfällt er hier.
+`tests/unit/test_pifos_run_action_logging.py`.
+
+**Upstream-Stand:** Dieser Delta ist inzwischen upstream eingebracht (pifos
+Tag `v0.1.1`, Commit `a11e79c`). Beim Anheben der eingebetteten Kopie auf
+`v0.1.1` entfällt der lokale Delta, und die Basis-Tabelle verweist dann auf
+einen reinen Upstream-Tag.
+
+## Integritätsprüfung (Prüfsummen-Liste)
+
+`make check` prüft über das Ziel `check-pifos-embed`, dass diese eingebettete
+Kopie unverändert dem gesegneten Stand entspricht (Prüfsummen-Liste
+`usr/lib/pifos-embed.sha256`). So fällt jede unbeabsichtigte Änderung an
+`usr/lib/pifos/` sofort auf.
+
+Bei einer **absichtlichen** Änderung (Upgrade oder bewusster Delta): danach
+`make pifos-embed-manifest` ausführen (erzeugt die Prüfsummen-Liste neu) und
+Basis-Tabelle sowie Delta oben aktualisieren. Die Neuerzeugung ist im Diff
+sichtbar und damit im Review nachvollziehbar.

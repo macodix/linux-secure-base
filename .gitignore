@@ -30,7 +30,7 @@ __pycache__/
 venv/
 
 # Ein-Schritt-Paket (make dist): zur Bauzeit installierte Fremd-Bibliotheken
-# und Artefakte. pifos ist ins Repo vendort (usr/lib/pifos, versioniert) und
-# hier bewusst NICHT ausgeschlossen.
+# und Artefakte. pifos ist als eingebettete Kopie Teil des Repos
+# (usr/lib/pifos, versioniert) und hier bewusst NICHT ausgeschlossen.
 usr/lib/secure_base/_vendor/
 dist/

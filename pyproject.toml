@@ -33,14 +33,14 @@ ban-relative-imports = "all"
 
 [tool.mypy]
 python_version = "3.13"
-# Nur der Eigencode wird streng geprüft. Die vendorte pifos-Quelle unter
+# Nur der Eigencode wird streng geprüft. Die eingebettete pifos-Kopie unter
 # usr/lib/pifos ist Fremdcode und wird nicht als Eigencode mitgeprüft (analog
 # zu ruff SOURCES); ihre Typen werden nur zur Auflösung mitgelesen (Override
 # unten).
 files = ["usr/lib/secure_base", "tests"]
 strict = true
 
-# pifos ist seit dem Vendoring Teil des Repos (usr/lib/pifos), aber ohne
+# pifos ist als eingebettete Kopie Teil des Repos (usr/lib/pifos), aber ohne
 # py.typed-Marker. Statt ignore_missing_imports (das pifos-Symbole auf Any
 # abbildet und z. B. beim Erben von Module einen eigenen Folgefehler erzeugt)
 # liest mypy die echten Inline-Annotationen von pifos mit (konv-scripting-

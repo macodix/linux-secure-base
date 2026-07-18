@@ -28,7 +28,7 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 01 [installer/secure-base-installer.md](installer/secure-base-installer.md) — Konzept des secure-base-installer: pifos-Grundlage, Ablauf, Module, Konfiguration, Betriebsarten, Bedienoberfläche, Installationsbericht (in Bearbeitung)
 
-02 [installer/pifos-vendoring.md](installer/pifos-vendoring.md) — pifos-Vendoring: Herkunft, lokale Anpassungen, Einbindung, Upgrade-Verfahren, dist-Auslieferung (in Bearbeitung)
+02 [installer/pifos-vendoring.md](installer/pifos-vendoring.md) — pifos-Einbettung: Herkunft, lokale Anpassungen, Einbindung, Integritätsprüfung, Upgrade-Verfahren, dist-Auslieferung (in Bearbeitung)
 
 ## D. Umstellungen
 
