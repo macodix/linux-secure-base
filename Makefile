@@ -6,16 +6,11 @@ SOURCES := usr/lib/secure_base tests
 # (pyproject.toml leitet sie von dort ab).
 VERSION := $(shell python3 -c "import sys; sys.path.insert(0, 'usr/lib'); import secure_base; print(secure_base.__version__)")
 
-# pifos-Bezug für das Ein-Schritt-Paket (Plan Abschnitt 2.2): fester,
-# geprüfter Versions-Tag; bei einer Anhebung hier ändern.
-# PIFOS_COMMIT pinnt zusätzlich den erwarteten Commit-Kennwert: der Tag
-# selbst ist nicht GPG-signiert, ein verschobener Tag würde sonst
-# unbemerkt einen anderen Stand liefern. Nach dem Klonen wird der
-# tatsächliche Commit-Kennwert dagegen geprüft; bei Abweichung bricht
-# der Bau ab, statt den verschobenen Stand stillschweigend zu verwenden.
-PIFOS_REPO := https://github.com/macodix/pifos.git
-PIFOS_TAG := v0.1.0
-PIFOS_COMMIT := 35538b7a43a328e7274b1af66eeb6db36086cabf
+# pifos ist ins Repo vendort (usr/lib/pifos, Herkunft in usr/lib/pifos/VENDOR.md
+# und docs/installer/pifos-vendoring.md) und wird über `git archive` mit
+# ausgeliefert — kein Bauzeit-Klon mehr. Herkunfts-/Delta-Prüfung erfolgt auf
+# Repo-/Review-Ebene (VENDOR.md), die Integrität des Artefakts über die
+# GPG-Signatur (siehe unten).
 
 # Schlüssel, mit dem das Artefakt signiert wird (README.md, SIGNING-KEY.asc).
 SIGNING_KEY := cert@martinhenkel.net
@@ -56,16 +51,7 @@ dist:
 	pkgdir="$$tmpdir/$(DIST_NAME)"; \
 	mkdir -p "$$pkgdir"; \
 	git archive HEAD $(DIST_CONTENT) | tar -x -C "$$pkgdir"; \
-	rm -rf "$$pkgdir/usr/lib/secure_base/_vendor" "$$pkgdir/usr/lib/pifos"; \
-	git clone --branch $(PIFOS_TAG) --depth 1 $(PIFOS_REPO) "$$tmpdir/pifos"; \
-	actual_commit=$$(git -C "$$tmpdir/pifos" rev-parse HEAD); \
-	if [ "$$actual_commit" != "$(PIFOS_COMMIT)" ]; then \
-		echo "Abbruch: pifos-Tag $(PIFOS_TAG) zeigt auf $$actual_commit," \
-			"erwartet $(PIFOS_COMMIT) (Tag verschoben?)"; \
-		exit 1; \
-	fi; \
-	mkdir -p "$$pkgdir/usr/lib"; \
-	cp -r "$$tmpdir/pifos/usr/lib/pifos" "$$pkgdir/usr/lib/pifos"; \
+	rm -rf "$$pkgdir/usr/lib/secure_base/_vendor"; \
 	printf 'Bau g%s vom %s\n' \
 		"$$(git rev-parse --short HEAD)" "$$(date +%Y-%m-%d)" \
 		> "$$pkgdir/BUILD-INFO"; \

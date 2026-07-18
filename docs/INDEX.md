@@ -28,6 +28,8 @@ Navigation für die Dokumentation von linux-secure-base. Gegliedert nach Dokumen
 
 01 [installer/secure-base-installer.md](installer/secure-base-installer.md) — Konzept des secure-base-installer: pifos-Grundlage, Ablauf, Module, Konfiguration, Betriebsarten, Bedienoberfläche, Installationsbericht (in Bearbeitung)
 
+02 [installer/pifos-vendoring.md](installer/pifos-vendoring.md) — pifos-Vendoring: Herkunft, lokale Anpassungen, Einbindung, Upgrade-Verfahren, dist-Auslieferung (in Bearbeitung)
+
 ## D. Umstellungen
 
 Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bringen. Auf einem neu aufgesetzten Server sind sie gegenstandslos. Der Dateiname nennt den Versionssprung: `<lfd>-<von>-nach-<nach>-<thema>.md`. Wer den Stand seines Servers kennt, sieht daran ohne Öffnen, welche Anleitungen noch anzuwenden sind.
