@@ -25,7 +25,7 @@ Quelle der Zusammenfassung ist das Journal, nicht der Logwatch-Text: Die Meldung
 
 `auditd` protokolliert sicherheitskritische Aktivitäten; das Regelset ist auf administrative Vorgänge beschränkt und nach dem Laden bis zum Reboot unveränderlich (`-e 2`).
 
-Ist `sudo` auf dem System vorhanden, wird seine Nutzung ergänzend über `/etc/sudoers.d/secure-base-sudolog` nach `/var/log/sudo.log` protokolliert, und das Audit-Regelset überwacht `/etc/sudoers` und `/etc/sudoers.d`. Administriert wird zwar über `su`, aber damit bleibt jede Nutzung von `sudo` nachvollziehbar. Fehlt `sudo`, entfallen beide Bestandteile; nachinstalliert wird es nicht. Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` wöchentlich rotiert (acht Wochen Vorhaltung); `journald` und `auditd` verwalten ihre Logs selbst.
+Ist `sudo` auf dem System vorhanden, überwacht das Audit-Regelset `/etc/sudoers` und `/etc/sudoers.d`; die Aufrufe selbst protokolliert sudo ins Syslog/Journal. Administriert wird zwar über `su`, aber damit bleibt jede Nutzung von `sudo` nachvollziehbar. Fehlt `sudo`, entfallen die sudoers-Audit-Regeln; nachinstalliert wird es nicht. Ein Drop-in mit `Defaults logfile` wird nicht gesetzt — das unter Ubuntu ausgelieferte sudo-rs kennt die Direktive nicht und würde mit Parse-Fehler jeden sudo-Aufruf verweigern. Das secure-base-Logfile `/var/log/secure-base/secure-base.log` wird über `/etc/logrotate.d/secure-base` wöchentlich rotiert (acht Wochen Vorhaltung); `journald` und `auditd` verwalten ihre Logs selbst.
 
 ## 2. Automatische Sicherheitsupdates
 

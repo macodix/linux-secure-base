@@ -127,10 +127,15 @@ def test_backup_script_path_uses_fqdn() -> None:
     )
 
 
-def test_cron_file_path_uses_fqdn() -> None:
-    """_cron_file_path benennt die Cron-Datei nach fqdn."""
+def test_cron_file_path_is_fixed_and_dotless() -> None:
+    """_cron_file_path nutzt den festen, punktfreien Namen (run-parts-Regel).
+
+    cron ignoriert Dateien in /etc/cron.d mit Punkten im Namen — der Name
+    darf deshalb nie aus dem fqdn entstehen.
+    """
     mod = _make_restic(fqdn="host.example.com")
-    assert mod._cron_file_path() == f"{Restic.CRON_DIR}/host.example.com-backup"
+    assert mod._cron_file_path() == f"{Restic.CRON_DIR}/{Restic.CRON_FILE}"
+    assert "." not in Restic.CRON_FILE
 
 
 # --- _mkdir_batch_commands ---
@@ -452,7 +457,7 @@ def test_doc_contains_section_title_and_core_fields() -> None:
     assert f"`{Restic.PASSPHRASE_FILE}`" in section
     assert "Repo-Passphrase (0600 root:root)" in section
     assert f"`{Restic.BACKUP_SCRIPT_DIR}/server.example.com-backup.sh`" in section
-    assert f"`{Restic.CRON_DIR}/server.example.com-backup`" in section
+    assert f"`{Restic.CRON_DIR}/{Restic.CRON_FILE}`" in section
     assert "**SFTP-Ziel:** `backup-alias:/backup/server`" in section
     assert "**Timer/Cron:** täglich 02:30 Uhr" in section
     assert "> Hinweis:" in section
@@ -463,7 +468,6 @@ def test_doc_marks_missing_values_as_leer_default() -> None:
     section = Restic.doc({})
     assert "**SFTP-Ziel:** `(leer/Default):(leer/Default)`" in section
     assert "(leer/Default)-backup.sh" in section
-    assert "(leer/Default)-backup" in section
 
 
 def test_doc_never_leaks_restic_passphrase() -> None:

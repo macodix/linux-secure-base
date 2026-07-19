@@ -112,7 +112,7 @@ touch /var/lib/secure-base/restic-last-success
 
 ## 5. Cron-Eintrag
 
-Datei `/etc/cron.d/<FQDN>-backup` anlegen:
+Datei `/etc/cron.d/secure-base-backup` anlegen. Der Dateiname darf keine Punkte enthalten — cron ignoriert Dateien in `/etc/cron.d`, deren Name nicht der run-parts-Namenskonvention `[A-Za-z0-9_-]` folgt (`man cron`, DEBIAN SPECIFIC); ein FQDN-basierter Name würde nie ausgeführt.
 
 ```
 # Datensicherung (restic) — täglich zur Zeit aus restic_backup_time (Vorgabe 02:30)
@@ -121,7 +121,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
 ```
-chmod 644 /etc/cron.d/<FQDN>-backup
+chmod 644 /etc/cron.d/secure-base-backup
 ```
 
 Der `cron`-Dienst gehört zum Distro-Default und ist aktiv. Die Datei wird beim nächsten cron-Tick eingelesen. `MAILTO=` bleibt absichtlich aus — bei Fehlschlag mailt das Skript selbst, sonst kämen auch erfolgreiche stdout-Zeilen als Mail.

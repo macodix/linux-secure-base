@@ -16,7 +16,6 @@ from secure_base.modules.logging import (
     _logrotate_content,
     _report_cron_content,
     _report_script_content,
-    _sudolog_content,
 )
 
 
@@ -230,11 +229,6 @@ def test_logrotate_content_contains_expected_directives() -> None:
     assert "rotate 8" in content
 
 
-def test_sudolog_content_sets_logfile_directive() -> None:
-    """_sudolog_content setzt die sudo-Logdatei-Direktive."""
-    assert _sudolog_content() == 'Defaults logfile="/var/log/sudo.log"\n'
-
-
 # --- _check_value ---
 
 
@@ -434,8 +428,9 @@ def test_doc_contains_section_title_and_core_fields(
     assert f"`{Logging.AUDIT_RULES_FILE}`" in section
     assert "-w /etc/sudoers -p wa -k scope" in section
     assert "-e 2 (Immutable" in section
-    assert f"`{Logging.SUDOLOG_CONF}`" in section
-    assert 'Defaults logfile="/var/log/sudo.log"' in section
+    # Kein sudoers-Drop-in mehr: "Defaults logfile" kennt sudo-rs nicht.
+    assert Logging.SUDOLOG_CONF not in section
+    assert "Defaults logfile" not in section
     assert "**Timer/Cron:** täglicher Lauf via" in section
     assert Logging.REPORT_CRON in section
     assert Logging.REPORT_SCRIPT in section

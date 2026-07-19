@@ -80,6 +80,7 @@ def _make_module(
     monkeypatch.setattr(Logging, "LOGROTATE_CONF", str(tmp_path / "logrotate.conf"))
     monkeypatch.setattr(Logging, "AUDIT_RULES_FILE", str(tmp_path / "audit-rules.conf"))
     monkeypatch.setattr(Logging, "SUDOLOG_CONF", str(tmp_path / "sudolog.conf"))
+    monkeypatch.setattr(Logging, "SUDO_LOGFILE", str(tmp_path / "sudo.log"))
     # Reale Zielpfade (/usr/local/sbin, /etc/cron.daily) sind ohne Systemrechte
     # nicht beschreibbar — im Test auf tmp_path umgelenkt. Der mitgelieferte
     # logwatch-Cron wird als Platzhalterdatei vorbelegt: PermissionsAction
@@ -138,7 +139,8 @@ def test_install_all_steps_succeed(
     assert "MailFrom = root@example.com" in logwatch_lines
     assert Path(Logging.LOGROTATE_CONF).exists()
     assert Path(Logging.AUDIT_RULES_FILE).exists()
-    assert Path(Logging.SUDOLOG_CONF).exists()
+    # Kein sudoers-Drop-in mehr: "Defaults logfile" kennt sudo-rs nicht.
+    assert not Path(Logging.SUDOLOG_CONF).exists()
     rules = Path(Logging.AUDIT_RULES_FILE).read_text(encoding="utf-8")
     assert "-w /var/log/wtmp.db -p wa -k logins" in rules
     assert "/var/log/lastlog" not in rules
@@ -199,7 +201,7 @@ def test_install_without_sudo_omits_sudo_parts(
 def test_check_without_sudo_reports_not_applicable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """check bewertet die fehlende sudo-Protokollierung nicht als Abweichung."""
+    """check verlangt ohne sudo keine sudoers-Audit-Regeln und kein Drop-in."""
     mod, conn = _make_module(tmp_path, monkeypatch, sudo=False)
     assert mod.start() == 0
     mod.operation = "check"
@@ -207,9 +209,30 @@ def test_check_without_sudo_reports_not_applicable(
     mod.start()
 
     messages = _sent_messages(conn)
-    assert any("sudo-Protokollierung nicht zutreffend" in str(m) for m in messages)
-    assert not any("sudo-Protokollierung: nicht gesetzt" in str(m) for m in messages)
+    assert not any("sudo-Protokollierung" in str(m) for m in messages)
     assert not any("Audit-Regel -w /etc/sudoers" in str(m) for m in messages)
+
+
+def test_check_flags_legacy_sudolog_dropin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check meldet ein vorhandenes sudoers-Drop-in (Altbestand) als Befund.
+
+    Das Drop-in mit "Defaults logfile" ist unter sudo-rs ein Parse-Fehler,
+    mit dem sudo jeden Aufruf verweigert.
+    """
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(Logging.SUDOLOG_CONF).write_text(
+        'Defaults logfile="/var/log/sudo.log"\n', encoding="utf-8"
+    )
+    mod.operation = "check"
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any("Altbestand" in str(m) and "sudo-rs" in str(m) for m in messages)
 
 
 def test_install_stops_at_first_failed_step(
@@ -288,7 +311,8 @@ def test_uninstall_skips_absent_artifacts(
     messages = _sent_messages(conn)
     assert any("nicht installiert" in str(m) for m in messages)
     assert any("nicht vorhanden — übersprungen" in str(m) for m in messages)
-    assert any("/var/log/sudo.log bleibt erhalten" in str(m) for m in messages)
+    # Ohne Altbestand gibt es keine sudo.log — und keinen Hinweis darauf.
+    assert not any("bleibt erhalten (Audit-Datensicherung)" in str(m) for m in messages)
 
 
 def test_uninstall_removes_all_present_artifacts(
@@ -311,6 +335,7 @@ def test_uninstall_removes_all_present_artifacts(
     Path(Logging.SUDOLOG_CONF).write_text(
         'Defaults logfile="/var/log/sudo.log"\n', encoding="utf-8"
     )
+    Path(Logging.SUDO_LOGFILE).write_text("Altbestand\n", encoding="utf-8")
 
     result = mod.start()
 
@@ -319,6 +344,10 @@ def test_uninstall_removes_all_present_artifacts(
     assert not Path(Logging.LOGROTATE_CONF).exists()
     assert not Path(Logging.AUDIT_RULES_FILE).exists()
     assert not Path(Logging.SUDOLOG_CONF).exists()
+    messages_altbestand = _sent_messages(conn)
+    assert any(
+        "bleibt erhalten (Audit-Datensicherung)" in str(m) for m in messages_altbestand
+    )
     messages = _sent_messages(conn)
     assert "logwatch entfernen" in messages
     assert "auditd entfernen" in messages

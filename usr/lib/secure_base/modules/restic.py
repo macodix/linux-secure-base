@@ -222,6 +222,10 @@ class Restic(Module):
     PASSPHRASE_FILE: ClassVar[str] = "/root/.config/restic/restic-passphrase"  # noqa: S105
     BACKUP_SCRIPT_DIR: ClassVar[str] = "/usr/local/sbin"
     CRON_DIR: ClassVar[str] = "/etc/cron.d"
+    # Fester Dateiname ohne Punkte: cron ignoriert Dateien in /etc/cron.d,
+    # deren Name nicht der run-parts-Namenskonvention [A-Za-z0-9_-] folgt
+    # (man cron, DEBIAN SPECIFIC) — ein FQDN-basierter Name würde nie laufen.
+    CRON_FILE: ClassVar[str] = "secure-base-backup"
 
     # Sammelverzeichnis für alle lokal abgelegten Sicherungen (z. B. die
     # Datenbank-Dumps des postgresql-Moduls). Dieses Modul legt es an — auch
@@ -319,14 +323,14 @@ class Restic(Module):
             "  - `Repo-Passphrase (0600 root:root)`\n"
             f"- `{cls.BACKUP_SCRIPT_DIR}/{fqdn}-backup.sh`:\n"
             "  - `Backup-Skript (täglicher Cron-Lauf)`\n"
-            f"- `{cls.CRON_DIR}/{fqdn}-backup`:\n"
+            f"- `{cls.CRON_DIR}/{cls.CRON_FILE}`:\n"
             "  - `Cron-Eintrag: restic backup + forget`\n"
             f"- `{cls.BACKUP_BASE_DIR}`:\n"
             "  - `Sammelverzeichnis lokaler Sicherungen (0700 root:root)`\n"
             f"\n**Gesicherte Pfade:** {', '.join(f'`{p}`' for p in cls.BACKUP_PATHS)}\n"
             f"\n**SFTP-Ziel:** `{sftp_host_alias}:{sftp_path}`\n\n"
             f"\n**Timer/Cron:** täglich {backup_time} Uhr via"
-            f" {cls.CRON_DIR}/{fqdn}-backup\n"
+            f" {cls.CRON_DIR}/{cls.CRON_FILE}\n"
             "\n> Hinweis: Repo-Passphrase wird nicht dokumentiert (Secret)."
             " Forget-Politik: --keep-daily 7 --keep-weekly 4 --keep-monthly 6."
             " append-only (konv-system.md Abschnitt 3.8 b): am SFTP-Backend"
@@ -372,8 +376,8 @@ class Restic(Module):
         return f"{self.BACKUP_SCRIPT_DIR}/{self.fqdn}-backup.sh"
 
     def _cron_file_path(self) -> str:
-        """Baut den Pfad der FQDN-benannten Cron-Datei."""
-        return f"{self.CRON_DIR}/{self.fqdn}-backup"
+        """Baut den Pfad der Cron-Datei (fester Name, siehe CRON_FILE)."""
+        return f"{self.CRON_DIR}/{self.CRON_FILE}"
 
     def _install(self) -> int:
         """Richtet Paket, Backup-Ziel, Passphrase, Skript und Cron-Job ein.

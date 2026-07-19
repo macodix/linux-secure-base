@@ -12,10 +12,14 @@ Protokolldateien unter /var/log (auth.log, syslog, mail.log), und der
 angehängte Logwatch-Bericht bliebe weitgehend leer. Das Modul installiert es
 deshalb; ist es bereits vorhanden, ändert der Schritt nichts.
 
-Die sudo-Bestandteile — die Protokollierungs-Konfiguration in sudoers.d und
-die beiden Audit-Regeln auf die sudoers-Pfade — richtet das Modul nur ein,
+Die beiden Audit-Regeln auf die sudoers-Pfade richtet das Modul nur ein,
 wenn sudo auf dem System vorhanden ist. Administriert wird über su; sudo
-gehört nicht auf jeder Distribution zur Standardinstallation.
+gehört nicht auf jeder Distribution zur Standardinstallation. Eine eigene
+sudo-Logdatei über "Defaults logfile" in sudoers.d gibt es nicht mehr:
+Ubuntu liefert sudo als sudo-rs aus, das diese Direktive nicht kennt — ein
+solches Drop-in ist dort ein Parse-Fehler, mit dem sudo jeden Aufruf
+verweigert. sudo-Aufrufe protokollieren beide sudo-Varianten ohnehin ins
+Syslog/Journal.
 
 Die Anmeldehistorie führt wtmpdb (/var/log/wtmp.db, lesbar mit last); das Modul
 installiert die Pakete mit. Die frühere Datei /var/log/lastlog gibt es nicht
@@ -160,11 +164,6 @@ def _logrotate_content() -> str:
         "    copytruncate\n"
         "}\n"
     )
-
-
-def _sudolog_content() -> str:
-    """Baut den Inhalt der sudo-Protokollierungs-Konfiguration."""
-    return 'Defaults logfile="/var/log/sudo.log"\n'
 
 
 # Berichts-Skript: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht
@@ -402,7 +401,12 @@ class Logging(Module):
     JOURNAL_DIR: ClassVar[str] = "/var/log/journal"
     LOGROTATE_CONF: ClassVar[str] = "/etc/logrotate.d/secure-base"
     AUDIT_RULES_FILE: ClassVar[str] = "/etc/audit/rules.d/secure-base.rules"
+    # Altbestand früherer Versionen: das Drop-in setzte "Defaults logfile",
+    # was sudo-rs nicht kennt (Parse-Fehler — sudo verweigert dann jeden
+    # Aufruf). Es wird nicht mehr geschrieben; die Pfade bleiben nur für den
+    # Rückbau auf Bestandssystemen.
     SUDOLOG_CONF: ClassVar[str] = "/etc/sudoers.d/secure-base-sudolog"
+    SUDO_LOGFILE: ClassVar[str] = "/var/log/sudo.log"
     # Prüfziele für die sudo-Vorbedingung: die Konfigurationsdatei und das
     # Einbindeverzeichnis von sudo. Beide sind zugleich die Pfade, die die
     # sudoers-Audit-Regeln überwachen.
@@ -529,17 +533,12 @@ class Logging(Module):
             if sudo_present
             else ""
         )
-        sudolog_doc = (
-            f'- `{cls.SUDOLOG_CONF}`:\n  - `Defaults logfile="/var/log/sudo.log"`\n'
-            if sudo_present
-            else ""
-        )
         sudo_hinweis = (
             ""
             if sudo_present
-            else " sudo ist auf diesem System nicht vorhanden — die"
-            " sudo-Protokollierung und die beiden Audit-Regeln auf die"
-            " sudoers-Pfade entfallen (administriert wird über su)."
+            else " sudo ist auf diesem System nicht vorhanden — die beiden"
+            " Audit-Regeln auf die sudoers-Pfade entfallen (administriert"
+            " wird über su)."
         )
         login_rules = cls._login_rules()
         login_audit_doc = "".join(f"  - `{rule}`\n" for rule in login_rules)
@@ -573,7 +572,6 @@ class Logging(Module):
             "  - `-w /etc/group -p wa -k identity`\n"
             f"{login_audit_doc}"
             "  - `-e 2 (Immutable — Regeländerungen ohne Reboot gesperrt)`\n"
-            f"{sudolog_doc}"
             f"- `{cls.REPORT_SCRIPT}`:\n"
             "  - `Tagesbericht: Zusammenfassung im Mailtext, vollständiger"
             " Logwatch-Bericht als Anhang`\n"
@@ -794,25 +792,11 @@ class Logging(Module):
                 ),
             ),
         ]
-        if sudo_present:
-            steps.append(
-                (
-                    "sudo-Protokollierung einrichten",
-                    WriteFileAction(
-                        dst=self.SUDOLOG_CONF,
-                        content=_sudolog_content(),
-                        mode=0o440,
-                        overwrite=True,
-                        safe_mode=False,
-                    ),
-                )
-            )
-        else:
+        if not sudo_present:
             self.send_message(
                 LogLevel.INFO,
                 "logging",
-                "sudo nicht vorhanden — sudo-Protokollierung und sudoers-Audit-"
-                "Regeln entfallen",
+                "sudo nicht vorhanden — sudoers-Audit-Regeln entfallen",
             )
         steps.append(
             (
@@ -891,8 +875,9 @@ class Logging(Module):
         sie zur Standardinstallation — ein Rückbau träfe dort einen Zustand,
         den das Modul nicht hergestellt hat.
         logwatch und auditd werden nur entfernt, wenn sie installiert sind
-        (wie im Bash-Original). /var/log/sudo.log bleibt als Datensicherung
-        erhalten.
+        (wie im Bash-Original). Das sudoers-Drop-in ist Altbestand früherer
+        Versionen (siehe SUDOLOG_CONF) und wird mit entfernt; eine dabei
+        entstandene /var/log/sudo.log bleibt als Datensicherung erhalten.
 
         Schrittliste mit Abbruch beim ersten Fehler (wie _install). Jeder
         Schritt ist idempotent: bereits Zurückgenommenes ist kein Fehler.
@@ -906,7 +891,7 @@ class Logging(Module):
             ("logwatch entfernen", self._step_remove_logwatch),
             ("logrotate-Konfig entfernen", self._step_remove_logrotate),
             ("Audit-Regeln entfernen", self._step_remove_audit_rules),
-            ("sudo-Protokollierung entfernen", self._step_remove_sudolog),
+            ("sudoers-Drop-in (Altbestand) entfernen", self._step_remove_sudolog),
             ("auditd entfernen", self._step_remove_auditd),
         ]
         for label, step in steps:
@@ -926,12 +911,14 @@ class Logging(Module):
             "wtmpdb bleibt installiert (Anmeldehistorie) — die Datenbank"
             " /var/log/wtmp.db bleibt erhalten",
         )
-        if self._sudo_present():
+        # Altbestand früherer Versionen (Defaults logfile): nur melden, wenn
+        # die Logdatei tatsächlich existiert.
+        if Path(self.SUDO_LOGFILE).exists():
             self.send_message(
                 LogLevel.WARN,
                 "logging",
-                "/var/log/sudo.log bleibt erhalten (Audit-Datensicherung) — bei Bedarf"
-                " manuell entfernen.",
+                f"{self.SUDO_LOGFILE} bleibt erhalten (Audit-Datensicherung) — bei"
+                " Bedarf manuell entfernen.",
             )
         return 0
 
@@ -1031,7 +1018,7 @@ class Logging(Module):
         return self._remove_file_if_exists(self.AUDIT_RULES_FILE)
 
     def _step_remove_sudolog(self) -> int:
-        """Entfernt die sudo-Protokollierungs-Konfiguration.
+        """Entfernt das sudoers-Drop-in früherer Versionen (Altbestand).
 
         Returns:
             0 bei Erfolg oder wenn die Datei bereits fehlt, sonst 1.
@@ -1242,18 +1229,16 @@ class Logging(Module):
             ok &= self._check_file_line(
                 self.AUDIT_RULES_FILE, rule, f"Audit-Regel {rule}"
             )
-        if sudo_present:
-            ok &= self._check_file_line(
-                self.SUDOLOG_CONF,
-                'Defaults logfile="/var/log/sudo.log"',
-                "sudo-Protokollierung",
-            )
-        else:
+        # Altbestand früherer Versionen: das Drop-in mit "Defaults logfile"
+        # legt sudo-rs lahm — sein Vorhandensein ist ein Befund.
+        if Path(self.SUDOLOG_CONF).exists():
             self.send_message(
-                LogLevel.INFO,
+                LogLevel.ERROR,
                 "logging",
-                "sudo nicht vorhanden — sudo-Protokollierung nicht zutreffend",
+                f"{self.SUDOLOG_CONF} vorhanden (Altbestand) — unter sudo-rs"
+                " Parse-Fehler, sudo verweigert jeden Aufruf; entfernen",
             )
+            ok = False
         return 0 if ok else 1
 
     def _check_value(self, command: list[str], expected: str, label: str) -> bool:

@@ -154,13 +154,9 @@ Nach späteren Regeländerungen (vor dem Immutable-Schalten) manuell nachladen m
 
 ## 7. sudo-Protokollierung
 
-`sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`), seine Aufrufe werden aber dennoch protokolliert. In `/etc/sudoers.d/secure-base-sudolog` (Mode 440):
+`sudo` wird für die Administration nicht genutzt (der Wechsel zu `root` erfolgt per `su`). Seine Aufrufe protokolliert sudo selbst ins Syslog/Journal (`journalctl _COMM=sudo`); zusätzlich überwachen die Audit-Regeln aus Kapitel 6 die sudoers-Pfade.
 
-```
-Defaults logfile="/var/log/sudo.log"
-```
-
-Nur auf einem System, auf dem `sudo` vorhanden ist. Fehlt es, entfällt dieser Schritt — `sudo` wird dafür nicht nachinstalliert.
+Kein Drop-in mit `Defaults logfile` anlegen: Ubuntu liefert `sudo` als sudo-rs aus, das diese Direktive nicht kennt. Eine Datei mit unbekannter Direktive in `/etc/sudoers.d` ist dort ein Parse-Fehler, mit dem sudo **jeden** Aufruf verweigert. Frühere Stände legten `/etc/sudoers.d/secure-base-sudolog` an — auf Bestandssystemen entfernen (siehe Umstellungsanleitung).
 
 ## 8. Log-Rotation
 
