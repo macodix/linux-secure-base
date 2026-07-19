@@ -41,3 +41,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 03 [umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md](umstellungen/03-02f7865-nach-dac64e8-logwatch-tagesbericht.md) — Tagesbericht: Zusammenfassung im Mailtext, vollständiger Logwatch-Bericht als Anhang
 
 04 [umstellungen/04-12e22af-nach-286d19c-anmeldehistorie-und-rsyslog.md](umstellungen/04-12e22af-nach-286d19c-anmeldehistorie-und-rsyslog.md) — Anmeldehistorie (wtmpdb) statt der entfallenen lastlog-Datei, rsyslog sichergestellt, Debian-Unterstützung
+
+05 [umstellungen/05-0235470-nach-d8c517b-cron-dateiname-und-sudo-logfile.md](umstellungen/05-0235470-nach-d8c517b-cron-dateiname-und-sudo-logfile.md) — Backup-Cron-Datei punktfrei umbenennen (lief nie), sudoers-Drop-in mit `Defaults logfile` entfernen (blockierte sudo unter sudo-rs)
