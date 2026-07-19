@@ -11,7 +11,7 @@ machen (ersetzt die frühere Commit-Verifikation zur Bauzeit). Ausführlich:
 |------|------|
 | Repo | `https://github.com/macodix/pifos.git` |
 | Tag | `v0.1.1` |
-| Basis-Commit | `a11e79c0790f856af69e1c2a6751f5ac660080e6` |
+| Basis-Commit | `99590525bc0810df50081da9d67435cd00e26655` |
 | Übernommen am | 2026-07-19 |
 
 ## Lokaler Delta gegenüber der Basis

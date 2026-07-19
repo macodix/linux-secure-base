@@ -8,7 +8,7 @@ pifos ist die Grundlage des Installers (siehe [secure-base-installer](secure-bas
 |------|------|
 | Quelle | `https://github.com/macodix/pifos.git` |
 | Tag | `v0.1.1` |
-| Commit | `a11e79c0790f856af69e1c2a6751f5ac660080e6` |
+| Commit | `99590525bc0810df50081da9d67435cd00e26655` |
 | Übernommen am | 2026-07-19 |
 | Ziel im Repo | `usr/lib/pifos/` |
 
