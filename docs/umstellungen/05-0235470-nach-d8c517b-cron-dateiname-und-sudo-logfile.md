@@ -2,7 +2,7 @@
 
 Anleitung für einen bereits laufenden Server. Auf einem neu aufgesetzten Server ist nichts davon nötig — dort erledigt der Installer alles.
 
-**Ausführung:** alle Befehle als `root` (sudo ist auf betroffenen Systemen defekt, siehe Abschnitt 2 — per `su` zu `root` wechseln).
+**Ausführung:** alle Befehle als `root` (Wechsel per `su`; administriert wird ohne sudo).
 
 ## 1. Geltungsbereich
 
@@ -11,7 +11,7 @@ Die Anleitung gilt für Server, die mit einem Stand **bis einschließlich Commit
 Beide Fehler stammen aus der Installation; betroffen ist jeder Server, auf dem die Module `restic` und `logging` eingerichtet sind:
 
 - **Backup lief nie.** Der Installer legte die Cron-Datei als `/etc/cron.d/<FQDN>-backup` an. cron ignoriert Dateien in `/etc/cron.d`, deren Name nicht der run-parts-Namenskonvention `[A-Za-z0-9_-]` folgt (`man cron`, DEBIAN SPECIFIC) — die Punkte im FQDN verhindern jede Ausführung. Sichtbar am monit-Alarm zur Backup-Frische bzw. am unveränderten Zeitstempel von `/var/lib/secure-base/restic-last-success`.
-- **sudo verweigert jeden Aufruf.** `/etc/sudoers.d/secure-base-sudolog` setzt `Defaults logfile="/var/log/sudo.log"`. Das unter Ubuntu ausgelieferte sudo-rs kennt diese Direktive nicht; die Datei ist ein Parse-Fehler, mit dem sudo komplett aussteigt.
+- **Defektes sudoers-Drop-in.** `/etc/sudoers.d/secure-base-sudolog` setzt `Defaults logfile="/var/log/sudo.log"`. Das unter Ubuntu ausgelieferte sudo-rs kennt diese Direktive nicht; die Datei ist ein Parse-Fehler, mit dem jeder sudo-Aufruf scheitert. Administriert wird zwar ohne sudo (per `su`), das Paket gehört unter Ubuntu aber zur Standardinstallation — die defekte Datei bleibt sonst als latenter Fehler liegen und fällt in jeder Härtungsprüfung auf.
 
 Prüfen:
 
@@ -19,14 +19,14 @@ Prüfen:
 ls /etc/cron.d/*-backup /etc/sudoers.d/secure-base-sudolog 2>/dev/null
 ```
 
-## 2. sudo reparieren
+## 2. Defektes sudoers-Drop-in entfernen
 
 ```
 rm /etc/sudoers.d/secure-base-sudolog
 visudo -c
 ```
 
-Erwartung: `visudo -c` meldet keinen Fehler; danach funktioniert `sudo -v` wieder. Kein Ersatz nötig — sudo-Aufrufe protokolliert sudo-rs ins Syslog/Journal (`journalctl _COMM=sudo`), die auditd-Regeln auf die sudoers-Pfade bleiben bestehen. Eine vorhandene `/var/log/sudo.log` bleibt als Datensicherung erhalten.
+Erwartung: `visudo -c` meldet keinen Fehler. Kein Ersatz nötig — sollte sudo doch einmal aufgerufen werden, protokolliert sudo-rs das ins Syslog/Journal (`journalctl _COMM=sudo`), und die auditd-Regeln auf die sudoers-Pfade bleiben bestehen. Eine vorhandene `/var/log/sudo.log` bleibt als Datensicherung erhalten.
 
 ## 3. Backup-Cron reparieren
 
