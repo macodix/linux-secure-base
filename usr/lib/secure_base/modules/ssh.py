@@ -117,7 +117,7 @@ def _login_mail_script_content(admin_mail: str) -> str:
     """
     return (
         "#!/bin/sh\n"
-        "# Von secure-base/ssh verwaltet — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/ssh verwaltet (wird bei erneutem Installer-Lauf überschrieben).\n"
         "# Aufruf über pam_exec (session open_session) als root.\n"
         'if [ "$PAM_TYPE" = "open_session" ]; then\n'
         f'    ADMINMAIL="{admin_mail}"\n'

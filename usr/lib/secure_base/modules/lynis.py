@@ -47,7 +47,7 @@ def _pruef_script_content(berichte_dir: str) -> str:
     """
     return (
         "#!/bin/bash\n"
-        "# Von secure-base/lynis verwaltet — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/lynis verwaltet (wird bei erneutem Installer-Lauf überschrieben).\n"
         "set -euo pipefail\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         "\n"

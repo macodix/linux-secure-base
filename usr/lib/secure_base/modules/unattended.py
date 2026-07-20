@@ -83,7 +83,7 @@ def _uu_conf_content(
     Returns:
         Vollständiger Dateiinhalt.
     """
-    head = "# Von secure-base/unattended angelegt — nicht von Hand bearbeiten.\n"
+    head = "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
     directives = (
         f'Unattended-Upgrade::Automatic-Reboot "{auto_reboot}";\n'
         f'Unattended-Upgrade::Automatic-Reboot-Time "{auto_reboot_time}";\n'
@@ -96,7 +96,7 @@ def _uu_conf_content(
 def _periodic_conf_content() -> str:
     """Baut den Inhalt von 20auto-upgrades."""
     return (
-        "# Von secure-base/unattended angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         'APT::Periodic::Update-Package-Lists "1";\n'
         'APT::Periodic::Unattended-Upgrade "1";\n'
         'APT::Periodic::AutocleanInterval "7";\n'
@@ -106,7 +106,7 @@ def _periodic_conf_content() -> str:
 def _timer_override_content(hhmm: str) -> str:
     """Baut den Inhalt eines systemd-Timer-Drop-ins mit gepinnter Uhrzeit."""
     return (
-        "# Von secure-base/unattended angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         "[Timer]\n"
         "OnCalendar=\n"
         f"OnCalendar=*-*-* {hhmm}:00\n"

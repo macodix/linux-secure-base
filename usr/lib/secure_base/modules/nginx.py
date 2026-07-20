@@ -50,7 +50,7 @@ _DOCROOT_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 # erkennt darüber die eigenen Server-Blöcke, unabhängig von nginx_vhosts
 # (Original: do_uninstall läuft auch ohne optional-conf).
 _OWN_FILE_MARKER = "Von secure-base/nginx angelegt"
-_OWN_FILE_MARKER_LINE = f"# {_OWN_FILE_MARKER} — nicht von Hand bearbeiten.\n"
+_OWN_FILE_MARKER_LINE = f"# {_OWN_FILE_MARKER} (wird bei erneutem Installer-Lauf überschrieben).\n"
 
 
 def _http_block_content(domain: str, docroot: str) -> str:

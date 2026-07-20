@@ -43,7 +43,7 @@ SYSCTL_PARAMS = (
 def _sysctl_content() -> str:
     """Baut den Inhalt der sysctl-Datei."""
     head = (
-        "# Von secure-base/base angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         "# Kernel-Härtung nach konv-system.md Abschnitt 3.9.\n"
     )
     body = "".join(f"{key} = {value}\n" for key, value in SYSCTL_PARAMS)
@@ -53,7 +53,7 @@ def _sysctl_content() -> str:
 def _modprobe_content() -> str:
     """Baut den Inhalt der Kernel-Modul-Sperrliste."""
     return (
-        "# Von secure-base/base angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         "# USB-Storage-Sperre nach konv-system.md Abschnitt 3.1 c.\n"
         "install usb-storage /bin/true\n"
         "blacklist usb-storage\n"

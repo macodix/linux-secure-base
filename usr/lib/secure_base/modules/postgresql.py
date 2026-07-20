@@ -65,7 +65,7 @@ _PG_HBA_LINES: tuple[str, ...] = (
 )
 
 _OWN_FILE_HEADER = (
-    "# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.\n"
+    "# Von secure-base/postgresql angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
 )
 
 
@@ -90,7 +90,7 @@ _HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 _DUMP_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
-# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.
+# Von secure-base/postgresql angelegt (wird bei erneutem Installer-Lauf überschrieben).
 # cron-Umgebung ist spartanisch — PATH explizit setzen.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -204,7 +204,7 @@ def _dump_cron_content(hhmm: str, script_path: str) -> str:
     minute, hour = _cron_fields(hhmm)
     return (
         f"# Datensicherung (pg_dump je Datenbank) - täglich um {hhmm}\n"
-        "# Von secure-base/postgresql angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/postgresql angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{minute} {hour} * * *  root  {script_path}\n"
     )

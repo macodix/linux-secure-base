@@ -181,7 +181,7 @@ def _logrotate_content() -> str:
 _REPORT_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
-# Von secure-base/logging angelegt — nicht von Hand bearbeiten.
+# Von secure-base/logging angelegt (wird bei erneutem Installer-Lauf überschrieben).
 # cron-Umgebung ist spartanisch — PATH explizit setzen.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -353,7 +353,7 @@ def _report_cron_content(script_path: str) -> str:
     """
     return (
         "#!/bin/sh\n"
-        "# Von secure-base/logging angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/logging angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         f"exec {script_path}\n"
     )
 

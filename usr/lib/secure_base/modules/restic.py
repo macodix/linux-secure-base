@@ -74,7 +74,7 @@ def _cron_fields(hhmm: str) -> tuple[str, str]:
 _BACKUP_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
-# Von secure-base/restic angelegt — nicht von Hand bearbeiten.
+# Von secure-base/restic angelegt (wird bei erneutem Installer-Lauf überschrieben).
 # cron-Umgebung ist spartanisch — PATH explizit setzen.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -150,7 +150,7 @@ def _cron_content(backup_script: str, hhmm: str) -> str:
     minute, hour = _cron_fields(hhmm)
     return (
         f"# Datensicherung (restic) - täglich um {hhmm}\n"
-        "# Von secure-base/restic angelegt — nicht von Hand bearbeiten.\n"
+        "# Von secure-base/restic angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{minute} {hour} * * *  root  {backup_script}\n"
     )
