@@ -90,3 +90,5 @@ systemctl reload postfix
 ```
 
 Nach jeder Änderung an `main.cf` oder einer der Map-Dateien (`sasl_passwd`, `recipient_canonical`, `/etc/aliases`) muss Postfix die Konfiguration neu einlesen.
+
+Hinweis: Mit dieser Umleitung erreicht **jede** Mail des Servers ausschließlich die Administrator Email Adresse — auch Anwendungsmails später installierter Dienste (z. B. Registrierungsmails eines Webdienstes). Das ist beabsichtigt: Der Server kann so nicht als Spam-Versender missbraucht werden. Sollen einzelne Dienste echte Empfänger erreichen, die Regexp-Map bewusst um Ausnahmen ergänzen.

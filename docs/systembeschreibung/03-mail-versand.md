@@ -29,8 +29,15 @@ Zu den Mail versendenden Diensten/Komponenten gehören:
 - restic
 - monit
 
+### Wirkung und Grenzen der Umleitung
+
+Die Umleitung ist zugleich eine Schutzmaßnahme: Der Server kann keine Mail an Dritte versenden. Auch bei Fehlkonfiguration oder einem kompromittierten Dienst taugt er nicht als Spam-Versender, und ungewöhnliches Mail-Aufkommen fällt sofort im Administrator-Postfach auf.
+
+Daraus folgt: Auch Anwendungsmails nachträglich installierter Dienste (z. B. Registrierungs- oder Passwort-Mails eines Webdienstes) erreichen ausschließlich die Administrator Email Adresse, nie den in der Anwendung eingetragenen Empfänger. Soll ein Dienst echte Empfänger erreichen, muss die Regexp-Map in `/etc/postfix/recipient_canonical` bewusst um Ausnahmen ergänzt werden. Gegen Flutung des Administrator-Postfachs selbst schützt die Umleitung nicht.
+
 ## Versionshistorie
 
 | Version | Datum | Wer | Änderung |
 |---|---|---|---|
 | 0.01 | 2026-06-18 | macodix | Erstanlage |
+| 0.02 | 2026-07-20 | macodix | Wirkung und Grenzen der Mail-Umleitung ergänzt |
