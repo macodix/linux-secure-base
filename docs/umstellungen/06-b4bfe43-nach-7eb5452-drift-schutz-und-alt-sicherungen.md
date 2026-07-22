@@ -1,4 +1,4 @@
-# Anpassung Produktivsysteme bd0e2b3 → 7eb5452: Drift-Schutz und alte Sicherungsdateien
+# Anpassung Produktivsysteme b4bfe43 → 7eb5452: Drift-Schutz und alte Sicherungsdateien
 
 Anleitung für einen bereits laufenden Server. Auf einem neu aufgesetzten Server ist nur Abschnitt 3 gegenstandslos — alte Sicherungsdateien gibt es dort nicht.
 
@@ -6,7 +6,7 @@ Anleitung für einen bereits laufenden Server. Auf einem neu aufgesetzten Server
 
 ## 1. Geltungsbereich
 
-Gilt für Server, die mit einem Stand **bis einschließlich Commit `bd0e2b3`** eingerichtet wurden. Den neuen Stand bringt Commit `7eb5452` (Plan `installer-drift-schutz`).
+Gilt für Server, die mit einem Stand **bis einschließlich Commit `b4bfe43`** eingerichtet wurden. Den neuen Stand bringt Commit `7eb5452` (Plan `installer-drift-schutz`).
 
 ## 2. Was sich ändert
 
