@@ -38,6 +38,7 @@ vollständigen Bericht in den Mailtext schreibt, wird dafür stillgelegt.
 import re
 import stat
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import ClassVar
 
@@ -52,6 +53,8 @@ from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 _Step = Callable[[], int]
 
@@ -353,7 +356,8 @@ def _report_cron_content(script_path: str) -> str:
     """
     return (
         "#!/bin/sh\n"
-        "# Von secure-base/logging angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/logging angelegt"
+        " (wird bei erneutem Installer-Lauf überschrieben).\n"
         f"exec {script_path}\n"
     )
 
@@ -376,7 +380,7 @@ def _doc_value(values: dict[str, str], key: str) -> str:
     return values.get(key) or "(leer/Default)"
 
 
-class Logging(Module):
+class Logging(ManagedWriteMixin, Module):
     """Protokollierung und Auditing des Systems über pifos-Aktionen."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -385,6 +389,8 @@ class Logging(Module):
         "admin_mail",
         "journald_max_use",
         "journald_max_retention",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute statt Literale in
@@ -472,6 +478,8 @@ class Logging(Module):
             ModuleError: Bei ungültigen Konfigurationswerten.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("logging")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -670,6 +678,71 @@ class Logging(Module):
             ("MailFrom", mailfrom),
         ]
 
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert die vier vollständig generierten Schreibziele des Moduls.
+
+        sudo_present und login_rules hängen vom aktuellen Systemzustand ab
+        (Ermittlung rein lesend, siehe _sudo_present/_login_rules) — der
+        Soll-Inhalt der Audit-Regeldatei spiegelt deshalb den Zustand zum
+        Aufrufzeitpunkt. Nicht enthalten: logwatch.conf (wird nur angelegt,
+        wenn sie fehlt, danach zeilenweise gepflegt) und journald.conf
+        (fremde Datei, zeilenweise gepflegt) — für beide sichert
+        backup_before_edit vor der ersten Änderung. Die zentrale Ablage
+        macht ein lokales .bak neben logrotate-Konfig und Audit-Regeldatei
+        gegenstandslos (sie wären sonst vom jeweiligen Include-Glob
+        mitgelesen worden).
+        """
+        mailfrom = self._mailfrom()
+        sudo_present = self._sudo_present()
+        login_rules = self._login_rules()
+        return [
+            ManagedFile(
+                dst=self.REPORT_SCRIPT,
+                content=self._report_script(mailfrom),
+                mode=self.REPORT_SCRIPT_MODE,
+            ),
+            ManagedFile(
+                dst=self.REPORT_CRON,
+                content=_report_cron_content(self.REPORT_SCRIPT),
+                mode=self.REPORT_CRON_MODE,
+            ),
+            ManagedFile(
+                dst=self.LOGROTATE_CONF, content=_logrotate_content(), mode=0o644
+            ),
+            ManagedFile(
+                dst=self.AUDIT_RULES_FILE,
+                content=_audit_rules_content(sudo_present, login_rules),
+                mode=0o640,
+            ),
+        ]
+
+    def _act(self, action: Action) -> _Step:
+        """Baut eine Schritt-Funktion, die eine Aktion über run_action ausführt.
+
+        Args:
+            action: Auszuführende Aktion.
+
+        Returns:
+            Parameterlose Funktion mit dem Rückgabewert von run_action.
+        """
+        return partial(self.run_action, action)
+
+    def _step_write_report_script(self) -> int:
+        """Schreibt das Berichts-Skript (vollständig eigene Datei)."""
+        return self.write_managed("logging", self._managed_files()[0])
+
+    def _step_write_report_cron(self) -> int:
+        """Schreibt den Berichts-Cron (vollständig eigene Datei)."""
+        return self.write_managed("logging", self._managed_files()[1])
+
+    def _step_write_logrotate(self) -> int:
+        """Schreibt die logrotate-Konfig (vollständig eigene Datei)."""
+        return self.write_managed("logging", self._managed_files()[2])
+
+    def _step_write_audit_rules(self) -> int:
+        """Schreibt die Audit-Regeldatei (vollständig eigene Datei)."""
+        return self.write_managed("logging", self._managed_files()[3])
+
     def _install(self) -> int:
         """Richtet Protokollierung und Auditing ein.
 
@@ -677,68 +750,99 @@ class Logging(Module):
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
         mailfrom = self._mailfrom()
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
+            (
+                "journald.conf sichern",
+                partial(self.backup_before_edit, "logging", self.JOURNALD_CONF),
+            ),
             (
                 "journald Storage setzen",
-                LineInFileAction(
-                    path=self.JOURNALD_CONF,
-                    line="Storage=persistent",
-                    match=r"^#?\s*Storage\s*=",
+                self._act(
+                    LineInFileAction(
+                        path=self.JOURNALD_CONF,
+                        line="Storage=persistent",
+                        match=r"^#?\s*Storage\s*=",
+                        safe_mode=False,
+                    )
                 ),
             ),
             (
                 "journald SystemMaxUse setzen",
-                LineInFileAction(
-                    path=self.JOURNALD_CONF,
-                    line=f"SystemMaxUse={self.journald_max_use}",
-                    match=r"^#?\s*SystemMaxUse\s*=",
+                self._act(
+                    LineInFileAction(
+                        path=self.JOURNALD_CONF,
+                        line=f"SystemMaxUse={self.journald_max_use}",
+                        match=r"^#?\s*SystemMaxUse\s*=",
+                        safe_mode=False,
+                    )
                 ),
             ),
             (
                 "journald MaxRetentionSec setzen",
-                LineInFileAction(
-                    path=self.JOURNALD_CONF,
-                    line=f"MaxRetentionSec={self.journald_max_retention}",
-                    match=r"^#?\s*MaxRetentionSec\s*=",
+                self._act(
+                    LineInFileAction(
+                        path=self.JOURNALD_CONF,
+                        line=f"MaxRetentionSec={self.journald_max_retention}",
+                        match=r"^#?\s*MaxRetentionSec\s*=",
+                        safe_mode=False,
+                    )
                 ),
             ),
             (
                 "systemd-journald neu starten",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="restart", unit="systemd-journald", timeout=30
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="restart", unit="systemd-journald", timeout=30
+                    )
                 ),
             ),
             (
                 "rsyslog installieren",
-                self.APT_ACTION_CLS(packages=["rsyslog"]),
+                self._act(self.APT_ACTION_CLS(packages=["rsyslog"])),
             ),
             (
                 "rsyslog aktivieren",
-                self.SYSTEMD_ACTION_CLS(operation="enable", unit="rsyslog", timeout=60),
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="enable", unit="rsyslog", timeout=60
+                    )
+                ),
             ),
             (
                 "rsyslog starten",
-                self.SYSTEMD_ACTION_CLS(operation="start", unit="rsyslog", timeout=60),
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="start", unit="rsyslog", timeout=60
+                    )
+                ),
             ),
             (
                 "Anmeldehistorie installieren",
-                self.APT_ACTION_CLS(packages=list(self.LOGIN_HISTORY_PACKAGES)),
+                self._act(
+                    self.APT_ACTION_CLS(packages=list(self.LOGIN_HISTORY_PACKAGES))
+                ),
             ),
             (
                 "logwatch installieren",
-                self.APT_ACTION_CLS(packages=["logwatch"]),
+                self._act(self.APT_ACTION_CLS(packages=["logwatch"])),
+            ),
+            (
+                "logwatch.conf sichern",
+                partial(self.backup_before_edit, "logging", self.LOGWATCH_CONF),
             ),
         ]
         if not Path(self.LOGWATCH_CONF).exists():
             steps.append(
                 (
                     "logwatch-Konfig anlegen",
-                    WriteFileAction(
-                        dst=self.LOGWATCH_CONF,
-                        content="",
-                        mode=0o644,
-                        overwrite=False,
-                        safe_mode=False,
+                    self._act(
+                        WriteFileAction(
+                            dst=self.LOGWATCH_CONF,
+                            content="",
+                            mode=0o644,
+                            overwrite=False,
+                            safe_mode=False,
+                        )
                     ),
                 )
             )
@@ -746,51 +850,29 @@ class Logging(Module):
             steps.append(
                 (
                     f"logwatch {key} setzen",
-                    LineInFileAction(
-                        path=self.LOGWATCH_CONF,
-                        line=f"{key} = {value}",
-                        match=rf"^\s*{key}\s*=",
+                    self._act(
+                        LineInFileAction(
+                            path=self.LOGWATCH_CONF,
+                            line=f"{key} = {value}",
+                            match=rf"^\s*{key}\s*=",
+                            safe_mode=False,
+                        )
                     ),
                 )
             )
         sudo_present = self._sudo_present()
         steps += [
-            (
-                "Berichts-Skript schreiben",
-                WriteFileAction(
-                    dst=self.REPORT_SCRIPT,
-                    content=self._report_script(mailfrom),
-                    mode=self.REPORT_SCRIPT_MODE,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
-            (
-                "Berichts-Cron schreiben",
-                WriteFileAction(
-                    dst=self.REPORT_CRON,
-                    content=_report_cron_content(self.REPORT_SCRIPT),
-                    mode=self.REPORT_CRON_MODE,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
+            ("Berichts-Skript schreiben", self._step_write_report_script),
+            ("Berichts-Cron schreiben", self._step_write_report_cron),
             (
                 "mitgelieferten logwatch-Cron stilllegen",
-                PermissionsAction(path=self.STOCK_CRON, mode=self.STOCK_CRON_MODE_OFF),
-            ),
-            (
-                "logrotate-Konfig schreiben",
-                WriteFileAction(
-                    dst=self.LOGROTATE_CONF,
-                    content=_logrotate_content(),
-                    mode=0o644,
-                    overwrite=True,
-                    # kein safe_mode: eine .bak-Sicherung würde von
-                    # logrotates Include-Glob mitgelesen (doppelter Eintrag).
-                    safe_mode=False,
+                self._act(
+                    PermissionsAction(
+                        path=self.STOCK_CRON, mode=self.STOCK_CRON_MODE_OFF
+                    )
                 ),
             ),
+            ("logrotate-Konfig schreiben", self._step_write_logrotate),
         ]
         if not sudo_present:
             self.send_message(
@@ -801,7 +883,7 @@ class Logging(Module):
         steps.append(
             (
                 "auditd installieren",
-                self.APT_ACTION_CLS(packages=["auditd"]),
+                self._act(self.APT_ACTION_CLS(packages=["auditd"])),
             )
         )
         if self._run_steps(steps) != 0:
@@ -809,7 +891,9 @@ class Logging(Module):
 
         # Erst jetzt steht fest, welche Anmeldehistorie das System führt: Die
         # Pakete dafür installiert der Schritt oben, die Vorbedingung der Regel
-        # ist also vorher noch nicht erfüllt.
+        # ist also vorher noch nicht erfüllt. _step_write_audit_rules ruft
+        # _managed_files() zu diesem Zeitpunkt erneut auf und erfasst damit
+        # den aktuellen Stand.
         login_rules = self._login_rules()
         if not login_rules:
             self.send_message(
@@ -819,40 +903,39 @@ class Logging(Module):
                 " lastlog2) — Audit-Regel dafür entfällt; Anmeldungen stehen im"
                 " Journal",
             )
-        audit_steps: list[tuple[str, Action]] = [
+        audit_steps: list[tuple[str, _Step]] = [
+            ("Audit-Regeln schreiben", self._step_write_audit_rules),
             (
-                "Audit-Regeln schreiben",
-                WriteFileAction(
-                    dst=self.AUDIT_RULES_FILE,
-                    content=_audit_rules_content(sudo_present, login_rules),
-                    mode=0o640,
-                    overwrite=True,
-                    safe_mode=False,
+                "auditd aktivieren",
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="enable", unit="auditd", timeout=60
+                    )
                 ),
             ),
             (
-                "auditd aktivieren",
-                self.SYSTEMD_ACTION_CLS(operation="enable", unit="auditd", timeout=60),
-            ),
-            (
                 "auditd starten",
-                self.SYSTEMD_ACTION_CLS(operation="start", unit="auditd", timeout=60),
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="start", unit="auditd", timeout=60
+                    )
+                ),
             ),
         ]
         return self._run_steps(audit_steps)
 
-    def _run_steps(self, steps: list[tuple[str, Action]]) -> int:
+    def _run_steps(self, steps: list[tuple[str, _Step]]) -> int:
         """Führt die Schritte der Reihe nach aus und bricht beim ersten Fehler ab.
 
         Args:
-            steps: Paare aus Beschriftung und Aktion.
+            steps: Paare aus Beschriftung und Schritt-Funktion.
 
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "logging", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(LogLevel.ERROR, "logging", f"fehlgeschlagen: {label}")
                 return 1
             if label == "Audit-Regeln schreiben":
@@ -935,12 +1018,15 @@ class Logging(Module):
                 f"{self.JOURNALD_CONF} nicht vorhanden — keine journald-Reverts nötig",
             )
             return 0
+        if self.backup_before_edit("logging", self.JOURNALD_CONF) != 0:
+            return 1
         for key in ("Storage", "SystemMaxUse", "MaxRetentionSec"):
             action = LineInFileAction(
                 path=self.JOURNALD_CONF,
                 line="",
                 match=rf"^#?\s*{key}\s*=",
                 state="absent",
+                safe_mode=False,
             )
             if self.run_action(action) != 0:
                 return 1
@@ -988,12 +1074,15 @@ class Logging(Module):
             )
             return 0
         if Path(self.LOGWATCH_CONF).exists():
+            if self.backup_before_edit("logging", self.LOGWATCH_CONF) != 0:
+                return 1
             for key, _ in self._logwatch_directives(""):
                 action = LineInFileAction(
                     path=self.LOGWATCH_CONF,
                     line="",
                     match=rf"^\s*{key}\s*=",
                     state="absent",
+                    safe_mode=False,
                 )
                 if self.run_action(action) != 0:
                     return 1
@@ -1208,15 +1297,15 @@ class Logging(Module):
             ok &= self._check_file_line(
                 self.LOGWATCH_CONF, f"{key} = {value}", f"logwatch {key}"
             )
-        ok &= self._check_report_script(mailfrom)
-        ok &= self._check_report_cron()
+        ok &= self._check_mode(
+            self.REPORT_SCRIPT, self.REPORT_SCRIPT_MODE, "Berichts-Skript"
+        )
+        ok &= self._check_mode(self.REPORT_CRON, self.REPORT_CRON_MODE, "Berichts-Cron")
         ok &= self._check_stock_cron_disabled()
-        ok &= self._check_file_exists(self.LOGROTATE_CONF, "logrotate-Konfig")
         ok &= self._check_installed("auditd", "Paket auditd")
         ok &= self._check_value(
             [self.SYSTEMCTL_BIN, "is-active", "--", "auditd"], "active", "auditd-Dienst"
         )
-        sudo_present = self._sudo_present()
         login_rules = self._login_rules()
         if not login_rules:
             self.send_message(
@@ -1225,10 +1314,7 @@ class Logging(Module):
                 "keine Anmeldehistorie-Datenbank vorhanden — Audit-Regel dafür"
                 " nicht zutreffend",
             )
-        for rule in _audit_rules(sudo_present, login_rules):
-            ok &= self._check_file_line(
-                self.AUDIT_RULES_FILE, rule, f"Audit-Regel {rule}"
-            )
+        ok &= self.check_managed("logging")
         # Altbestand früherer Versionen: das Drop-in mit "Defaults logfile"
         # legt sudo-rs lahm — sein Vorhandensein ist ein Befund.
         if Path(self.SUDOLOG_CONF).exists():
@@ -1290,50 +1376,6 @@ class Logging(Module):
             LogLevel.ERROR, "logging", f"{label}: nicht gesetzt (soll: {expected_line})"
         )
         return False
-
-    def _check_report_script(self, mailfrom: str) -> bool:
-        """Prüft Inhalt und Rechte des Berichts-Skripts.
-
-        Args:
-            mailfrom: Absender-Adresse (Rückgabe von _mailfrom()).
-
-        Returns:
-            True bei übereinstimmendem Inhalt und korrekten Rechten.
-        """
-        try:
-            content = Path(self.REPORT_SCRIPT).read_text(encoding="utf-8")
-        except OSError:
-            self.send_message(
-                LogLevel.ERROR,
-                "logging",
-                f"Berichts-Skript: fehlt oder nicht lesbar ({self.REPORT_SCRIPT})",
-            )
-            return False
-        if content != self._report_script(mailfrom):
-            self.send_message(
-                LogLevel.ERROR,
-                "logging",
-                f"Berichts-Skript: Inhalt weicht vom Soll ab ({self.REPORT_SCRIPT})",
-            )
-            return False
-        self.send_message(LogLevel.INFO, "logging", "Berichts-Skript: Inhalt OK")
-        return self._check_mode(
-            self.REPORT_SCRIPT, self.REPORT_SCRIPT_MODE, "Berichts-Skript"
-        )
-
-    def _check_report_cron(self) -> bool:
-        """Prüft Inhalt und Rechte des cron.daily-Eintrags für den Tagesbericht.
-
-        Returns:
-            True bei übereinstimmendem Inhalt und korrekten Rechten.
-        """
-        if not self._check_file_line(
-            self.REPORT_CRON, f"exec {self.REPORT_SCRIPT}", "Berichts-Cron"
-        ):
-            return False
-        return self._check_mode(
-            self.REPORT_CRON, self.REPORT_CRON_MODE, "Berichts-Cron"
-        )
 
     def _check_stock_cron_disabled(self) -> bool:
         """Prüft, ob der mitgelieferte logwatch-Cron stillgelegt ist.

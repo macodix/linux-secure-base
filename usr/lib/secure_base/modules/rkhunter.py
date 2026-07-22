@@ -12,16 +12,20 @@ und einen apt-Hook.
 
 import contextlib
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
-from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.line_in_file_action import LineInFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedWriteMixin
+
+_Step = Callable[[], int]
 
 # Zeichensatz für den Rechnernamen wie im Bash-Original (installer/lib/modules/
 # rkhunter.sh): nur Buchstaben, Ziffern, Punkt und Bindestrich — keine
@@ -32,10 +36,16 @@ _FQDN_RE = re.compile(r"[A-Za-z0-9.-]+")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
 
 
-class Rkhunter(Module):
+class Rkhunter(ManagedWriteMixin, Module):
     """Schadsoftware-/Rootkit-Schutz über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "fqdn", "admin_mail"]
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "fqdn",
+        "admin_mail",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
     # Programmpfade und Schreibziele als Klassenattribute statt Literale in
     # den Schritten (siehe Modul base für die Begründung); eine
@@ -103,6 +113,8 @@ class Rkhunter(Module):
         if self.operation == "uninstall":
             return self._uninstall()
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("rkhunter")
         if self.operation == "check":
             return self._verify()
         if self.operation == "test":
@@ -236,79 +248,91 @@ class Rkhunter(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
             (
                 "Paket installieren",
-                self.APT_ACTION_CLS(packages=["rkhunter"]),
+                lambda: self.run_action(self.APT_ACTION_CLS(packages=["rkhunter"])),
             ),
             (
                 "täglichen Lauf aktivieren",
-                LineInFileAction(
-                    path=self.RK_DEFAULT,
-                    line='CRON_DAILY_RUN="yes"',
-                    match=r"^CRON_DAILY_RUN=",
+                self._step_line(
+                    self.RK_DEFAULT, 'CRON_DAILY_RUN="yes"', r"^CRON_DAILY_RUN="
                 ),
             ),
             (
                 "DB-Update aktivieren",
-                LineInFileAction(
-                    path=self.RK_DEFAULT,
-                    line='CRON_DB_UPDATE="yes"',
-                    match=r"^CRON_DB_UPDATE=",
+                self._step_line(
+                    self.RK_DEFAULT, 'CRON_DB_UPDATE="yes"', r"^CRON_DB_UPDATE="
                 ),
             ),
             (
                 "DB-Update-Mail deaktivieren",
-                LineInFileAction(
-                    path=self.RK_DEFAULT,
-                    line='DB_UPDATE_EMAIL="false"',
-                    match=r"^DB_UPDATE_EMAIL=",
+                self._step_line(
+                    self.RK_DEFAULT, 'DB_UPDATE_EMAIL="false"', r"^DB_UPDATE_EMAIL="
                 ),
             ),
             (
                 "Report-Empfänger setzen",
-                LineInFileAction(
-                    path=self.RK_DEFAULT,
-                    line=f'REPORT_EMAIL="{self.admin_mail}"',
-                    match=r"^REPORT_EMAIL=",
+                self._step_line(
+                    self.RK_DEFAULT,
+                    f'REPORT_EMAIL="{self.admin_mail}"',
+                    r"^REPORT_EMAIL=",
                 ),
             ),
             (
                 "apt-Hook aktivieren",
-                LineInFileAction(
-                    path=self.RK_DEFAULT,
-                    line='APT_AUTOGEN="yes"',
-                    match=r"^APT_AUTOGEN=",
-                ),
+                self._step_line(self.RK_DEFAULT, 'APT_AUTOGEN="yes"', r"^APT_AUTOGEN="),
             ),
             (
                 "Mail-Absender setzen",
-                LineInFileAction(
-                    path=self.RK_CONF,
-                    line=f"MAIL_CMD={self._mail_cmd()}",
-                    match=r"^MAIL_CMD=",
+                self._step_line(
+                    self.RK_CONF, f"MAIL_CMD={self._mail_cmd()}", r"^MAIL_CMD="
                 ),
             ),
         ]
         steps += [
             (
                 f"Ausnahme eintragen: {key}={value}",
-                LineInFileAction(
-                    path=self.RK_CONF,
-                    line=f"{key}={value}",
-                    match=self._allow_pattern(key, value),
+                self._step_line(
+                    self.RK_CONF, f"{key}={value}", self._allow_pattern(key, value)
                 ),
             )
             for key, value in self._allow_entries()
         ]
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "rkhunter", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(
                     LogLevel.ERROR, "rkhunter", f"fehlgeschlagen: {label}"
                 )
                 return 1
         return self._install_baseline()
+
+    def _step_line(self, path: str, line: str, match: str) -> _Step:
+        """Baut einen LineInFileAction-Schritt mit zentraler Sicherung.
+
+        Sichert path zentral vor der ersten Änderung im Lauf (je Datei und
+        Lauf höchstens eine Sicherung, backup_before_edit ist idempotent)
+        und setzt die Aktion auf safe_mode=False — vermeidet eine
+        .bak-Kaskade bei wiederholten Läufen.
+
+        Args:
+            path: Zu ändernde Datei (RK_DEFAULT oder RK_CONF).
+            line: Sollzeile (ohne Zeilenumbruch).
+            match: Regulärer Ausdruck zur Erkennung der Zielzeile.
+
+        Returns:
+            Ausführbarer Schritt, 0 bei Erfolg.
+        """
+
+        def step() -> int:
+            if self.backup_before_edit("rkhunter", path) != 0:
+                return 1
+            return self.run_action(
+                LineInFileAction(path=path, line=line, match=match, safe_mode=False)
+            )
+
+        return step
 
     def _install_baseline(self) -> int:
         """Initialisiert die Baseline-Datenbank, falls noch keine vorhanden ist.
@@ -404,7 +428,14 @@ class Rkhunter(Module):
             return True
         for label, match in entries:
             self.send_message(LogLevel.INFO, "rkhunter", label)
-            action = LineInFileAction(path=path, line="", match=match, state="absent")
+            if self.backup_before_edit("rkhunter", path) != 0:
+                self.send_message(
+                    LogLevel.ERROR, "rkhunter", f"fehlgeschlagen: {label}"
+                )
+                return False
+            action = LineInFileAction(
+                path=path, line="", match=match, state="absent", safe_mode=False
+            )
             if self.run_action(action) != 0:
                 self.send_message(
                     LogLevel.ERROR, "rkhunter", f"fehlgeschlagen: {label}"

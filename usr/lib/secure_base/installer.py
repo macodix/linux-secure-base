@@ -16,6 +16,7 @@ from pifos.ipc import LogLevel, MessageKind
 
 from secure_base.config_setup import ensure_config, fill_missing, module_config
 from secure_base.distro import distro_id
+from secure_base.managed_write import BACKUP_BASE, ManagedWriteMixin
 from secure_base.module_spec import ModuleSpec
 from secure_base.modules.ufw import Ufw
 from secure_base.selection import select_modules
@@ -299,6 +300,54 @@ def _send_install_report(
         )
 
 
+def _run_preflight(
+    caller: LsbInstaller,
+    specs: list[ModuleSpec],
+    config: Config,
+    runtime: dict[str, str],
+) -> bool:
+    """Sammel-Prüfung vor dem ersten Schreib-Schritt eines install-Laufs.
+
+    Führt jedes Modul mit verwalteten Schreibzielen in der Betriebsart
+    preflight aus (rein lesend). Alle Abweichungen werden gesammelt
+    gemeldet, bevor irgendein Modul etwas ändert (Plan
+    installer-drift-schutz, Kap. 2.3).
+
+    Args:
+        caller: Aufrufer für Modulstart und Logausgabe.
+        specs: Zu prüfende Module in Laufreihenfolge.
+        config: Vollständige Konfiguration.
+        runtime: Laufzeitwerte (force_overwrite, backup_run_dir).
+
+    Returns:
+        True, wenn kein Konflikt vorliegt (Lauf darf starten).
+    """
+    ok = True
+    for spec in specs:
+        if not issubclass(spec.module_cls, ManagedWriteMixin):
+            continue
+        cfg = module_config(config, spec, "preflight", runtime)
+        handle = caller.start_module(spec.module_cls, cfg)
+        caller.send_command(handle, "start")
+        result = 1
+        while True:
+            msg = caller.receive_result(handle)
+            if msg.kind is MessageKind.RESULT:
+                result = int(cast(int, msg.payload))
+                break
+            if msg.kind is MessageKind.EXCEPTION:
+                caller.write_log(
+                    f"{spec.name}: {msg.payload}", msg.level or LogLevel.ERROR
+                )
+                break
+            caller.write_log(f"{spec.name}: {msg.payload}", msg.level or LogLevel.INFO)
+        caller.terminate_module(handle)
+        caller.check_module_exit(handle)
+        if result != 0:
+            ok = False
+    return ok
+
+
 def _offer_ufw_enable() -> None:
     """Bietet nach erfolgreichem ufw-Modul die Aktivierung der Firewall an.
 
@@ -419,6 +468,29 @@ def main(args: argparse.Namespace) -> int:
         logger.error("Konfiguration nicht nutzbar: %s", exc)
         return 2
 
+    # Laufzeitwerte für die Drift-Schutz-Module: Freigabe-Schalter und das
+    # Lauf-Verzeichnis der zentralen Sicherungsablage (entsteht erst bei der
+    # ersten Sicherung, kein leeres Verzeichnis vorab).
+    force = bool(getattr(args, "force_overwrite", False))
+    runtime = {
+        "force_overwrite": "yes" if force else "no",
+        "backup_run_dir": str(Path(BACKUP_BASE) / time.strftime("%Y-%m-%d-%H%M%S")),
+    }
+
+    # Sammel-Prüfung vor dem ersten Schreib-Schritt: install startet erst,
+    # wenn kein verwaltetes Ziel unfreigegeben vom Soll abweicht.
+    if (
+        args.command == "install"
+        and not args.dry_run
+        and not _run_preflight(caller, run_specs, config, runtime)
+    ):
+        caller.write_log(
+            "install abgebrochen — verwaltete Dateien weichen vom Soll"
+            " ab (siehe Meldungen); Freigabe: --force-overwrite",
+            LogLevel.ERROR,
+        )
+        return 1
+
     ufw_ok = False
     results: list[tuple[ModuleSpec, bool]] = []
     with view.live():
@@ -435,7 +507,7 @@ def main(args: argparse.Namespace) -> int:
                 )
                 view.set_result(spec.name, True)
                 continue
-            module_cfg = module_config(config, spec, args.command)
+            module_cfg = module_config(config, spec, args.command, runtime)
             ok = caller.run_module(spec, module_cfg, args.command)
             results.append((spec, ok))
             if spec.name == "ufw" and ok:

@@ -105,6 +105,8 @@ def _make_module(
     mod.operation = "install"
     mod.timezone = "Europe/Berlin"
     mod.pg_dump_time = "02:00"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     return mod, conn
 
 
@@ -231,6 +233,101 @@ def test_install_converts_pg_dump_time_into_cron_fields(
     dump_cron = Path(mod.DUMP_CRON_PATH).read_text(encoding="utf-8")
     assert "45 23 * * *  root " in dump_cron
     assert mod.DUMP_SCRIPT_PATH in dump_cron
+
+
+# --- Drift-Schutz (installer-drift-schutz) ---
+
+
+def test_install_second_run_reports_unchanged_and_writes_nothing_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter, unveränderter install-Lauf überschreibt keine Datei erneut."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    hardening_mtime = _hardening_path(mod).stat().st_mtime_ns
+    pg_hba_mtime = _pg_hba_path(mod).stat().st_mtime_ns
+    dump_script_mtime = Path(mod.DUMP_SCRIPT_PATH).stat().st_mtime_ns
+    dump_cron_mtime = Path(mod.DUMP_CRON_PATH).stat().st_mtime_ns
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    assert _hardening_path(mod).stat().st_mtime_ns == hardening_mtime
+    assert _pg_hba_path(mod).stat().st_mtime_ns == pg_hba_mtime
+    assert Path(mod.DUMP_SCRIPT_PATH).stat().st_mtime_ns == dump_script_mtime
+    assert Path(mod.DUMP_CRON_PATH).stat().st_mtime_ns == dump_cron_mtime
+    assert not Path(mod.backup_run_dir).exists()
+    messages = _sent_messages(conn)
+    assert any("unverändert — übersprungen" in str(m) for m in messages)
+
+
+def test_install_rejects_hand_edited_hardening_conf_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine Hand-Änderung an der Härtungsdatei wird ohne Freigabe nicht
+    überschrieben."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    hardening_file = _hardening_path(mod)
+    hardening_file.write_text("von hand geändert\n", encoding="utf-8")
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 1
+    assert hardening_file.read_text(encoding="utf-8") == "von hand geändert\n"
+    messages = _sent_messages(conn)
+    assert any("--force-overwrite" in str(m) for m in messages)
+    assert "Eigentümer/Rechte der Härtungs-Konfiguration setzen" not in messages
+
+
+def test_install_adopts_freshly_installed_pg_hba_conf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine im selben Lauf frisch installierte pg_hba.conf wird ohne Freigabe ersetzt.
+
+    DPKG_QUERY_BIN bleibt bei der Fixture-Voreinstellung (/usr/bin/true,
+    keine Ausgabe) — das Paket gilt als noch nicht installiert, wie beim
+    echten Erstlauf; die vorgefundene pg_hba.conf gilt dann als unberührte
+    Paket-Vorgabe (adopt, Plan installer-drift-schutz Kap. 2.6).
+    """
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    pg_hba_file = _pg_hba_path(mod)
+    package_default = (
+        "local   all             all                                     peer\n"
+    )
+    pg_hba_file.write_text(package_default, encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 0
+    assert pg_hba_file.read_text(encoding="utf-8") == _pg_hba_content()
+    backup = Path(mod.backup_run_dir) / pg_hba_file.relative_to("/")
+    assert backup.read_text(encoding="utf-8") == package_default
+    messages = _sent_messages(conn)
+    assert any("wird überschrieben" in str(m) for m in messages)
+
+
+def test_install_rejects_pg_hba_conf_when_package_already_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bei bereits installiertem Paket verweigert install ein abweichendes
+    pg_hba.conf."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    fake_dpkg = tmp_path / "fake-dpkg-query"
+    fake_dpkg.write_text("#!/bin/sh\nprintf 'install ok installed'\n", encoding="utf-8")
+    fake_dpkg.chmod(0o755)
+    monkeypatch.setattr(Postgresql, "DPKG_QUERY_BIN", str(fake_dpkg))
+    pg_hba_file = _pg_hba_path(mod)
+    pg_hba_file.write_text("von hand geändert\n", encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 1
+    assert pg_hba_file.read_text(encoding="utf-8") == "von hand geändert\n"
+    messages = _sent_messages(conn)
+    assert any("--force-overwrite" in str(m) for m in messages)
 
 
 # --- Betriebsart check ---

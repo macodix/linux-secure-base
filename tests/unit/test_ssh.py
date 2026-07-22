@@ -44,6 +44,8 @@ def _make_ssh(
     mod.main_user = main_user
     mod.ssh_enable_login_mail = enable_login_mail
     mod.ssh_enable_challenge_response_auth = enable_challenge_response_auth
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -59,13 +61,15 @@ def _make_executable(tmp_path: Path, name: str, content: str) -> str:
 
 
 def test_ssh_config_declares_expected_keys() -> None:
-    """CONFIG nennt operation, admin_mail, main_user und die ssh-Schalter."""
+    """CONFIG nennt operation, admin_mail, main_user, ssh-Schalter, Drift-Schutz."""
     assert Ssh.CONFIG == [
         "operation",
         "admin_mail",
         "main_user",
         "ssh_enable_login_mail",
         "ssh_enable_challenge_response_auth",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 
@@ -171,6 +175,7 @@ def test_apply_setting_writes_directive(
 ) -> None:
     """_apply_setting schreibt die Direktive in die Zieldatei."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     sshd_config = tmp_path / "sshd_config"
     sshd_config.write_text("# leer\n", encoding="utf-8")
     monkeypatch.setattr(Ssh, "SSHD_CONFIG", str(sshd_config))
@@ -183,6 +188,7 @@ def test_apply_setting_replaces_existing_commented_directive(
 ) -> None:
     """_apply_setting ersetzt eine bereits auskommentierte Direktive."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     sshd_config = tmp_path / "sshd_config"
     sshd_config.write_text("#PermitRootLogin yes\n", encoding="utf-8")
     monkeypatch.setattr(Ssh, "SSHD_CONFIG", str(sshd_config))
@@ -206,6 +212,7 @@ def test_remove_setting_removes_all_matches(
 ) -> None:
     """_remove_setting entfernt aktive und auskommentierte Direktiven."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     sshd_config = tmp_path / "sshd_config"
     sshd_config.write_text(
         "ChallengeResponseAuthentication yes\n# ChallengeResponseAuthentication no\n",
@@ -226,6 +233,7 @@ def test_step_remove_sshd_settings_removes_all_directives(
 ) -> None:
     """Entfernt alle SSHD_SETTINGS-Direktiven und den Challenge-Response-Alias."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     sshd_config = tmp_path / "sshd_config"
     lines = [f"{key} {value}\n" for key, value in SSHD_SETTINGS]
     lines.append("ChallengeResponseAuthentication yes\n")
@@ -257,6 +265,7 @@ def test_step_remove_pam_totp_entry_removes_block(
 ) -> None:
     """Entfernt den TOTP-PAM-Block vollständig."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     pam_sshd = tmp_path / "sshd"
     pam_sshd.write_text(
         f"# BEGIN {PAM_GA_MARKER}\n{_pam_ga_block()}\n# END {PAM_GA_MARKER}\n",
@@ -275,6 +284,7 @@ def test_step_restore_pam_bypass_uncomments_line(
 ) -> None:
     """Stellt eine auskommentierte @include common-auth-Zeile wieder aktiv her."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     pam_sshd = tmp_path / "sshd"
     pam_sshd.write_text("# @include common-auth\n", encoding="utf-8")
     monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))
@@ -299,6 +309,7 @@ def test_step_remove_login_mail_hook_removes_block_and_script(
 ) -> None:
     """Entfernt PAM-Block und Skriptdatei, wenn beide vorhanden sind."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     pam_sshd = tmp_path / "sshd"
     script = tmp_path / "login-mail.sh"
     pam_sshd.write_text(
@@ -322,6 +333,7 @@ def test_step_remove_login_mail_hook_idempotent_without_script(
 ) -> None:
     """Fehlt die Skriptdatei bereits, bleibt der Schritt erfolgreich (idempotent)."""
     mod = _make_ssh()
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     pam_sshd = tmp_path / "sshd"
     pam_sshd.write_text("# nichts hier\n", encoding="utf-8")
     monkeypatch.setattr(Ssh, "PAM_SSHD", str(pam_sshd))

@@ -12,6 +12,8 @@ Systemänderung aus. Betriebsart über den Schlüssel operation.
 
 import re
 import stat
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import ClassVar
 
@@ -21,10 +23,11 @@ from pifos.actions.block_in_file_action import BlockInFileAction
 from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 # E-Mail-Muster wie im Bash-Original (require_monit_conf): kein Anspruch auf
 # vollständige RFC-5322-Konformität, nur Schutz vor Werten, die in die
@@ -175,7 +178,7 @@ def _doc_value(values: dict[str, str], key: str) -> str:
     return values.get(key) or "(leer/Default)"
 
 
-class Monit(Module):
+class Monit(ManagedWriteMixin, Module):
     """Systemüberwachung über pifos-Aktionen."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -183,6 +186,8 @@ class Monit(Module):
         "admin_mail",
         "monit_mail_from",
         "monit_checks",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py für
@@ -251,6 +256,8 @@ class Monit(Module):
                 monit_checks.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("monit")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -316,61 +323,97 @@ class Monit(Module):
             for marker, label in MONITRC_MARKERS
         ]
 
+    def _check_file(self, name: str) -> ManagedFile:
+        """Baut das Schreibziel eines einzelnen conf.d-Checks.
+
+        Args:
+            name: Name des Checks (Schlüssel aus CHECK_CONTENT).
+
+        Returns:
+            Schreibziel mit dem festen Inhalt aus CHECK_CONTENT.
+        """
+        return ManagedFile(
+            dst=str(Path(self.CONFD) / name), content=CHECK_CONTENT[name], mode=0o644
+        )
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert die conf.d-Check-Dateien, die dieser Lauf schreiben würde.
+
+        Nicht enthalten: monitrc (fremde Datei, zeilenweise über die
+        Marker-Mechanik verwaltet) — nur die eigenen, vollständig
+        überschriebenen Check-Dateien der aktuell konfigurierten Checks.
+        """
+        return [self._check_file(name) for name in sorted(self._parsed_checks())]
+
+    def _step_install_package(self) -> int:
+        """Installiert das Paket monit."""
+        return self.run_action(self.APT_ACTION_CLS(packages=["monit"]))
+
+    def _write_monitrc_block(self, marker: str, block: str) -> int:
+        """Setzt einen einzelnen monitrc-Block über die Marker-Mechanik.
+
+        Kein safe_mode: backup_before_edit sichert monitrc zentral vor dem
+        ersten Eingriff dieses Laufs (siehe _install/_uninstall).
+        """
+        return self.run_action(
+            BlockInFileAction(
+                path=self.MONITRC, block=block, marker=marker, safe_mode=False
+            )
+        )
+
+    def _write_check(self, name: str) -> int:
+        """Schreibt die conf.d-Datei eines Checks (vollständig eigene Datei)."""
+        return self.write_managed("monit", self._check_file(name))
+
+    def _step_check_config(self) -> int:
+        """Prüft die Konfigurationssyntax (monit -t)."""
+        return self.run_action(SysCmdAction(command=[self.MONIT_BIN, "-t"], timeout=30))
+
+    def _step_enable_service(self) -> int:
+        """Aktiviert den Dienst monit."""
+        return self.run_action(
+            self.SYSTEMD_ACTION_CLS(operation="enable", unit="monit", timeout=60)
+        )
+
+    def _step_start_service(self) -> int:
+        """Startet den Dienst monit."""
+        return self.run_action(
+            self.SYSTEMD_ACTION_CLS(operation="start", unit="monit", timeout=60)
+        )
+
+    def _step_reload_config(self) -> int:
+        """Liest die Konfiguration neu ein (monit reload)."""
+        return self.run_action(
+            SysCmdAction(command=[self.MONIT_BIN, "reload"], timeout=30)
+        )
+
     def _install(self) -> int:
         """Installiert Monit, setzt die Konfiguration und startet den Dienst.
 
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        steps: list[tuple[str, Action]] = [
-            ("Paket installieren", self.APT_ACTION_CLS(packages=["monit"])),
+        steps: list[tuple[str, Callable[[], int]]] = [
+            ("Paket installieren", self._step_install_package),
+            (
+                "monitrc sichern",
+                partial(self.backup_before_edit, "monit", self.MONITRC),
+            ),
         ]
         for label, marker, block in self._monitrc_edits():
-            steps.append(
-                (
-                    label,
-                    BlockInFileAction(path=self.MONITRC, block=block, marker=marker),
-                )
-            )
+            steps.append((label, partial(self._write_monitrc_block, marker, block)))
         for name in sorted(self._parsed_checks()):
-            dst = str(Path(self.CONFD) / name)
-            steps.append(
-                (
-                    f"Check {name} schreiben",
-                    WriteFileAction(
-                        dst=dst,
-                        content=CHECK_CONTENT[name],
-                        mode=0o644,
-                        overwrite=True,
-                        # kein safe_mode: eine .bak-Sicherung würde von
-                        # monits Include-Glob mitgelesen (doppelter Check,
-                        # monit -t schlägt fehl).
-                        safe_mode=False,
-                    ),
-                )
-            )
+            steps.append((f"Check {name} schreiben", partial(self._write_check, name)))
         steps += [
-            (
-                "Konfiguration prüfen (monit -t)",
-                SysCmdAction(command=[self.MONIT_BIN, "-t"], timeout=30),
-            ),
-            (
-                "Dienst aktivieren",
-                self.SYSTEMD_ACTION_CLS(operation="enable", unit="monit", timeout=60),
-            ),
-            (
-                "Dienst starten",
-                self.SYSTEMD_ACTION_CLS(operation="start", unit="monit", timeout=60),
-            ),
-            (
-                "Konfiguration neu einlesen (monit reload)",
-                SysCmdAction(command=[self.MONIT_BIN, "reload"], timeout=30),
-            ),
+            ("Konfiguration prüfen (monit -t)", self._step_check_config),
+            ("Dienst aktivieren", self._step_enable_service),
+            ("Dienst starten", self._step_start_service),
+            ("Konfiguration neu einlesen (monit reload)", self._step_reload_config),
         ]
 
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "monit", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(LogLevel.ERROR, "monit", f"fehlgeschlagen: {label}")
                 return 1
         return 0
@@ -398,6 +441,7 @@ class Monit(Module):
         for name in sorted(self._parsed_checks()):
             dst = str(Path(self.CONFD) / name)
             ok &= self._check_file_mode(dst, 0o644, f"Check {name}")
+        ok &= self.check_managed("monit")
         return 0 if ok else 1
 
     def _uninstall(self) -> int:
@@ -445,15 +489,20 @@ class Monit(Module):
                     )
                 )
         if Path(self.MONITRC).exists():
+            if self.backup_before_edit("monit", self.MONITRC) != 0:
+                return 1
             for marker, key_label in MONITRC_MARKERS:
                 steps.append(
                     (
                         f"monitrc: {key_label} zurücknehmen",
+                        # kein safe_mode: backup_before_edit hat monitrc
+                        # bereits zentral gesichert (siehe oben).
                         BlockInFileAction(
                             path=self.MONITRC,
                             block="",
                             marker=marker,
                             state="absent",
+                            safe_mode=False,
                         ),
                     )
                 )

@@ -102,6 +102,8 @@ def _make_module(
     mod.relay_port = "587"
     mod.relay_user = "relayuser"
     mod.relay_password = "s3cret"  # noqa: S105 — Testwert, kein echtes Geheimnis
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     return mod, conn
 
 
@@ -167,6 +169,90 @@ def test_install_stops_at_first_failed_step(
     messages = _sent_messages(conn)
     assert "fehlgeschlagen: aliases-Datenbank aktualisieren" in messages
     assert "postfix aktivieren" not in messages
+
+
+# --- Drift-Schutz: sasl_passwd/recipient_canonical ---
+
+
+def test_install_second_run_does_not_rewrite_unchanged_managed_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter, unveränderter Lauf schreibt sasl_passwd/recipient_canonical
+    nicht neu (unverändert — übersprungen)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    sasl_mtime = (tmp_path / "sasl_passwd").stat().st_mtime_ns
+    recipient_mtime = (tmp_path / "recipient_canonical").stat().st_mtime_ns
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    assert (tmp_path / "sasl_passwd").stat().st_mtime_ns == sasl_mtime
+    assert (tmp_path / "recipient_canonical").stat().st_mtime_ns == recipient_mtime
+    messages = _sent_messages(conn)
+    assert any(
+        f"{Postfix.SASL_PASSWD}: unverändert — übersprungen" in str(m) for m in messages
+    )
+    assert any(
+        f"{Postfix.RECIPIENT_CANONICAL}: unverändert — übersprungen" in str(m)
+        for m in messages
+    )
+
+
+def test_install_rejects_hand_edited_recipient_canonical_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein von Hand geändertes recipient_canonical blockiert install ohne
+    Freigabe; die Datei bleibt unverändert."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    hand_edited = "/.+/   von-hand@example.com\n"
+    (tmp_path / "recipient_canonical").write_text(hand_edited, encoding="utf-8")
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 1
+    assert (tmp_path / "recipient_canonical").read_text(encoding="utf-8") == (
+        hand_edited
+    )
+    messages = _sent_messages(conn)
+    assert any(
+        f"{Postfix.RECIPIENT_CANONICAL} weicht vom Soll ab" in str(m)
+        and "--force-overwrite" in str(m)
+        for m in messages
+    )
+
+
+def test_install_force_overwrites_sasl_passwd_without_backup_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sasl_passwd wird bei Freigabe überschrieben, aber wegen des Geheimniswerts
+    nie in die Sicherungsablage kopiert (WARN-Meldung „nicht gesichert“)."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    (tmp_path / "sasl_passwd").write_text(
+        "[smtp.example.com]:587 relayuser:altes-passwort\n", encoding="utf-8"
+    )
+    conn.reset_mock()
+    mod.force_overwrite = "yes"
+
+    result = mod.start()
+
+    assert result == 0
+    assert "altes-passwort" not in (tmp_path / "sasl_passwd").read_text(
+        encoding="utf-8"
+    )
+    sasl_backup = Path(mod.backup_run_dir) / Path(Postfix.SASL_PASSWD).relative_to("/")
+    assert not sasl_backup.exists()
+    messages = _sent_messages(conn)
+    assert any(
+        f"{Postfix.SASL_PASSWD}" in str(m)
+        and "nicht" in str(m)
+        and "gesichert" in str(m)
+        for m in messages
+    )
 
 
 def _make_fake_postqueue_deferred(tmp_path: Path) -> str:
@@ -319,6 +405,8 @@ def test_check_all_ok_after_successful_install(
     check_mod.relay_port = mod.relay_port
     check_mod.relay_user = mod.relay_user
     check_mod.relay_password = mod.relay_password
+    check_mod.force_overwrite = "no"
+    check_mod.backup_run_dir = str(tmp_path / "backup-run-check")
 
     # postconf -nh main.cf-Wert simulieren: /usr/bin/true liefert leere Ausgabe,
     # main.cf-Direktiven weichen daher weiterhin ab (kein echtes postconf im
@@ -329,6 +417,13 @@ def test_check_all_ok_after_successful_install(
     assert any("sasl_passwd-Rechte" in str(m) and "OK" in str(m) for m in messages)
     assert any("recipient_canonical" in str(m) and "OK" in str(m) for m in messages)
     assert any("root-Weiterleitung" in str(m) and "OK" in str(m) for m in messages)
+    assert any(
+        f"{Postfix.SASL_PASSWD}: entspricht dem Soll" in str(m) for m in messages
+    )
+    assert any(
+        f"{Postfix.RECIPIENT_CANONICAL}: entspricht dem Soll" in str(m)
+        for m in messages
+    )
     assert result == 1
 
 

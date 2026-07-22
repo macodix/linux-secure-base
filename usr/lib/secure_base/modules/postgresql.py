@@ -22,7 +22,8 @@ import os
 import pwd
 import re
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from functools import partial
 from pathlib import Path
 from typing import ClassVar
 from zoneinfo import available_timezones
@@ -34,10 +35,18 @@ from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.permissions_action import PermissionsAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
+
+# Ein Installationsschritt ist eine parameterlose Funktion mit Rückgabewert
+# (gleiches Muster wie secure_base.modules.logging/monit): pifos-Aktionen
+# laufen über _act (Wrapper um run_action), Schreibziele direkt über
+# write_managed/backup_before_edit, die den Schritt bereits vollständig
+# ausführen (Plan installer-drift-schutz Kap. 2.4).
+_Step = Callable[[], int]
 
 # Dateiname der eigenen Drop-in-Konfiguration unter conf.d.
 _HARDENING_CONF_NAME = "secure-base-hardening.conf"
@@ -65,7 +74,8 @@ _PG_HBA_LINES: tuple[str, ...] = (
 )
 
 _OWN_FILE_HEADER = (
-    "# Von secure-base/postgresql angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+    "# Von secure-base/postgresql angelegt (wird bei erneutem"
+    " Installer-Lauf überschrieben).\n"
 )
 
 
@@ -204,16 +214,23 @@ def _dump_cron_content(hhmm: str, script_path: str) -> str:
     minute, hour = _cron_fields(hhmm)
     return (
         f"# Datensicherung (pg_dump je Datenbank) - täglich um {hhmm}\n"
-        "# Von secure-base/postgresql angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/postgresql angelegt (wird bei erneutem"
+        " Installer-Lauf überschrieben).\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{minute} {hour} * * *  root  {script_path}\n"
     )
 
 
-class Postgresql(Module):
+class Postgresql(ManagedWriteMixin, Module):
     """Datenbankserver mit lokal beschränktem Zugriff über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "timezone", "pg_dump_time"]
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "timezone",
+        "pg_dump_time",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe Modul base
     # für die Begründung); eine Testunterklasse kann sie überschreiben.
@@ -278,6 +295,10 @@ class Postgresql(Module):
     timezone: str
     pg_dump_time: str
 
+    # Von _install_steps gesetzt (Paketzustand vor der Installation),
+    # ebenfalls nur als Typdeklaration.
+    _pkg_was_installed: bool
+
     def start(self) -> int:
         """Führt Einrichtung, Abgleich, Rückbau oder Funktionstest aus.
 
@@ -295,6 +316,8 @@ class Postgresql(Module):
         if self.operation == "uninstall":
             return self._uninstall()
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("postgresql")
         if self.operation == "check":
             return self._verify()
         if self.operation == "test":
@@ -541,6 +564,101 @@ class Postgresql(Module):
         """
         return _dump_cron_content(self.pg_dump_time, self.DUMP_SCRIPT_PATH)
 
+    # --- Verwaltete Schreibziele (Drift-Schutz) -------------------------
+
+    def _hardening_managed_file(self, version: str, cluster: str) -> ManagedFile:
+        """Baut das Schreibziel der eigenen conf.d-Härtungsdatei.
+
+        Args:
+            version: PostgreSQL-Hauptversion.
+            cluster: Cluster-Name.
+
+        Returns:
+            Schreibziel mit Soll-Inhalt und Rechten.
+        """
+        path = self._conf_d_dir(version, cluster) / _HARDENING_CONF_NAME
+        return ManagedFile(
+            dst=str(path),
+            content=self._hardening_conf_content(),
+            mode=self.HARDENING_CONF_MODE,
+        )
+
+    def _pg_hba_managed_file(self, version: str, cluster: str) -> ManagedFile:
+        """Baut das Schreibziel von pg_hba.conf.
+
+        Args:
+            version: PostgreSQL-Hauptversion.
+            cluster: Cluster-Name.
+
+        Returns:
+            Schreibziel mit Soll-Inhalt und Rechten.
+        """
+        return ManagedFile(
+            dst=self._pg_hba_path(version, cluster),
+            content=_pg_hba_content(),
+            mode=self.PG_HBA_MODE,
+        )
+
+    def _dump_script_managed_file(self) -> ManagedFile:
+        """Baut das Schreibziel des Dump-Skripts."""
+        return ManagedFile(
+            dst=self.DUMP_SCRIPT_PATH,
+            content=self._build_dump_script_content(),
+            mode=self.DUMP_SCRIPT_MODE,
+        )
+
+    def _dump_cron_managed_file(self) -> ManagedFile:
+        """Baut das Schreibziel der Dump-Cron-Datei."""
+        return ManagedFile(
+            dst=self.DUMP_CRON_PATH,
+            content=self._build_dump_cron_content(),
+            mode=self.DUMP_CRON_MODE,
+        )
+
+    def _package_installed(self, package: str) -> bool:
+        """Prüft still per dpkg-query, ob ein Paket installiert ist.
+
+        Ohne eigene Meldung — Aufrufer (_check_package, _managed_files)
+        melden das Ergebnis selbst bzw. werten es intern aus.
+
+        Args:
+            package: Zu prüfender Paketname.
+
+        Returns:
+            True, wenn dpkg-query den Status "install ok installed" meldet.
+        """
+        action = SysCmdAction(
+            command=[self.DPKG_QUERY_BIN, "-W", "-f=${Status}", package], timeout=15
+        )
+        return self.run_action(action) == 0 and "install ok installed" in action.stdout
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert die vollständig generierten Schreibziele des Moduls.
+
+        Dump-Skript und -Cron-Datei haben feste, clusterunabhängige Pfade
+        und sind immer enthalten. Härtungs-Drop-in und pg_hba.conf liegen
+        unter dem ermittelten Cluster (PG_ETC_BASE/<version>/<cluster>);
+        ohne gefundenen Cluster ist ihr Pfad nicht bestimmbar — dann werden
+        sie ausgelassen (kein Ziel mit unbrauchbarem Platzhalter-Pfad).
+        pg_hba.conf kommt zusätzlich nur hinzu, wenn das Paket bereits
+        installiert ist (Plan installer-drift-schutz Kap. 2.6): Ohne
+        installiertes Paket wäre eine vorgefundene Datei nicht sicher als
+        Paket-Vorgabe einzuordnen, und _install_steps übernimmt sie in dem
+        Fall ohnehin per adopt.
+
+        Returns:
+            Schreibziele mit Soll-Inhalt.
+        """
+        files = [self._dump_script_managed_file(), self._dump_cron_managed_file()]
+        found = self._detect_cluster()
+        if found is None:
+            return files
+        version, cluster = found
+        files.append(self._hardening_managed_file(version, cluster))
+        if self._package_installed("postgresql"):
+            files.append(self._pg_hba_managed_file(version, cluster))
+        return files
+
     # --- Installation --------------------------------------------------
 
     def _install(self) -> int:
@@ -549,159 +667,181 @@ class Postgresql(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        for label, action in self._install_steps():
-            if self._step(label, action) != 0:
+        for label, step in self._install_steps():
+            if self._step(label, step) != 0:
                 return 1
         return 0
 
-    def _install_steps(self) -> Iterator[tuple[str, Action]]:
+    def _act(self, action: Action) -> _Step:
+        """Baut eine Schritt-Funktion, die eine Aktion über run_action ausführt.
+
+        Args:
+            action: Auszuführende Aktion.
+
+        Returns:
+            Parameterlose Funktion mit dem Rückgabewert von run_action.
+        """
+        return partial(self.run_action, action)
+
+    def _install_steps(self) -> Iterator[tuple[str, _Step]]:
         """Liefert die Installationsschritte in Ausführungsreihenfolge.
 
         Als Generator: Version und Cluster werden erst ermittelt, wenn der
         Aufrufer den nächsten Schritt anfordert — also nach der
         vorhergehenden Paketinstallation, nicht beim Aufbau der Liste
-        (analog zu Modul nginx, _pre_certbot_steps).
+        (analog zu Modul nginx, _pre_certbot_steps). Der Paketzustand vor
+        der Installation wird vorab gemerkt (self._pkg_was_installed):
+        pg_hba.conf wird nur bei einer im selben Lauf frisch installierten
+        Paketvorgabe ohne Freigabe ersetzt (adopt — Plan
+        installer-drift-schutz Kap. 2.6).
 
         Yields:
-            (Label, Aktion)-Paare in Ausführungsreihenfolge.
+            (Label, Schritt-Funktion)-Paare in Ausführungsreihenfolge.
 
         Raises:
             ModuleError: Wenn nach der Paketinstallation kein Cluster unter
                 PG_ETC_BASE gefunden wird.
         """
+        self._pkg_was_installed = self._package_installed("postgresql")
         yield (
             "Paket installieren",
-            self.APT_ACTION_CLS(packages=list(self.PACKAGES)),
+            self._act(self.APT_ACTION_CLS(packages=list(self.PACKAGES))),
         )
 
         version, cluster = self._require_cluster()
         conf_d = self._conf_d_dir(version, cluster)
         unit = self._unit_name(version, cluster)
 
-        hardening_path = conf_d / _HARDENING_CONF_NAME
-        pg_hba_path = self._pg_hba_path(version, cluster)
-
         yield (
             "conf.d-Verzeichnis sicherstellen",
-            MakeDirAction(path=str(conf_d), mode=0o755, parents=True),
+            self._act(MakeDirAction(path=str(conf_d), mode=0o755, parents=True)),
         )
+
+        hardening_mf = self._hardening_managed_file(version, cluster)
         yield (
             "Verbindungs- und Protokolleinstellungen schreiben",
-            WriteFileAction(
-                dst=str(hardening_path),
-                content=self._hardening_conf_content(),
-                mode=self.HARDENING_CONF_MODE,
-                overwrite=True,
-            ),
+            partial(self.write_managed, "postgresql", hardening_mf),
         )
         yield (
             "Eigentümer/Rechte der Härtungs-Konfiguration setzen",
-            PermissionsAction(
-                path=str(hardening_path),
-                mode=self.HARDENING_CONF_MODE,
-                owner=self.PG_OWNER,
-                group=self.PG_GROUP,
+            self._act(
+                PermissionsAction(
+                    path=hardening_mf.dst,
+                    mode=self.HARDENING_CONF_MODE,
+                    owner=self.PG_OWNER,
+                    group=self.PG_GROUP,
+                )
             ),
         )
+
+        pg_hba_mf = self._pg_hba_managed_file(version, cluster)
         yield (
             "pg_hba.conf ersetzen",
-            WriteFileAction(
-                dst=pg_hba_path,
-                content=_pg_hba_content(),
-                mode=self.PG_HBA_MODE,
-                overwrite=True,
+            partial(
+                self.write_managed,
+                "postgresql",
+                pg_hba_mf,
+                adopt=not self._pkg_was_installed,
             ),
         )
         yield (
             "Eigentümer/Rechte von pg_hba.conf setzen",
-            PermissionsAction(
-                path=pg_hba_path,
-                mode=self.PG_HBA_MODE,
-                owner=self.PG_OWNER,
-                group=self.PG_GROUP,
+            self._act(
+                PermissionsAction(
+                    path=pg_hba_mf.dst,
+                    mode=self.PG_HBA_MODE,
+                    owner=self.PG_OWNER,
+                    group=self.PG_GROUP,
+                )
             ),
         )
         yield (
             "Datenverzeichnis-Rechte setzen",
-            PermissionsAction(
-                path=self._data_dir(version, cluster),
-                mode=self.DATA_DIR_MODE,
-                owner=self.PG_OWNER,
-                group=self.PG_GROUP,
+            self._act(
+                PermissionsAction(
+                    path=self._data_dir(version, cluster),
+                    mode=self.DATA_DIR_MODE,
+                    owner=self.PG_OWNER,
+                    group=self.PG_GROUP,
+                )
             ),
         )
         yield (
             "Dienst aktivieren",
-            self.SYSTEMD_ACTION_CLS(operation="enable", unit=unit, timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="enable", unit=unit, timeout=60)
+            ),
         )
         yield (
             "Dienst neu starten",
-            self.SYSTEMD_ACTION_CLS(operation="restart", unit=unit, timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="restart", unit=unit, timeout=60)
+            ),
         )
 
         yield (
             "Sicherungsverzeichnis anlegen",
-            MakeDirAction(
-                path=self.BACKUP_BASE_DIR,
-                mode=self.BACKUP_BASE_DIR_MODE,
-                parents=True,
+            self._act(
+                MakeDirAction(
+                    path=self.BACKUP_BASE_DIR,
+                    mode=self.BACKUP_BASE_DIR_MODE,
+                    parents=True,
+                )
             ),
         )
         yield (
             "Sicherungsverzeichnis-Rechte setzen",
-            PermissionsAction(
-                path=self.BACKUP_BASE_DIR,
-                mode=self.BACKUP_BASE_DIR_MODE,
-                owner=self.DUMP_OWNER,
-                group=self.DUMP_GROUP,
+            self._act(
+                PermissionsAction(
+                    path=self.BACKUP_BASE_DIR,
+                    mode=self.BACKUP_BASE_DIR_MODE,
+                    owner=self.DUMP_OWNER,
+                    group=self.DUMP_GROUP,
+                )
             ),
         )
         yield (
             "Dump-Zielverzeichnis anlegen",
-            MakeDirAction(path=self.DUMP_DIR, mode=self.DUMP_DIR_MODE, parents=True),
+            self._act(
+                MakeDirAction(path=self.DUMP_DIR, mode=self.DUMP_DIR_MODE, parents=True)
+            ),
         )
         yield (
             "Dump-Zielverzeichnis-Rechte setzen",
-            PermissionsAction(
-                path=self.DUMP_DIR,
-                mode=self.DUMP_DIR_MODE,
-                owner=self.DUMP_OWNER,
-                group=self.DUMP_GROUP,
-            ),
-        )
-        yield (
-            "Dump-Skript schreiben",
-            WriteFileAction(
-                dst=self.DUMP_SCRIPT_PATH,
-                content=self._build_dump_script_content(),
-                mode=self.DUMP_SCRIPT_MODE,
-                overwrite=True,
-                safe_mode=False,
-            ),
-        )
-        yield (
-            "Dump-Cron-Datei schreiben",
-            WriteFileAction(
-                dst=self.DUMP_CRON_PATH,
-                content=self._build_dump_cron_content(),
-                mode=self.DUMP_CRON_MODE,
-                overwrite=True,
-                safe_mode=False,
+            self._act(
+                PermissionsAction(
+                    path=self.DUMP_DIR,
+                    mode=self.DUMP_DIR_MODE,
+                    owner=self.DUMP_OWNER,
+                    group=self.DUMP_GROUP,
+                )
             ),
         )
 
-    def _step(self, label: str, action: Action) -> int:
+        dump_script_mf = self._dump_script_managed_file()
+        yield (
+            "Dump-Skript schreiben",
+            partial(self.write_managed, "postgresql", dump_script_mf),
+        )
+        dump_cron_mf = self._dump_cron_managed_file()
+        yield (
+            "Dump-Cron-Datei schreiben",
+            partial(self.write_managed, "postgresql", dump_cron_mf),
+        )
+
+    def _step(self, label: str, step: _Step) -> int:
         """Führt einen einzelnen Installationsschritt aus und meldet ihn.
 
         Args:
             label: Beschreibung für die Meldung.
-            action: Auszuführende Aktion.
+            step: Auszuführende Schritt-Funktion (_act/write_managed — meldet
+                und sichert bereits selbst).
 
         Returns:
             0 bei Erfolg, 1 bei Fehlschlag.
         """
         self.send_message(LogLevel.INFO, "postgresql", label)
-        if self.run_action(action) != 0:
+        if step() != 0:
             self.send_message(LogLevel.ERROR, "postgresql", f"fehlgeschlagen: {label}")
             return 1
         return 0
@@ -730,23 +870,27 @@ class Postgresql(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        dump_steps: list[tuple[str, Action]] = []
+        dump_steps: list[tuple[str, _Step]] = []
         if Path(self.DUMP_CRON_PATH).exists():
             dump_steps.append(
                 (
                     "Dump-Cron-Datei entfernen",
-                    DeleteFileAction(path=self.DUMP_CRON_PATH, safe_mode=False),
+                    self._act(
+                        DeleteFileAction(path=self.DUMP_CRON_PATH, safe_mode=False)
+                    ),
                 )
             )
         if Path(self.DUMP_SCRIPT_PATH).exists():
             dump_steps.append(
                 (
                     "Dump-Skript entfernen",
-                    DeleteFileAction(path=self.DUMP_SCRIPT_PATH, safe_mode=False),
+                    self._act(
+                        DeleteFileAction(path=self.DUMP_SCRIPT_PATH, safe_mode=False)
+                    ),
                 )
             )
-        for label, action in dump_steps:
-            if self._step(label, action) != 0:
+        for label, step in dump_steps:
+            if self._step(label, step) != 0:
                 return 1
         if Path(self.DUMP_DIR).exists():
             self.send_message(
@@ -789,15 +933,20 @@ class Postgresql(Module):
             )
             return 0
 
-        steps: list[tuple[str, Action]] = [
-            ("eigene conf.d-Datei entfernen", DeleteFileAction(path=str(conf_file))),
+        steps: list[tuple[str, _Step]] = [
+            (
+                "eigene conf.d-Datei entfernen",
+                self._act(DeleteFileAction(path=str(conf_file))),
+            ),
             (
                 "Dienst neu starten",
-                self.SYSTEMD_ACTION_CLS(operation="restart", unit=unit, timeout=60),
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(operation="restart", unit=unit, timeout=60)
+                ),
             ),
         ]
-        for label, action in steps:
-            if self._step(label, action) != 0:
+        for label, step in steps:
+            if self._step(label, step) != 0:
                 return 1
         return 0
 
@@ -928,11 +1077,15 @@ class Postgresql(Module):
         unit = self._unit_name(version, cluster)
 
         ok &= self._check_svc_enabled(unit)
-        ok &= self._check_hardening_conf(version, cluster)
-        ok &= self._check_pg_hba(version, cluster)
+        # Inhaltsabgleich für alle verwalteten Ziele (Härtungs-Drop-in,
+        # pg_hba.conf, Dump-Skript, Dump-Cron-Datei) über den Drift-Schutz-
+        # Helfer; Rechte/Eigentümer bleiben eigene Prüfungen, da
+        # check_managed nur den Inhalt vergleicht.
+        ok &= self.check_managed("postgresql")
+        ok &= self._check_hardening_rights(version, cluster)
+        ok &= self._check_pg_hba_rights(version, cluster)
         ok &= self._check_data_dir(version, cluster)
         ok &= self._check_dump_script()
-        ok &= self._check_dump_cron()
         ok &= self._check_backup_base_dir()
         ok &= self._check_dump_dir()
         return 0 if ok else 1
@@ -949,7 +1102,7 @@ class Postgresql(Module):
         return ok
 
     def _check_package(self, package: str) -> bool:
-        """Prüft, ob ein einzelnes Paket installiert ist.
+        """Prüft, ob ein einzelnes Paket installiert ist, und meldet es.
 
         Args:
             package: Zu prüfender Paketname.
@@ -957,10 +1110,7 @@ class Postgresql(Module):
         Returns:
             True, wenn dpkg das Paket als installiert führt.
         """
-        action = SysCmdAction(
-            command=[self.DPKG_QUERY_BIN, "-W", "-f=${Status}", package], timeout=15
-        )
-        if self.run_action(action) == 0 and "install ok installed" in action.stdout:
+        if self._package_installed(package):
             self.send_message(
                 LogLevel.INFO, "postgresql", f"Paket installiert: {package}"
             )
@@ -987,75 +1137,40 @@ class Postgresql(Module):
         )
         return active and enabled
 
-    def _check_hardening_conf(self, version: str, cluster: str) -> bool:
-        """Prüft Inhalt sowie Rechte/Eigentümer der eigenen conf.d-Datei.
+    def _check_hardening_rights(self, version: str, cluster: str) -> bool:
+        """Prüft Rechte/Eigentümer der eigenen conf.d-Datei.
+
+        Der Inhaltsabgleich läuft über check_managed (siehe _verify); ohne
+        gefundenen Cluster wäre der Pfad hier ohnehin nicht bestimmbar —
+        _verify bricht in dem Fall bereits vorher ab.
 
         Args:
             version: PostgreSQL-Hauptversion.
             cluster: Cluster-Name.
 
         Returns:
-            True, wenn alle Sollzeilen vorhanden sind und Rechte/Eigentümer
-            stimmen.
+            True bei korrekten Rechten/Eigentümer.
         """
         path = self._conf_d_dir(version, cluster) / _HARDENING_CONF_NAME
-        content = self._read_text(str(path))
-        if content is None:
-            self.send_message(LogLevel.ERROR, "postgresql", f"{path} fehlt")
-            return False
-        lines = content.splitlines()
-        missing = [
-            line for line in self._expected_hardening_lines() if line not in lines
-        ]
-        if missing:
-            self.send_message(
-                LogLevel.ERROR,
-                "postgresql",
-                f"{path}: fehlende Einstellungen: {missing!r}",
-            )
-            return False
-        self.send_message(
-            LogLevel.INFO, "postgresql", f"{path}: alle Einstellungen gesetzt"
-        )
         return self._check_file_mode(
             str(path), self.HARDENING_CONF_MODE, self.PG_OWNER, self.PG_GROUP
         )
 
-    def _check_pg_hba(self, version: str, cluster: str) -> bool:
-        """Prüft pg_hba.conf auf exakte Übereinstimmung mit dem Sollinhalt.
+    def _check_pg_hba_rights(self, version: str, cluster: str) -> bool:
+        """Prüft Rechte/Eigentümer von pg_hba.conf.
 
-        Vergleicht den gesamten Dateiinhalt gegen _pg_hba_content()
-        (Kommentarkopf, Spaltenüberschrift, die vier zulässigen Zeilen in
-        fester Reihenfolge). Eine Voll-Vergleichsprüfung statt einer reinen
-        Teilmengenprüfung deckt implizit auch die Abwesenheit von trust-
-        sowie Replikations-/Remote-Zeilen ab: jede zusätzliche, fehlende
-        oder umgestellte Zeile — etwa eine "replication"-Zeile oder eine
-        "host"-Zeile mit einer Adresse außerhalb von 127.0.0.1/32 bzw.
-        ::1/128 — gilt als Abweichung.
+        Der Inhaltsabgleich (exakt die vier zulässigen Zeilen — kein
+        trust, keine Replikations-/Remote-Zeile) läuft über check_managed
+        (siehe _verify).
 
         Args:
             version: PostgreSQL-Hauptversion.
             cluster: Cluster-Name.
 
         Returns:
-            True bei exakter Übereinstimmung und korrekten Rechten/
-            Eigentümer.
+            True bei korrekten Rechten/Eigentümer.
         """
         path = self._pg_hba_path(version, cluster)
-        content = self._read_text(path)
-        if content is None:
-            self.send_message(LogLevel.ERROR, "postgresql", f"{path} fehlt")
-            return False
-        if content != _pg_hba_content():
-            self.send_message(
-                LogLevel.ERROR,
-                "postgresql",
-                f"{path}: Inhalt weicht vom Soll ab (erwartet: exakt die vier"
-                " zulässigen Zeilen — kein trust, keine"
-                " Replikations-/Remote-Zeile)",
-            )
-            return False
-        self.send_message(LogLevel.INFO, "postgresql", f"{path}: Inhalt OK")
         return self._check_file_mode(
             path, self.PG_HBA_MODE, self.PG_OWNER, self.PG_GROUP
         )
@@ -1087,30 +1202,6 @@ class Postgresql(Module):
             self.DUMP_OWNER,
             self.DUMP_GROUP,
         )
-
-    def _check_dump_cron(self) -> bool:
-        """Prüft, ob die Dump-Cron-Datei exakt dem Sollinhalt entspricht.
-
-        Returns:
-            True bei exakter Übereinstimmung.
-        """
-        content = self._read_text(self.DUMP_CRON_PATH)
-        if content is None:
-            self.send_message(
-                LogLevel.ERROR, "postgresql", f"{self.DUMP_CRON_PATH} fehlt"
-            )
-            return False
-        if content != self._build_dump_cron_content():
-            self.send_message(
-                LogLevel.ERROR,
-                "postgresql",
-                f"{self.DUMP_CRON_PATH}: Inhalt weicht vom Soll ab",
-            )
-            return False
-        self.send_message(
-            LogLevel.INFO, "postgresql", f"{self.DUMP_CRON_PATH}: Inhalt OK"
-        )
-        return True
 
     def _check_backup_base_dir(self) -> bool:
         """Prüft Rechte und Eigentümer des lokalen Sicherungsverzeichnisses.
@@ -1209,17 +1300,3 @@ class Postgresql(Module):
             LogLevel.ERROR, "postgresql", f"{label}: ist {current}, soll {expected}"
         )
         return False
-
-    def _read_text(self, path: str) -> str | None:
-        """Liest eine Textdatei ein, ohne bei fehlender Datei abzubrechen.
-
-        Args:
-            path: Zu lesende Datei.
-
-        Returns:
-            Dateiinhalt oder None, wenn die Datei nicht lesbar ist.
-        """
-        try:
-            return Path(path).read_text(encoding="utf-8")
-        except OSError:
-            return None

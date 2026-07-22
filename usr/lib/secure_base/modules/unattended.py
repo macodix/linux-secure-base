@@ -14,6 +14,7 @@ DEBIAN_ORIGINS_BLOCK). Welcher Block gilt, entscheidet secure_base.distro.
 
 import contextlib
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -23,12 +24,12 @@ from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
 from secure_base.distro import DEBIAN, OS_RELEASE_FILE, distro_id
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 # Kontrollierter PATH für apt-get-Aufrufe außerhalb der AptAction (SIC-06).
 _CONTROLLED_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
@@ -83,7 +84,10 @@ def _uu_conf_content(
     Returns:
         Vollständiger Dateiinhalt.
     """
-    head = "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+    head = (
+        "# Von secure-base/unattended angelegt"
+        " (wird bei erneutem Installer-Lauf überschrieben).\n"
+    )
     directives = (
         f'Unattended-Upgrade::Automatic-Reboot "{auto_reboot}";\n'
         f'Unattended-Upgrade::Automatic-Reboot-Time "{auto_reboot_time}";\n'
@@ -96,7 +100,8 @@ def _uu_conf_content(
 def _periodic_conf_content() -> str:
     """Baut den Inhalt von 20auto-upgrades."""
     return (
-        "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/unattended angelegt"
+        " (wird bei erneutem Installer-Lauf überschrieben).\n"
         'APT::Periodic::Update-Package-Lists "1";\n'
         'APT::Periodic::Unattended-Upgrade "1";\n'
         'APT::Periodic::AutocleanInterval "7";\n'
@@ -106,7 +111,8 @@ def _periodic_conf_content() -> str:
 def _timer_override_content(hhmm: str) -> str:
     """Baut den Inhalt eines systemd-Timer-Drop-ins mit gepinnter Uhrzeit."""
     return (
-        "# Von secure-base/unattended angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/unattended angelegt"
+        " (wird bei erneutem Installer-Lauf überschrieben).\n"
         "[Timer]\n"
         "OnCalendar=\n"
         f"OnCalendar=*-*-* {hhmm}:00\n"
@@ -131,7 +137,7 @@ def _doc_value(values: dict[str, str], key: str) -> str:
     return values.get(key) or "(leer/Default)"
 
 
-class Unattended(Module):
+class Unattended(ManagedWriteMixin, Module):
     """Automatisierte Sicherheitsupdates über pifos-Aktionen."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -141,6 +147,8 @@ class Unattended(Module):
         "auto_reboot_time",
         "apt_daily_time",
         "apt_daily_upgrade_time",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py):
@@ -193,6 +201,8 @@ class Unattended(Module):
                 der drei Uhrzeiten.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("unattended")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -294,6 +304,117 @@ class Unattended(Module):
             return DEBIAN_ORIGINS_BLOCK
         return UBUNTU_ORIGINS_BLOCK
 
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert die vier vollständig generierten Schreibziele des Moduls."""
+        reboot_flag = "true" if self.auto_reboot == "yes" else "false"
+        origins_block = self._origins_block()
+        return [
+            ManagedFile(
+                dst=self.UU_CONF,
+                content=_uu_conf_content(
+                    self.admin_mail, reboot_flag, self.auto_reboot_time, origins_block
+                ),
+                mode=0o644,
+            ),
+            ManagedFile(
+                dst=self.PERIODIC_CONF, content=_periodic_conf_content(), mode=0o644
+            ),
+            ManagedFile(
+                dst=self.DAILY_DROPIN,
+                content=_timer_override_content(self.apt_daily_time),
+                mode=0o644,
+            ),
+            ManagedFile(
+                dst=self.UPGRADE_DROPIN,
+                content=_timer_override_content(self.apt_daily_upgrade_time),
+                mode=0o644,
+            ),
+        ]
+
+    def _apt_env(self) -> dict[str, str]:
+        """Baut die kontrollierte Umgebung für die apt-get-Aufrufe (SIC-06)."""
+        return {
+            "DEBIAN_FRONTEND": "noninteractive",
+            "NEEDRESTART_SUSPEND": "1",
+            "PATH": _CONTROLLED_PATH,
+        }
+
+    def _step_apt_update(self) -> int:
+        """Aktualisiert den Paketindex (apt-get update)."""
+        return self.run_action(
+            SysCmdAction(
+                command=[self.APT_GET_BIN, "update"], timeout=120, env=self._apt_env()
+            )
+        )
+
+    def _step_apt_upgrade(self) -> int:
+        """Spielt vorhandene Updates ein (apt-get -y upgrade)."""
+        return self.run_action(
+            SysCmdAction(
+                command=[self.APT_GET_BIN, "-y", "upgrade"],
+                timeout=900,
+                env=self._apt_env(),
+            )
+        )
+
+    def _step_install_package(self) -> int:
+        """Installiert das Paket unattended-upgrades."""
+        return self.run_action(self.APT_ACTION_CLS(packages=["unattended-upgrades"]))
+
+    def _step_write_uu_conf(self) -> int:
+        """Schreibt 50unattended-upgrades (vollständig eigene Datei)."""
+        return self.write_managed("unattended", self._managed_files()[0])
+
+    def _step_write_periodic_conf(self) -> int:
+        """Schreibt 20auto-upgrades (vollständig eigene Datei)."""
+        return self.write_managed("unattended", self._managed_files()[1])
+
+    def _step_ensure_daily_dropin_dir(self) -> int:
+        """Legt das Verzeichnis des apt-daily-Timer-Overrides an."""
+        return self.run_action(
+            MakeDirAction(
+                path=str(Path(self.DAILY_DROPIN).parent), mode=0o755, parents=True
+            )
+        )
+
+    def _step_write_daily_dropin(self) -> int:
+        """Schreibt das apt-daily-Timer-Override (vollständig eigene Datei)."""
+        return self.write_managed("unattended", self._managed_files()[2])
+
+    def _step_ensure_upgrade_dropin_dir(self) -> int:
+        """Legt das Verzeichnis des apt-daily-upgrade-Timer-Overrides an."""
+        return self.run_action(
+            MakeDirAction(
+                path=str(Path(self.UPGRADE_DROPIN).parent), mode=0o755, parents=True
+            )
+        )
+
+    def _step_write_upgrade_dropin(self) -> int:
+        """Schreibt das apt-daily-upgrade-Timer-Override (vollständig eigene Datei)."""
+        return self.write_managed("unattended", self._managed_files()[3])
+
+    def _step_daemon_reload(self) -> int:
+        """Lädt die systemd-Konfiguration neu (nach den Timer-Overrides)."""
+        return self.run_action(
+            self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60)
+        )
+
+    def _step_restart_daily_timer(self) -> int:
+        """Startet apt-daily.timer neu, damit das Override greift."""
+        return self.run_action(
+            self.SYSTEMD_ACTION_CLS(
+                operation="restart", unit="apt-daily.timer", timeout=60
+            )
+        )
+
+    def _step_restart_upgrade_timer(self) -> int:
+        """Startet apt-daily-upgrade.timer neu, damit das Override greift."""
+        return self.run_action(
+            self.SYSTEMD_ACTION_CLS(
+                operation="restart", unit="apt-daily-upgrade.timer", timeout=60
+            )
+        )
+
     def _install(self) -> int:
         """Aktualisiert den Paketstand und richtet unattended-upgrades ein.
 
@@ -304,115 +425,39 @@ class Unattended(Module):
         Raises:
             ModuleError: Wenn die Distribution nicht unterstützt wird.
         """
-        env = {
-            "DEBIAN_FRONTEND": "noninteractive",
-            "NEEDRESTART_SUSPEND": "1",
-            "PATH": _CONTROLLED_PATH,
-        }
-        reboot_flag = "true" if self.auto_reboot == "yes" else "false"
-        origins_block = self._origins_block()
-        steps: list[tuple[str, Action]] = [
-            (
-                "Paketindex aktualisieren",
-                SysCmdAction(
-                    command=[self.APT_GET_BIN, "update"], timeout=120, env=env
-                ),
-            ),
-            (
-                "Vorhandene Updates einspielen",
-                SysCmdAction(
-                    command=[self.APT_GET_BIN, "-y", "upgrade"], timeout=900, env=env
-                ),
-            ),
-            (
-                "unattended-upgrades installieren",
-                self.APT_ACTION_CLS(packages=["unattended-upgrades"]),
-            ),
-            (
-                "50unattended-upgrades schreiben",
-                WriteFileAction(
-                    dst=self.UU_CONF,
-                    content=_uu_conf_content(
-                        self.admin_mail,
-                        reboot_flag,
-                        self.auto_reboot_time,
-                        origins_block,
-                    ),
-                    mode=0o644,
-                    overwrite=True,
-                    # kein safe_mode: eine .bak-Sicherung würde von apts
-                    # Include-Glob in apt.conf.d mitgelesen und dessen
-                    # lexikalisch spätere Version die neue Datei überstimmen.
-                    safe_mode=False,
-                ),
-            ),
-            (
-                "20auto-upgrades schreiben",
-                WriteFileAction(
-                    dst=self.PERIODIC_CONF,
-                    content=_periodic_conf_content(),
-                    mode=0o644,
-                    overwrite=True,
-                    # kein safe_mode: eine .bak-Sicherung würde von apts
-                    # Include-Glob in apt.conf.d mitgelesen und dessen
-                    # lexikalisch spätere Version die neue Datei überstimmen.
-                    safe_mode=False,
-                ),
-            ),
+        # Vorab prüfen, bevor irgendein Schritt läuft (wie zuvor) — der
+        # Aufruf wirft ModuleError auf einer nicht unterstützten Distribution;
+        # _managed_files() ruft ihn beim eigentlichen Schreiben erneut auf.
+        self._origins_block()
+        steps: list[tuple[str, Callable[[], int]]] = [
+            ("Paketindex aktualisieren", self._step_apt_update),
+            ("Vorhandene Updates einspielen", self._step_apt_upgrade),
+            ("unattended-upgrades installieren", self._step_install_package),
+            ("50unattended-upgrades schreiben", self._step_write_uu_conf),
+            ("20auto-upgrades schreiben", self._step_write_periodic_conf),
             (
                 "Verzeichnis für apt-daily-Override anlegen",
-                MakeDirAction(
-                    path=str(Path(self.DAILY_DROPIN).parent), mode=0o755, parents=True
-                ),
+                self._step_ensure_daily_dropin_dir,
             ),
-            (
-                "apt-daily-Override schreiben",
-                WriteFileAction(
-                    dst=self.DAILY_DROPIN,
-                    content=_timer_override_content(self.apt_daily_time),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
+            ("apt-daily-Override schreiben", self._step_write_daily_dropin),
             (
                 "Verzeichnis für apt-daily-upgrade-Override anlegen",
-                MakeDirAction(
-                    path=str(Path(self.UPGRADE_DROPIN).parent),
-                    mode=0o755,
-                    parents=True,
-                ),
+                self._step_ensure_upgrade_dropin_dir,
             ),
             (
                 "apt-daily-upgrade-Override schreiben",
-                WriteFileAction(
-                    dst=self.UPGRADE_DROPIN,
-                    content=_timer_override_content(self.apt_daily_upgrade_time),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
+                self._step_write_upgrade_dropin,
             ),
-            (
-                "systemd neu laden",
-                self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60),
-            ),
-            (
-                "apt-daily.timer neu starten",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="restart", unit="apt-daily.timer", timeout=60
-                ),
-            ),
+            ("systemd neu laden", self._step_daemon_reload),
+            ("apt-daily.timer neu starten", self._step_restart_daily_timer),
             (
                 "apt-daily-upgrade.timer neu starten",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="restart", unit="apt-daily-upgrade.timer", timeout=60
-                ),
+                self._step_restart_upgrade_timer,
             ),
         ]
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "unattended", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(
                     LogLevel.ERROR, "unattended", f"fehlgeschlagen: {label}"
                 )
@@ -643,30 +688,7 @@ class Unattended(Module):
             [self.DPKG_BIN, "-s", "unattended-upgrades"],
             "Paket unattended-upgrades installiert",
         )
-        reboot_flag = "true" if self.auto_reboot == "yes" else "false"
-        ok &= self._check_file_content(
-            self.UU_CONF,
-            _uu_conf_content(
-                self.admin_mail,
-                reboot_flag,
-                self.auto_reboot_time,
-                self._origins_block(),
-            ),
-            "50unattended-upgrades",
-        )
-        ok &= self._check_file_content(
-            self.PERIODIC_CONF, _periodic_conf_content(), "20auto-upgrades"
-        )
-        ok &= self._check_file_content(
-            self.DAILY_DROPIN,
-            _timer_override_content(self.apt_daily_time),
-            "apt-daily-Override",
-        )
-        ok &= self._check_file_content(
-            self.UPGRADE_DROPIN,
-            _timer_override_content(self.apt_daily_upgrade_time),
-            "apt-daily-upgrade-Override",
-        )
+        ok &= self.check_managed("unattended")
         return 0 if ok else 1
 
     def _check_command_succeeds(self, command: list[str], label: str) -> bool:
@@ -685,27 +707,3 @@ class Unattended(Module):
             return False
         self.send_message(LogLevel.INFO, "unattended", f"{label}: OK")
         return True
-
-    def _check_file_content(self, path: str, expected: str, label: str) -> bool:
-        """Vergleicht den Inhalt einer Datei mit dem Soll-Inhalt.
-
-        Args:
-            path: Zu lesende Datei.
-            expected: Soll-Inhalt.
-            label: Beschreibung für die Meldung.
-
-        Returns:
-            True bei Übereinstimmung, sonst False.
-        """
-        try:
-            current = Path(path).read_text()
-        except OSError:
-            self.send_message(LogLevel.ERROR, "unattended", f"{label}: nicht lesbar")
-            return False
-        if current == expected:
-            self.send_message(LogLevel.INFO, "unattended", f"{label}: OK")
-            return True
-        self.send_message(
-            LogLevel.ERROR, "unattended", f"{label}: Inhalt weicht vom Soll ab"
-        )
-        return False

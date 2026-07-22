@@ -18,6 +18,8 @@ def _make_rkhunter(fqdn: str, admin_mail: str) -> Rkhunter:
     mod.operation = "install"
     mod.fqdn = fqdn
     mod.admin_mail = admin_mail
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -25,8 +27,14 @@ def _make_rkhunter(fqdn: str, admin_mail: str) -> Rkhunter:
 
 
 def test_rkhunter_config_declares_operation_fqdn_admin_mail() -> None:
-    """CONFIG nennt genau operation, fqdn und admin_mail in dieser Reihenfolge."""
-    assert Rkhunter.CONFIG == ["operation", "fqdn", "admin_mail"]
+    """CONFIG nennt operation, fqdn, admin_mail und die Drift-Schutz-Schlüssel."""
+    assert Rkhunter.CONFIG == [
+        "operation",
+        "fqdn",
+        "admin_mail",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
 
 # --- _validate ---
@@ -183,6 +191,7 @@ def test_revert_config_removes_matching_lines(tmp_path: Path) -> None:
     target = tmp_path / "default_rkhunter"
     target.write_text('CRON_DAILY_RUN="yes"\nCRON_DB_UPDATE="yes"\n', encoding="utf-8")
     mod = _make_rkhunter("server.example.com", "admin@example.com")
+    mod.backup_run_dir = str(tmp_path / "backup-run")
 
     result = mod._revert_config(
         str(target),
@@ -214,6 +223,7 @@ def test_revert_config_missing_line_is_idempotent(tmp_path: Path) -> None:
     target = tmp_path / "default_rkhunter"
     target.write_text("# leer\n", encoding="utf-8")
     mod = _make_rkhunter("server.example.com", "admin@example.com")
+    mod.backup_run_dir = str(tmp_path / "backup-run")
 
     result = mod._revert_config(
         str(target), (("täglichen Lauf zurücknehmen", r"^CRON_DAILY_RUN="),)

@@ -19,13 +19,14 @@ Der Installer nutzt den wiederverwendbaren Bausatz pifos (eigenes Projekt [githu
 ## 2. Aufruf
 
 ```sh
-sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PFAD] [-n]
+sudo bin/secure-base-installer {install|uninstall|check|test} [MODUL ...] [-c PFAD] [-n] [--force-overwrite]
 ```
 
 - `install` richtet die ausgewählten Module ein; `uninstall` nimmt die Modul-Änderungen in umgekehrter Reihenfolge zurück; `check` gleicht Ist- und Soll-Zustand ab, ohne zu ändern; `test` prüft die Funktion ohne Änderung (Kapitel 6).
 - `MODUL ...` verarbeitet nur die genannten Module (Kurznamen, siehe Kapitel 4); ohne Angabe laufen die in der Konfiguration aktivierten Pflichtmodule.
 - `-c PFAD` / `--conf PFAD` gibt eine abweichende Konfigurationsdatei an; ohne Angabe `etc/secure-base/secure-base.conf`.
 - `-n` / `--dry-run` listet die Module nur auf und führt nichts aus.
+- `--force-overwrite` gibt für einen `install`-Lauf das Überschreiben verwalteter Dateien frei, die vom Soll abweichen (Kapitel 6.1); ohne die Freigabe bricht `install` bei Abweichungen ab, bevor etwas geändert wurde.
 
 Der Installer benötigt Systemrechte (`sudo`) und bricht ohne sie ab, bevor er etwas ändert.
 
@@ -40,8 +41,9 @@ Der Einstiegspunkt `bin/secure-base-installer` liest die Kommandozeile und ruft 
 3. Konfiguration bereitstellen — fehlt die Datei, wird die Vorlage kopiert (Kapitel 5).
 4. Modulauswahl — feste Reihenfolge aus der Registratur, gefiltert nach den Aktivierungslisten und der Kommandozeile (Kapitel 4).
 5. Fehlende Pflichtwerte klären — dialogische Abfrage, Rückschreiben mit Rechten 0600 (Kapitel 5).
-6. Module ausführen — je Modul Start, Statusmeldungen, Ergebnis (Kapitel 7). `install` und `uninstall` bauen aufeinander auf und brechen nach einem Modulfehler ab; `check` und `test` laufen vollständig durch.
-7. Abschluss — bei `install` der Installationsbericht (Kapitel 8) und, nach vollständig erfolgreichem Lauf, die Abfrage zur ufw-Aktivierung (Kapitel 7).
+6. Sammel-Prüfung (nur `install`) — alle verwalteten Schreibziele der beauftragten Module werden gegen ihren Soll-Inhalt geprüft, bevor irgendein Modul etwas ändert; unfreigegebene Abweichungen brechen den Lauf mit der vollständigen Konfliktliste ab (Kapitel 6.1).
+7. Module ausführen — je Modul Start, Statusmeldungen, Ergebnis (Kapitel 7). `install` und `uninstall` bauen aufeinander auf und brechen nach einem Modulfehler ab; `check` und `test` laufen vollständig durch.
+8. Abschluss — bei `install` der Installationsbericht (Kapitel 8) und, nach vollständig erfolgreichem Lauf, die Abfrage zur ufw-Aktivierung (Kapitel 7).
 
 Der Rückgabewert ist 0 bei Erfolg, 1 bei einem Modulfehler, 2 bei einer nicht unterstützten Distribution, fehlenden Rechten, fehlerhafter Auswahl oder ungültiger Konfiguration.
 
@@ -69,6 +71,23 @@ Fehlt die Datei beim Aufruf, kopiert der Installer die Vorlage mitsamt Abschnitt
 | `test` | prüft die Funktion, ohne zu ändern | rein lesend |
 
 Der Trockenlauf (`-n`) benennt die Module nur und führt nichts aus; Bericht und ufw-Abfrage entfallen. Mit `-c` lässt sich eine abweichende Konfigurationsdatei angeben. Die optionalen Module laufen mit, sobald sie in `optional_enabled` stehen (Kapitel 4).
+
+### 6.1 Schreibverhalten: Soll-Ist-Vergleich und zentrale Sicherungen
+
+Vor jedem Schreiben einer vollständig generierten Datei vergleicht das Modul die vorhandene Datei mit dem Soll-Inhalt aus `secure-base.conf` und Modul-Code (Byte-Vergleich im Speicher; es wird kein Zustand auf dem Server abgelegt):
+
+| Zustand der Datei | Verhalten |
+|---|---|
+| existiert nicht | schreiben |
+| Inhalt = Soll | nichts tun — Meldung „unverändert — übersprungen", keine Sicherung |
+| Inhalt ≠ Soll | Konflikt: `install` bricht ab, bevor eine Datei geändert wurde |
+| Inhalt ≠ Soll, `--force-overwrite` | schreiben, vorher Sicherung in die zentrale Ablage |
+
+Die Sammel-Prüfung (Ablauf-Schritt 6) meldet alle Konflikte eines Laufs gesammelt — Pfad, Modul, Grund; Dateiinhalte oder Unterschiede werden nie ausgegeben. Ob eine Abweichung von einer Hand-Änderung oder einer geänderten Konfiguration stammt, unterscheidet der Installer nicht — beides erfordert die Freigabe, die je Lauf gilt.
+
+Sicherungen liegen zentral unter `/var/backup/secure-base/<JJJJ-MM-TT-HHMMSS>/` (ein Verzeichnis je Lauf, nur angelegt, wenn tatsächlich gesichert wird), darin die Originale unter ihrem vollen Pfad. Je Datei und Lauf entsteht höchstens eine Sicherung; das gilt auch für Dateien, die der Installer nur zeilenweise ändert (`main.cf`, `sshd_config`, …) — sie werden vor der ersten Änderung eines Laufs einmal zentral gesichert, die einzelnen Zeilen-Aktionen legen keine `.bak` mehr neben die Datei. Überschrieben wird nur nach nachweislich erfolgreicher Sicherung. Dateien mit Geheimniswert (restic-Passphrase, `sasl_passwd`) werden nie in die Ablage kopiert; bei Freigabe wird ihre alte Fassung ersatzlos verworfen, mit Hinweis in der Meldung.
+
+Intern nutzt die Sammel-Prüfung die Modul-Betriebsart `preflight` (rein lesend); `check` meldet zusätzlich je verwalteter Datei, ob sie dem Soll entspricht, fehlt oder abweicht.
 
 ## 7. Bedienoberfläche
 

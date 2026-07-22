@@ -50,6 +50,8 @@ def _make_module(
     mod.operation = "install"
     mod.fqdn = "srv001.example.com"
     mod.admin_mail = "admin@example.com"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     return mod, conn
 
 

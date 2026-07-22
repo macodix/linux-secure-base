@@ -15,6 +15,11 @@ from secure_base.module_spec import ModuleSpec
 
 logger = logging.getLogger(__name__)
 
+# Vom Installer je Lauf vergebene Werte (siehe module_config): keine
+# persistenten Konfigurationswerte, werden nie dialogisch abgefragt —
+# gleiche Behandlung wie "operation".
+_RUNTIME_KEYS = ("force_overwrite", "backup_run_dir")
+
 # Paket-Root, drei Verzeichnisebenen über dieser Datei (analog installer.py),
 # und die mitgelieferte Vorlage als Rückfall, wenn keine Beispieldatei neben
 # der Zieldatei liegt.
@@ -61,7 +66,7 @@ def _required_keys(specs: list[ModuleSpec]) -> set[str]:
     """
     required: set[str] = set()
     for spec in specs:
-        skip = {"operation", *spec.optional_keys}
+        skip = {"operation", *_RUNTIME_KEYS, *spec.optional_keys}
         required.update(k for k in spec.module_cls.CONFIG if k not in skip)
     return required
 
@@ -202,21 +207,34 @@ def ensure_config(path: Path) -> Config | None:
     return config
 
 
-def module_config(config: Config, spec: ModuleSpec, operation: str) -> Config:
+def module_config(
+    config: Config,
+    spec: ModuleSpec,
+    operation: str,
+    runtime: dict[str, str] | None = None,
+) -> Config:
     """Stellt die Konfiguration für ein Modul zusammen.
 
     Nimmt aus der flachen Zuordnung genau die in der Modul-CONFIG genannten
-    Schlüssel und ergänzt die Betriebsart.
+    Schlüssel und ergänzt die Betriebsart sowie Laufzeitwerte des Installers.
 
     Args:
         config: Vollständige geladene Konfiguration.
         spec: Registratureintrag des Moduls.
-        operation: "install" oder "check".
+        operation: Betriebsart ("install", "check", …).
+        runtime: Vom Installer je Lauf vergebene Werte (z. B.
+            force_overwrite, backup_run_dir); sie überschreiben keine
+            Werte aus der Konfigurationsdatei — die Schlüssel existieren
+            dort nicht — und werden nur wirksam, wenn die Modul-CONFIG
+            sie deklariert.
 
     Returns:
-        Config-Objekt mit den Modulwerten und dem Schlüssel "operation".
+        Config-Objekt mit den Modulwerten, der Betriebsart und den
+        deklarierten Laufzeitwerten.
     """
     flat = _flatten(config.to_dict())
+    if runtime:
+        flat = {**flat, **runtime}
     keys = [k for k in spec.module_cls.CONFIG if k != "operation"]
     data = {k: flat[k] for k in keys if k in flat}
     data["operation"] = operation

@@ -13,7 +13,8 @@ import pwd
 import re
 import socket
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from functools import partial
 from pathlib import Path
 from typing import ClassVar
 
@@ -26,10 +27,18 @@ from pifos.actions.permissions_action import PermissionsAction
 from pifos.actions.symlink_action import SymlinkAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
+
+# Ein Installationsschritt ist eine parameterlose Funktion mit Rückgabewert
+# (gleiches Muster wie secure_base.modules.logging/monit): pifos-Aktionen
+# laufen über _act (Wrapper um run_action), Schreibziele direkt über
+# write_managed/backup_before_edit, die den Schritt bereits vollständig
+# ausführen (Plan installer-drift-schutz Kap. 2.4/2.7).
+_Step = Callable[[], int]
 
 # Domainname: Labels aus a-z, 0-9 und Bindestrich, nicht am Rand;
 # mindestens zwei Labels (FQDN, kein einzelnes Label).
@@ -50,7 +59,9 @@ _DOCROOT_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 # erkennt darüber die eigenen Server-Blöcke, unabhängig von nginx_vhosts
 # (Original: do_uninstall läuft auch ohne optional-conf).
 _OWN_FILE_MARKER = "Von secure-base/nginx angelegt"
-_OWN_FILE_MARKER_LINE = f"# {_OWN_FILE_MARKER} (wird bei erneutem Installer-Lauf überschrieben).\n"
+_OWN_FILE_MARKER_LINE = (
+    f"# {_OWN_FILE_MARKER} (wird bei erneutem Installer-Lauf überschrieben).\n"
+)
 
 
 def _http_block_content(domain: str, docroot: str) -> str:
@@ -88,7 +99,7 @@ def _hardening_content() -> str:
     )
 
 
-class Nginx(Module):
+class Nginx(ManagedWriteMixin, Module):
     """Richtet nginx mit Let's-Encrypt-Zertifikaten je Domain ein."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -97,6 +108,8 @@ class Nginx(Module):
         "nginx_certbot_mail",
         "nginx_vhosts",
         "nginx_certbot_mode",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py):
@@ -175,6 +188,8 @@ class Nginx(Module):
         if self.operation == "uninstall":
             return self._uninstall()
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("nginx")
         if self.operation == "check":
             return self._verify()
         if self.operation == "test":
@@ -328,7 +343,48 @@ class Nginx(Module):
             if len(label) > 63:
                 raise ModuleError(f"nginx: DNS-Label zu lang in {domain!r}: {label!r}")
 
+    # --- Verwaltete Schreibziele (Drift-Schutz) -----------------------------
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert vhost-Dateien und systemd-Hardening als verwaltete Ziele.
+
+        Setzt eine vorherige _validate() voraus (_vhosts). certbot erweitert
+        eine vhost-Datei später um den 443-Block und den HTTP→HTTPS-
+        Redirect; ab dann weicht die Datei vom hier deklarierten
+        Port-80-Sollinhalt ab — gewollt (Modul-Docstring, Plan
+        installer-drift-schutz): der Schutz greift, Überschreiben nur mit
+        --force-overwrite.
+
+        Returns:
+            Schreibziele mit Soll-Inhalt.
+        """
+        files = [
+            ManagedFile(
+                dst=str(Path(self.SITES_AVAILABLE) / domain),
+                content=_http_block_content(domain, docroot),
+                mode=0o644,
+            )
+            for domain, docroot in self._vhosts
+        ]
+        files.append(
+            ManagedFile(
+                dst=self.HARDENING_DROPIN, content=_hardening_content(), mode=0o644
+            )
+        )
+        return files
+
     # --- Installation ------------------------------------------------------
+
+    def _act(self, action: Action) -> _Step:
+        """Baut eine Schritt-Funktion, die eine Aktion über run_action ausführt.
+
+        Args:
+            action: Auszuführende Aktion.
+
+        Returns:
+            Parameterlose Funktion mit dem Rückgabewert von run_action.
+        """
+        return partial(self.run_action, action)
 
     def _install(self) -> int:
         """Richtet nginx, die vhosts und die Zertifikate ein.
@@ -336,17 +392,17 @@ class Nginx(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        for label, action in self._pre_certbot_steps():
-            if self._step(label, action) != 0:
+        for label, step in self._pre_certbot_steps():
+            if self._step(label, step) != 0:
                 return 1
         if self._run_certbot() != 0:
             return 1
-        for label, action in self._post_certbot_steps():
-            if self._step(label, action) != 0:
+        for label, step in self._post_certbot_steps():
+            if self._step(label, step) != 0:
                 return 1
         return 0
 
-    def _pre_certbot_steps(self) -> Iterator[tuple[str, Action]]:
+    def _pre_certbot_steps(self) -> Iterator[tuple[str, _Step]]:
         """Liefert die Schritte bis einschließlich der Freigabe von 443/tcp.
 
         Als Generator, damit die Existenzprüfung der Distributions-
@@ -354,71 +410,89 @@ class Nginx(Module):
         vorhergehenden Paketinstallation, nicht beim Aufbau der Liste.
 
         Yields:
-            (Label, Aktion)-Paare in Ausführungsreihenfolge.
+            (Label, Schritt-Funktion)-Paare in Ausführungsreihenfolge.
         """
         yield (
             "Pakete installieren",
-            self.APT_ACTION_CLS(packages=list(self.PACKAGES)),
+            self._act(self.APT_ACTION_CLS(packages=list(self.PACKAGES))),
         )
 
         default_site = Path(self.SITES_ENABLED) / "default"
         if default_site.is_symlink() or default_site.exists():
             yield (
                 "Distributions-Standardseite entfernen",
-                DeleteFileAction(path=str(default_site), safe_mode=False),
+                self._act(DeleteFileAction(path=str(default_site), safe_mode=False)),
             )
 
+        # nginx.conf gehört dem System (Paket-Update-Ziel) und wird nur
+        # zeilenweise geändert — Sicherung zentral vor der Änderung statt
+        # per LineInFileAction-eigenem safe_mode (Plan installer-drift-
+        # schutz Kap. 2.7).
+        yield (
+            "nginx.conf vor Änderung sichern",
+            partial(self.backup_before_edit, "nginx", self.NGINX_CONF),
+        )
         yield (
             "Versionsanzeige deaktivieren",
-            LineInFileAction(
-                path=self.NGINX_CONF,
-                line="    server_tokens off;",
-                match=r"^\s*server_tokens\b",
+            self._act(
+                LineInFileAction(
+                    path=self.NGINX_CONF,
+                    line="    server_tokens off;",
+                    match=r"^\s*server_tokens\b",
+                    safe_mode=False,
+                )
             ),
         )
 
         for domain, docroot in self._vhosts:
             yield (
                 f"Docroot anlegen ({domain})",
-                MakeDirAction(path=docroot, mode=0o755, parents=True),
+                self._act(MakeDirAction(path=docroot, mode=0o755, parents=True)),
             )
             yield (
                 f"Docroot-Eigentümer setzen ({domain})",
-                PermissionsAction(
-                    path=docroot, owner=self.DOCROOT_OWNER, group=self.DOCROOT_GROUP
+                self._act(
+                    PermissionsAction(
+                        path=docroot,
+                        owner=self.DOCROOT_OWNER,
+                        group=self.DOCROOT_GROUP,
+                    )
                 ),
             )
             site_file = str(Path(self.SITES_AVAILABLE) / domain)
+            vhost_mf = ManagedFile(
+                dst=site_file,
+                content=_http_block_content(domain, docroot),
+                mode=0o644,
+            )
             yield (
                 f"vhost schreiben ({domain})",
-                WriteFileAction(
-                    dst=site_file,
-                    content=_http_block_content(domain, docroot),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
+                partial(self.write_managed, "nginx", vhost_mf),
             )
             yield (
                 f"vhost aktivieren ({domain})",
-                SymlinkAction(
-                    link_path=str(Path(self.SITES_ENABLED) / domain),
-                    target=site_file,
-                    overwrite=True,
+                self._act(
+                    SymlinkAction(
+                        link_path=str(Path(self.SITES_ENABLED) / domain),
+                        target=site_file,
+                        overwrite=True,
+                    )
                 ),
             )
 
         yield (
             "nginx-Konfiguration prüfen",
-            SysCmdAction([self.NGINX_BIN, "-t"], timeout=30),
+            self._act(SysCmdAction([self.NGINX_BIN, "-t"], timeout=30)),
         )
         yield (
             "nginx neu laden",
-            self.SYSTEMD_ACTION_CLS(operation="reload", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="reload", unit="nginx", timeout=60)
+            ),
         )
         yield (
             "Firewall 443/tcp öffnen",
-            SysCmdAction([self.UFW_BIN, "allow", "443/tcp"], timeout=30),
+            self._act(SysCmdAction([self.UFW_BIN, "allow", "443/tcp"], timeout=30)),
         )
 
     def _run_certbot(self) -> int:
@@ -435,7 +509,7 @@ class Nginx(Module):
         if (
             self._step(
                 "Firewall 80/tcp temporär öffnen (certbot)",
-                SysCmdAction([self.UFW_BIN, "allow", "80/tcp"], timeout=30),
+                self._act(SysCmdAction([self.UFW_BIN, "allow", "80/tcp"], timeout=30)),
             )
             != 0
         ):
@@ -457,7 +531,7 @@ class Nginx(Module):
                 if (
                     self._step(
                         f"certbot für {domain}",
-                        SysCmdAction(command, timeout=self.CERTBOT_TIMEOUT),
+                        self._act(SysCmdAction(command, timeout=self.CERTBOT_TIMEOUT)),
                     )
                     != 0
                 ):
@@ -466,75 +540,85 @@ class Nginx(Module):
         finally:
             self._step(
                 "Firewall 80/tcp schließen",
-                SysCmdAction([self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30),
+                self._act(
+                    SysCmdAction(
+                        [self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30
+                    )
+                ),
             )
 
-    def _post_certbot_steps(self) -> Iterator[tuple[str, Action]]:
+    def _post_certbot_steps(self) -> Iterator[tuple[str, _Step]]:
         """Liefert die Schritte nach dem Zertifikatsbezug.
 
         Yields:
-            (Label, Aktion)-Paare in Ausführungsreihenfolge.
+            (Label, Schritt-Funktion)-Paare in Ausführungsreihenfolge.
         """
         yield (
             "nginx-Konfiguration nach certbot prüfen",
-            SysCmdAction([self.NGINX_BIN, "-t"], timeout=30),
+            self._act(SysCmdAction([self.NGINX_BIN, "-t"], timeout=30)),
         )
         yield (
             "nginx neu laden (nach certbot)",
-            self.SYSTEMD_ACTION_CLS(operation="reload", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="reload", unit="nginx", timeout=60)
+            ),
         )
         yield (
             "systemd-Hardening-Verzeichnis anlegen",
-            MakeDirAction(
-                path=str(Path(self.HARDENING_DROPIN).parent),
-                mode=0o755,
-                parents=True,
+            self._act(
+                MakeDirAction(
+                    path=str(Path(self.HARDENING_DROPIN).parent),
+                    mode=0o755,
+                    parents=True,
+                )
             ),
+        )
+        hardening_mf = ManagedFile(
+            dst=self.HARDENING_DROPIN, content=_hardening_content(), mode=0o644
         )
         yield (
             "systemd-Hardening schreiben",
-            WriteFileAction(
-                dst=self.HARDENING_DROPIN,
-                content=_hardening_content(),
-                mode=0o644,
-                overwrite=True,
-                safe_mode=False,
-            ),
+            partial(self.write_managed, "nginx", hardening_mf),
         )
         yield (
             "systemd neu laden",
-            self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60),
+            self._act(self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60)),
         )
         yield (
             "nginx neu starten",
-            self.SYSTEMD_ACTION_CLS(operation="restart", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="restart", unit="nginx", timeout=60)
+            ),
         )
         yield (
             "nginx aktivieren",
-            self.SYSTEMD_ACTION_CLS(operation="enable", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="enable", unit="nginx", timeout=60)
+            ),
         )
         if not Path(self.AA_PROFILE).exists():
             yield (
                 "AppArmor-Profil erzeugen",
-                SysCmdAction([self.AA_AUTODEP_BIN, "nginx"], timeout=60),
+                self._act(SysCmdAction([self.AA_AUTODEP_BIN, "nginx"], timeout=60)),
             )
         yield (
             "AppArmor-Profil auf complain setzen",
-            SysCmdAction([self.AA_COMPLAIN_BIN, "nginx"], timeout=30),
+            self._act(SysCmdAction([self.AA_COMPLAIN_BIN, "nginx"], timeout=30)),
         )
 
-    def _step(self, label: str, action: Action) -> int:
+    def _step(self, label: str, step: _Step) -> int:
         """Führt einen einzelnen Installationsschritt aus und meldet ihn.
 
         Args:
             label: Beschreibung für die Meldung.
-            action: Auszuführende Aktion.
+            step: Auszuführende Schritt-Funktion (_act/write_managed/
+                backup_before_edit — meldet bereits selbst).
 
         Returns:
             0 bei Erfolg, 1 bei Fehlschlag.
         """
         self.send_message(LogLevel.INFO, "nginx", label)
-        if self.run_action(action) != 0:
+        if step() != 0:
             self.send_message(LogLevel.ERROR, "nginx", f"fehlgeschlagen: {label}")
             return 1
         return 0
@@ -559,12 +643,12 @@ class Nginx(Module):
                 LogLevel.INFO, "nginx", "Paket nginx nicht installiert — nichts zu tun"
             )
             return 0
-        for label, action in self._uninstall_steps():
-            if self._step(label, action) != 0:
+        for label, step in self._uninstall_steps():
+            if self._step(label, step) != 0:
                 return 1
         return 0
 
-    def _uninstall_steps(self) -> Iterator[tuple[str, Action]]:
+    def _uninstall_steps(self) -> Iterator[tuple[str, _Step]]:
         """Liefert die Rückbau-Schritte in Ausführungsreihenfolge.
 
         Als Generator, damit die Existenzprüfungen (Hardening-Drop-in,
@@ -572,46 +656,69 @@ class Nginx(Module):
         ausgewertet werden, analog zu _pre_certbot_steps.
 
         Yields:
-            (Label, Aktion)-Paare in Ausführungsreihenfolge.
+            (Label, Schritt-Funktion)-Paare in Ausführungsreihenfolge.
         """
         if self._ufw_rule_present(80):
             yield (
                 "Firewall 80/tcp zurücknehmen",
-                SysCmdAction([self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30),
+                self._act(
+                    SysCmdAction(
+                        [self.UFW_BIN, "delete", "allow", "80/tcp"], timeout=30
+                    )
+                ),
             )
         if self._ufw_rule_present(443):
             yield (
                 "Firewall 443/tcp zurücknehmen",
-                SysCmdAction([self.UFW_BIN, "delete", "allow", "443/tcp"], timeout=30),
+                self._act(
+                    SysCmdAction(
+                        [self.UFW_BIN, "delete", "allow", "443/tcp"], timeout=30
+                    )
+                ),
             )
 
         yield (
             "nginx stoppen",
-            self.SYSTEMD_ACTION_CLS(operation="stop", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="stop", unit="nginx", timeout=60)
+            ),
         )
         yield (
             "nginx deaktivieren",
-            self.SYSTEMD_ACTION_CLS(operation="disable", unit="nginx", timeout=60),
+            self._act(
+                self.SYSTEMD_ACTION_CLS(operation="disable", unit="nginx", timeout=60)
+            ),
         )
 
         if Path(self.HARDENING_DROPIN).exists():
             yield (
                 "systemd-Hardening-Drop-in entfernen",
-                DeleteFileAction(path=self.HARDENING_DROPIN, safe_mode=False),
+                self._act(
+                    DeleteFileAction(path=self.HARDENING_DROPIN, safe_mode=False)
+                ),
             )
             yield (
                 "systemd neu laden",
-                self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60),
+                self._act(
+                    self.SYSTEMD_ACTION_CLS(operation="daemon-reload", timeout=60)
+                ),
             )
 
         if Path(self.NGINX_CONF).exists():
             yield (
+                "nginx.conf vor Änderung sichern",
+                partial(self.backup_before_edit, "nginx", self.NGINX_CONF),
+            )
+            yield (
                 "server_tokens-Einstellung entfernen",
-                LineInFileAction(
-                    path=self.NGINX_CONF,
-                    line="    server_tokens off;",
-                    match=r"^\s*server_tokens\b",
-                    state="absent",
+                self._act(
+                    LineInFileAction(
+                        path=self.NGINX_CONF,
+                        line="    server_tokens off;",
+                        match=r"^\s*server_tokens\b",
+                        state="absent",
+                        safe_mode=False,
+                    )
                 ),
             )
 
@@ -620,12 +727,16 @@ class Nginx(Module):
             if enabled_link.exists() or enabled_link.is_symlink():
                 yield (
                     f"vhost-Symlink entfernen ({name})",
-                    DeleteFileAction(path=str(enabled_link), safe_mode=False),
+                    self._act(
+                        DeleteFileAction(path=str(enabled_link), safe_mode=False)
+                    ),
                 )
             yield (
                 f"Server-Block entfernen ({name})",
-                DeleteFileAction(
-                    path=str(Path(self.SITES_AVAILABLE) / name), safe_mode=False
+                self._act(
+                    DeleteFileAction(
+                        path=str(Path(self.SITES_AVAILABLE) / name), safe_mode=False
+                    )
                 ),
             )
 
@@ -633,8 +744,11 @@ class Nginx(Module):
             if Path(self.APPARMOR_PARSER_BIN).exists():
                 yield (
                     "AppArmor-Profil entladen",
-                    SysCmdAction(
-                        [self.APPARMOR_PARSER_BIN, "-R", self.AA_PROFILE], timeout=30
+                    self._act(
+                        SysCmdAction(
+                            [self.APPARMOR_PARSER_BIN, "-R", self.AA_PROFILE],
+                            timeout=30,
+                        )
                     ),
                 )
             else:
@@ -646,7 +760,7 @@ class Nginx(Module):
                 )
             yield (
                 "AppArmor-Profil-Datei entfernen",
-                DeleteFileAction(path=self.AA_PROFILE, safe_mode=False),
+                self._act(DeleteFileAction(path=self.AA_PROFILE, safe_mode=False)),
             )
 
         self.send_message(
@@ -657,7 +771,11 @@ class Nginx(Module):
         )
         yield (
             "Pakete entfernen",
-            self.APT_ACTION_CLS(packages=list(self.UNINSTALL_PACKAGES), state="absent"),
+            self._act(
+                self.APT_ACTION_CLS(
+                    packages=list(self.UNINSTALL_PACKAGES), state="absent"
+                )
+            ),
         )
 
     def _nginx_package_installed(self) -> bool:
@@ -838,6 +956,12 @@ class Nginx(Module):
         for domain, docroot in self._vhosts:
             ok &= self._check_vhost(domain, docroot)
         ok &= self._check_firewall()
+        # Inhaltsabgleich der vhost-Dateien und des Hardening-Drop-ins über
+        # den Drift-Schutz-Helfer; nach einem certbot-Lauf weicht eine
+        # vhost-Datei erwartungsgemäß vom Port-80-Sollinhalt ab (siehe
+        # _managed_files) — Rechte/Eigentümer des Drop-ins bleiben eine
+        # eigene Prüfung.
+        ok &= self.check_managed("nginx")
         ok &= self._check_hardening_dropin()
         ok &= self._check_apparmor()
         return 0 if ok else 1

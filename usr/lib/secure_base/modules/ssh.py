@@ -23,10 +23,11 @@ from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.line_in_file_action import LineInFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 # Gruppe, deren Mitgliedschaft AllowGroups in sshd_config voraussetzt und
 # gegen die die Aussperr-Schutz-Prüfung main_user abgleicht. Fest
@@ -117,7 +118,8 @@ def _login_mail_script_content(admin_mail: str) -> str:
     """
     return (
         "#!/bin/sh\n"
-        "# Von secure-base/ssh verwaltet (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/ssh verwaltet (wird bei erneutem Installer-Lauf"
+        " überschrieben).\n"
         "# Aufruf über pam_exec (session open_session) als root.\n"
         'if [ "$PAM_TYPE" = "open_session" ]; then\n'
         f'    ADMINMAIL="{admin_mail}"\n'
@@ -166,7 +168,7 @@ def _parse_sshd_t(output: str) -> dict[str, str]:
     return result
 
 
-class Ssh(Module):
+class Ssh(ManagedWriteMixin, Module):
     """SSH-Härtung mit TOTP-PAM und optionalem Login-Mail-Hook."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -175,6 +177,8 @@ class Ssh(Module):
         "main_user",
         "ssh_enable_login_mail",
         "ssh_enable_challenge_response_auth",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py):
@@ -220,6 +224,8 @@ class Ssh(Module):
                 der Ja/Nein-Schalter.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("ssh")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -408,8 +414,15 @@ class Ssh(Module):
         Returns:
             True bei Erfolg, sonst False.
         """
+        if self.backup_before_edit("ssh", self.SSHD_CONFIG) != 0:
+            return False
         action = LineInFileAction(
-            path=self.SSHD_CONFIG, line=f"{key} {value}", match=_setting_match(key)
+            path=self.SSHD_CONFIG,
+            line=f"{key} {value}",
+            match=_setting_match(key),
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         if self.run_action(action) != 0:
             self.send_message(LogLevel.ERROR, "ssh", f"sshd_config: {key} setzen")
@@ -425,8 +438,16 @@ class Ssh(Module):
         Returns:
             True bei Erfolg, sonst False.
         """
+        if self.backup_before_edit("ssh", self.SSHD_CONFIG) != 0:
+            return False
         action = LineInFileAction(
-            path=self.SSHD_CONFIG, line="", match=_setting_match(key), state="absent"
+            path=self.SSHD_CONFIG,
+            line="",
+            match=_setting_match(key),
+            state="absent",
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         if self.run_action(action) != 0:
             self.send_message(LogLevel.ERROR, "ssh", f"sshd_config: {key} entfernen")
@@ -443,10 +464,15 @@ class Ssh(Module):
         Returns:
             0, wenn keine aktive Bypass-Zeile mehr vorhanden ist, sonst 1.
         """
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
+            return 1
         action = LineInFileAction(
             path=self.PAM_SSHD,
             line="# @include common-auth",
             match=r"^\s*#?\s*@include\s+common-auth\s*$",
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         if self.run_action(action) != 0:
             return 1
@@ -478,8 +504,15 @@ class Ssh(Module):
         Returns:
             0 bei Erfolg, 1 bei Fehler.
         """
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
+            return 1
         action = BlockInFileAction(
-            path=self.PAM_SSHD, block=_pam_ga_block(), marker=PAM_GA_MARKER
+            path=self.PAM_SSHD,
+            block=_pam_ga_block(),
+            marker=PAM_GA_MARKER,
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         return self.run_action(action)
 
@@ -496,21 +529,35 @@ class Ssh(Module):
                 "Login-Mail-Hook übersprungen (ssh_enable_login_mail=no)",
             )
             return 0
-        write_action = WriteFileAction(
-            dst=self.LOGIN_MAIL_SCRIPT,
-            content=_login_mail_script_content(self.admin_mail),
-            mode=0o700,
-            overwrite=True,
-            safe_mode=False,
-        )
-        if self.run_action(write_action) != 0:
+        if self.write_managed("ssh", self._managed_files()[0]) != 0:
+            return 1
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
             return 1
         block_action = BlockInFileAction(
             path=self.PAM_SSHD,
             block=_login_mail_pam_block(self.LOGIN_MAIL_SCRIPT),
             marker=LOGIN_MAIL_MARKER,
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         return self.run_action(block_action)
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert das Login-Mail-Skript als verwaltetes Ziel.
+
+        Leer, wenn der Hook abgeschaltet ist (ssh_enable_login_mail=no) —
+        das Skript ist dann kein Schreibziel dieses Laufs.
+        """
+        if self.ssh_enable_login_mail == "no":
+            return []
+        return [
+            ManagedFile(
+                dst=self.LOGIN_MAIL_SCRIPT,
+                content=_login_mail_script_content(self.admin_mail),
+                mode=0o700,
+            )
+        ]
 
     def _step_validate_and_reload(self) -> int:
         """Validiert sshd_config und lädt den Dienst neu (reload, kein restart).
@@ -572,8 +619,16 @@ class Ssh(Module):
         Returns:
             0 bei Erfolg, 1 bei Fehler.
         """
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
+            return 1
         action = BlockInFileAction(
-            path=self.PAM_SSHD, block="", marker=LOGIN_MAIL_MARKER, state="absent"
+            path=self.PAM_SSHD,
+            block="",
+            marker=LOGIN_MAIL_MARKER,
+            state="absent",
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         if self.run_action(action) != 0:
             self.send_message(LogLevel.ERROR, "ssh", "Login-Mail-PAM-Zeile entfernen")
@@ -611,8 +666,16 @@ class Ssh(Module):
         Returns:
             0 bei Erfolg, 1 bei Fehler.
         """
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
+            return 1
         action = BlockInFileAction(
-            path=self.PAM_SSHD, block="", marker=PAM_GA_MARKER, state="absent"
+            path=self.PAM_SSHD,
+            block="",
+            marker=PAM_GA_MARKER,
+            state="absent",
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         return self.run_action(action)
 
@@ -626,10 +689,15 @@ class Ssh(Module):
         Returns:
             0, wenn die Zeile danach aktiv vorhanden ist, sonst 1.
         """
+        if self.backup_before_edit("ssh", self.PAM_SSHD) != 0:
+            return 1
         action = LineInFileAction(
             path=self.PAM_SSHD,
             line="@include common-auth",
             match=r"^\s*#?\s*@include\s+common-auth\s*$",
+            # Die Sicherung übernimmt der Installer zentral (backup_before_edit
+            # oben) — keine .bak neben der Datei.
+            safe_mode=False,
         )
         if self.run_action(action) != 0:
             return 1
@@ -699,6 +767,7 @@ class Ssh(Module):
         if self.ssh_enable_login_mail != "no":
             ok &= self._check_login_mail_script()
             ok &= self._check_login_mail_pam_line()
+        ok &= self.check_managed("ssh")
         return 0 if ok else 1
 
     def _check_sshd_settings(self) -> bool:

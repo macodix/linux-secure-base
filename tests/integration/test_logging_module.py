@@ -105,6 +105,8 @@ def _make_module(
     mod.admin_mail = "admin@example.com"
     mod.journald_max_use = "1G"
     mod.journald_max_retention = "3month"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     return mod, conn
 
 
@@ -279,6 +281,47 @@ def test_check_reports_mismatch(
     assert any(
         "journald Storage" in str(m) and "nicht gesetzt" in str(m) for m in messages
     )
+
+
+# --- Drift-Schutz (verwaltete Dateien) ---
+
+
+def test_install_second_run_skips_unchanged_managed_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Änderung überspringt die verwalteten Dateien."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    before = Path(Logging.LOGROTATE_CONF).stat().st_mtime_ns
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    assert Path(Logging.LOGROTATE_CONF).stat().st_mtime_ns == before
+    messages = _sent_messages(conn)
+    assert f"{Logging.LOGROTATE_CONF}: unverändert — übersprungen" in messages
+    assert f"{Logging.AUDIT_RULES_FILE}: unverändert — übersprungen" in messages
+
+
+def test_install_conflict_without_force_blocks_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine von Hand geänderte verwaltete Datei bleibt ohne Freigabe unangetastet."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(Logging.LOGROTATE_CONF).write_text("von hand geändert\n", encoding="utf-8")
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 1
+    assert (
+        Path(Logging.LOGROTATE_CONF).read_text(encoding="utf-8")
+        == "von hand geändert\n"
+    )
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: logrotate-Konfig schreiben" in messages
 
 
 def _make_fake_dpkg(tmp_path: Path, installed: bool) -> str:

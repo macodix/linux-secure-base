@@ -19,6 +19,8 @@ def _make_fail2ban(ignoreip: str = "") -> Fail2ban:
     mod = Fail2ban(conn=MagicMock(), loglevel=LogLevel.INFO)
     mod.operation = "install"
     mod.ignoreip = ignoreip
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -34,8 +36,13 @@ def _make_executable(tmp_path: Path, content: str) -> str:
 
 
 def test_fail2ban_config_declares_operation_ignoreip() -> None:
-    """CONFIG nennt genau operation und ignoreip in dieser Reihenfolge."""
-    assert Fail2ban.CONFIG == ["operation", "ignoreip"]
+    """CONFIG nennt operation, ignoreip und die Drift-Schutz-Schlüssel."""
+    assert Fail2ban.CONFIG == [
+        "operation",
+        "ignoreip",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
 
 # --- _parse_ignoreip / _effective_ignoreip ---

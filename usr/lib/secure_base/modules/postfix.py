@@ -16,6 +16,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, ClassVar
@@ -34,6 +35,9 @@ from pifos.ipc import LogLevel
 from pifos.module import Module
 
 from secure_base import mail_check
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
+
+_Step = Callable[[], int]
 
 # fqdn und relay_host: nur [A-Za-z0-9.-], wie im Bash-Original — beide Werte
 # gehen in Kommandos (debconf, postconf-Direktiven) und main.cf-Inhalte.
@@ -202,7 +206,7 @@ class _SendMailAction(Action):
         return self.status
 
 
-class Postfix(Module):
+class Postfix(ManagedWriteMixin, Module):
     """Postfix als Satellite gegen einen externen SMTP-Smarthost."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -213,6 +217,8 @@ class Postfix(Module):
         "relay_port",
         "relay_user",
         "relay_password",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     PACKAGES: ClassVar[tuple[str, ...]] = (
@@ -285,6 +291,8 @@ class Postfix(Module):
             ModuleError: Bei ungültigen Konfigurationswerten.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("postfix")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -374,118 +382,105 @@ class Postfix(Module):
         fd, debconf_path = tempfile.mkstemp(prefix="secure-base-postfix-debconf-")
         os.close(fd)
         try:
-            steps: list[tuple[str, Action]] = [
+            steps: list[tuple[str, _Step]] = [
                 (
                     "debconf-Selections schreiben",
-                    WriteFileAction(
-                        dst=debconf_path,
-                        content=_debconf_content(self.fqdn),
-                        mode=0o600,
-                        safe_mode=False,
+                    lambda: self.run_action(
+                        WriteFileAction(
+                            dst=debconf_path,
+                            content=_debconf_content(self.fqdn),
+                            mode=0o600,
+                            safe_mode=False,
+                        )
                     ),
                 ),
                 (
                     "debconf-Antworten setzen",
-                    SysCmdAction(
-                        command=[self.DEBCONF_SET_SELECTIONS, debconf_path],
-                        timeout=30,
+                    lambda: self.run_action(
+                        SysCmdAction(
+                            command=[self.DEBCONF_SET_SELECTIONS, debconf_path],
+                            timeout=30,
+                        )
                     ),
                 ),
                 (
                     "Pakete installieren",
-                    self.APT_ACTION_CLS(packages=list(self.PACKAGES)),
+                    lambda: self.run_action(
+                        self.APT_ACTION_CLS(packages=list(self.PACKAGES))
+                    ),
                 ),
             ]
             for key, value in self._main_cf_settings():
                 steps.append(
-                    (
-                        f"main.cf {key} setzen",
-                        LineInFileAction(
-                            path=self.MAIN_CF,
-                            line=f"{key} = {value}",
-                            match=rf"^{re.escape(key)}\s*=",
-                        ),
-                    )
+                    (f"main.cf {key} setzen", self._make_main_cf_step(key, value))
                 )
             steps += [
-                (
-                    "sasl_passwd schreiben",
-                    WriteFileAction(
-                        dst=self.SASL_PASSWD,
-                        content=_sasl_passwd_content(
-                            self.relay_host,
-                            self.relay_port,
-                            self.relay_user,
-                            self.relay_password,
-                        ),
-                        mode=0o600,
-                        overwrite=True,
-                        # kein safe_mode: eine .bak-Sicherung würde die
-                        # Relay-Zugangsdaten im Klartext duplizieren.
-                        safe_mode=False,
-                    ),
-                ),
+                ("sasl_passwd schreiben", self._step_write_sasl_passwd),
                 (
                     "sasl_passwd-Map bauen",
-                    SysCmdAction(
-                        command=[self.POSTMAP_BIN, self.SASL_PASSWD], timeout=30
+                    lambda: self.run_action(
+                        SysCmdAction(
+                            command=[self.POSTMAP_BIN, self.SASL_PASSWD], timeout=30
+                        )
                     ),
                 ),
                 (
                     "sasl_passwd.db-Rechte setzen",
-                    PermissionsAction(path=f"{self.SASL_PASSWD}.db", mode=0o600),
-                ),
-                (
-                    "recipient_canonical schreiben",
-                    WriteFileAction(
-                        dst=self.RECIPIENT_CANONICAL,
-                        content=_recipient_canonical_content(self.admin_mail),
-                        mode=0o644,
-                        overwrite=True,
-                        safe_mode=False,
+                    lambda: self.run_action(
+                        PermissionsAction(path=f"{self.SASL_PASSWD}.db", mode=0o600)
                     ),
                 ),
                 (
+                    "recipient_canonical schreiben",
+                    self._step_write_recipient_canonical,
+                ),
+                (
                     "recipient_canonical-Map bauen",
-                    SysCmdAction(
-                        command=[self.POSTMAP_BIN, self.RECIPIENT_CANONICAL],
-                        timeout=30,
+                    lambda: self.run_action(
+                        SysCmdAction(
+                            command=[self.POSTMAP_BIN, self.RECIPIENT_CANONICAL],
+                            timeout=30,
+                        )
                     ),
                 ),
                 (
                     "/etc/aliases: root-Weiterleitung setzen",
-                    BlockInFileAction(
-                        path=self.ALIASES,
-                        block=_aliases_block_content(self.admin_mail),
-                        marker=_ALIASES_MARKER,
-                    ),
+                    self._step_aliases_block,
                 ),
                 (
                     "aliases-Datenbank aktualisieren",
-                    SysCmdAction(command=[self.NEWALIASES_BIN], timeout=30),
+                    lambda: self.run_action(
+                        SysCmdAction(command=[self.NEWALIASES_BIN], timeout=30)
+                    ),
                 ),
                 (
                     "postfix aktivieren",
-                    self.SYSTEMD_ACTION_CLS(
-                        operation="enable", unit="postfix", timeout=60
+                    lambda: self.run_action(
+                        self.SYSTEMD_ACTION_CLS(
+                            operation="enable", unit="postfix", timeout=60
+                        )
                     ),
                 ),
                 (
                     "postfix starten",
-                    self.SYSTEMD_ACTION_CLS(
-                        operation="start", unit="postfix", timeout=60
+                    lambda: self.run_action(
+                        self.SYSTEMD_ACTION_CLS(
+                            operation="start", unit="postfix", timeout=60
+                        )
                     ),
                 ),
                 (
                     "postfix neu laden",
-                    self.SYSTEMD_ACTION_CLS(
-                        operation="reload", unit="postfix", timeout=60
+                    lambda: self.run_action(
+                        self.SYSTEMD_ACTION_CLS(
+                            operation="reload", unit="postfix", timeout=60
+                        )
                     ),
                 ),
             ]
-            for label, action in steps:
+            for label, step in steps:
                 self.send_message(LogLevel.INFO, "postfix", label)
-                if self.run_action(action) != 0:
+                if step() != 0:
                     self.send_message(
                         LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}"
                     )
@@ -499,6 +494,97 @@ class Postfix(Module):
         finally:
             Path(debconf_path).unlink(missing_ok=True)
 
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert sasl_passwd und recipient_canonical als verwaltete Ziele.
+
+        sasl_passwd enthält das Relay-Passwort im Klartext (secret=True) —
+        bei einer Freigabe wird die alte Fassung nie in die
+        Sicherungsablage kopiert.
+        """
+        return [
+            ManagedFile(
+                dst=self.SASL_PASSWD,
+                content=_sasl_passwd_content(
+                    self.relay_host,
+                    self.relay_port,
+                    self.relay_user,
+                    self.relay_password,
+                ),
+                mode=0o600,
+                secret=True,
+            ),
+            ManagedFile(
+                dst=self.RECIPIENT_CANONICAL,
+                content=_recipient_canonical_content(self.admin_mail),
+                mode=0o644,
+            ),
+        ]
+
+    def _step_write_sasl_passwd(self) -> int:
+        """Schreibt sasl_passwd (Relay-Zugangsdaten, Geheimniswert, 0600)."""
+        return self.write_managed("postfix", self._managed_files()[0])
+
+    def _step_write_recipient_canonical(self) -> int:
+        """Schreibt recipient_canonical (vollständig eigene Datei, 0644)."""
+        return self.write_managed("postfix", self._managed_files()[1])
+
+    def _make_main_cf_step(
+        self, key: str, value: str, *, state: str = "present"
+    ) -> _Step:
+        """Baut einen main.cf-Direktiven-Schritt mit zentraler Sicherung.
+
+        Sichert main.cf zentral vor der ersten Änderung im Lauf (je Datei
+        und Lauf höchstens eine Sicherung, backup_before_edit ist
+        idempotent) und setzt die Aktion auf safe_mode=False — vermeidet
+        die .bak-Kaskade wiederholter Läufe.
+
+        Args:
+            key: main.cf-Schlüssel.
+            value: Sollwert.
+            state: "present" setzt die Direktive, "absent" entfernt sie.
+
+        Returns:
+            Ausführbarer Schritt, 0 bei Erfolg.
+        """
+
+        def step() -> int:
+            if self.backup_before_edit("postfix", self.MAIN_CF) != 0:
+                return 1
+            return self.run_action(
+                LineInFileAction(
+                    path=self.MAIN_CF,
+                    line=f"{key} = {value}",
+                    match=rf"^{re.escape(key)}\s*=",
+                    state=state,
+                    safe_mode=False,
+                )
+            )
+
+        return step
+
+    def _step_aliases_block(self, *, state: str = "present") -> int:
+        """Setzt oder entfernt den root-Weiterleitungsblock in /etc/aliases.
+
+        Sichert /etc/aliases zentral vor der ersten Änderung im Lauf.
+
+        Args:
+            state: "present" setzt den Block, "absent" entfernt ihn.
+
+        Returns:
+            0 bei Erfolg, 1 bei Sicherungs- oder Aktionsfehler.
+        """
+        if self.backup_before_edit("postfix", self.ALIASES) != 0:
+            return 1
+        return self.run_action(
+            BlockInFileAction(
+                path=self.ALIASES,
+                block=_aliases_block_content(self.admin_mail),
+                marker=_ALIASES_MARKER,
+                state=state,
+                safe_mode=False,
+            )
+        )
+
     def _uninstall(self) -> int:
         """Nimmt genau die eigenen Änderungen der install-Betriebsart zurück.
 
@@ -510,15 +596,21 @@ class Postfix(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
             (
                 "postfix stoppen",
-                self.SYSTEMD_ACTION_CLS(operation="stop", unit="postfix", timeout=60),
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="stop", unit="postfix", timeout=60
+                    )
+                ),
             ),
             (
                 "postfix deaktivieren",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="disable", unit="postfix", timeout=60
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="disable", unit="postfix", timeout=60
+                    )
                 ),
             ),
         ]
@@ -533,21 +625,17 @@ class Postfix(Module):
                 True,
             ),
         ):
-            step = self._delete_step(path, label, safe_mode=safe_mode)
-            if step is not None:
-                steps.append(step)
+            delete_step = self._delete_step(path, label, safe_mode=safe_mode)
+            if delete_step is not None:
+                delete_label, action = delete_step
+                steps.append((delete_label, self._action_step(action)))
 
         if Path(self.MAIN_CF).exists():
             for key, value in self._main_cf_settings():
                 steps.append(
                     (
                         f"main.cf {key} zurücknehmen",
-                        LineInFileAction(
-                            path=self.MAIN_CF,
-                            line=f"{key} = {value}",
-                            match=rf"^{re.escape(key)}\s*=",
-                            state="absent",
-                        ),
+                        self._make_main_cf_step(key, value, state="absent"),
                     )
                 )
         else:
@@ -557,18 +645,15 @@ class Postfix(Module):
             steps.append(
                 (
                     "/etc/aliases: root-Weiterleitung zurücknehmen",
-                    BlockInFileAction(
-                        path=self.ALIASES,
-                        block=_aliases_block_content(self.admin_mail),
-                        marker=_ALIASES_MARKER,
-                        state="absent",
-                    ),
+                    lambda: self._step_aliases_block(state="absent"),
                 )
             )
             steps.append(
                 (
                     "aliases-Datenbank aktualisieren",
-                    SysCmdAction(command=[self.NEWALIASES_BIN], timeout=30),
+                    lambda: self.run_action(
+                        SysCmdAction(command=[self.NEWALIASES_BIN], timeout=30)
+                    ),
                 )
             )
         else:
@@ -579,15 +664,17 @@ class Postfix(Module):
         steps.append(
             (
                 "Pakete entfernen",
-                self.APT_ACTION_CLS(
-                    packages=list(self.UNINSTALL_PACKAGES), state="absent"
+                lambda: self.run_action(
+                    self.APT_ACTION_CLS(
+                        packages=list(self.UNINSTALL_PACKAGES), state="absent"
+                    )
                 ),
             )
         )
 
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "postfix", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(LogLevel.ERROR, "postfix", f"fehlgeschlagen: {label}")
                 return 1
         return 0
@@ -613,6 +700,17 @@ class Postfix(Module):
             self.send_message(LogLevel.INFO, "postfix", f"{label}: bereits entfernt")
             return None
         return label, DeleteFileAction(path=path, safe_mode=safe_mode)
+
+    def _action_step(self, action: Action) -> _Step:
+        """Baut einen Schritt, der die gegebene Aktion ausführt.
+
+        Args:
+            action: Auszuführende Aktion.
+
+        Returns:
+            Ausführbarer Schritt, 0 bei Erfolg.
+        """
+        return lambda: self.run_action(action)
 
     def _test(self) -> int:
         """Weist die Zustellfähigkeit nach, ohne die Konfiguration zu ändern.
@@ -791,6 +889,7 @@ class Postfix(Module):
         ok &= self._check_file_mode(self.SASL_PASSWD, 0o600, "sasl_passwd-Rechte")
         ok &= self._check_file_exists(self.RECIPIENT_CANONICAL, "recipient_canonical")
         ok &= self._check_aliases_block()
+        ok &= self.check_managed("postfix")
         ok &= self._check_value(
             [self.SYSTEMCTL_BIN, "show", "-p", "UnitFileState", "--value", "postfix"],
             "enabled",

@@ -92,6 +92,8 @@ def _make_module(
     mod.nginx_certbot_mail = ""
     mod.nginx_vhosts = f"example.com|{tmp_path}/wwwroot"
     mod.nginx_certbot_mode = "staging"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     return mod, conn
 
 
@@ -176,6 +178,56 @@ def test_check_reports_mismatch(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("vhost example.com fehlt" in str(m) for m in messages)
+
+
+# --- Drift-Schutz (installer-drift-schutz) ---
+
+
+def test_install_second_run_reports_unchanged_and_writes_nothing_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter, unveränderter install-Lauf überschreibt keine Datei erneut.
+
+    nginx.conf wird beim ersten Lauf zeilenweise geändert (server_tokens off;
+    fehlt anfangs) — die zentrale Sicherung dafür entsteht bereits im ersten
+    Lauf; geprüft wird hier, dass der zweite Lauf keine weitere Sicherung
+    hinzufügt (insbesondere nicht für vhost/Härtung, die unverändert sind).
+    """
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    vhost_file = Path(tmp_path / "sites-available" / "example.com")
+    vhost_mtime = vhost_file.stat().st_mtime_ns
+    hardening_mtime = Path(mod.HARDENING_DROPIN).stat().st_mtime_ns
+    backups_after_first_run = sorted(Path(mod.backup_run_dir).rglob("*"))
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    assert vhost_file.stat().st_mtime_ns == vhost_mtime
+    assert Path(mod.HARDENING_DROPIN).stat().st_mtime_ns == hardening_mtime
+    assert sorted(Path(mod.backup_run_dir).rglob("*")) == backups_after_first_run
+    messages = _sent_messages(conn)
+    assert any("unverändert — übersprungen" in str(m) for m in messages)
+
+
+def test_install_rejects_hand_edited_vhost_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine Hand-Änderung am vhost wird ohne Freigabe nicht überschrieben."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    vhost_file = Path(tmp_path / "sites-available" / "example.com")
+    vhost_file.write_text("von hand geändert\n", encoding="utf-8")
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 1
+    assert vhost_file.read_text(encoding="utf-8") == "von hand geändert\n"
+    messages = _sent_messages(conn)
+    assert any("--force-overwrite" in str(m) for m in messages)
+    assert "vhost aktivieren (example.com)" not in messages
 
 
 # --- Betriebsart uninstall ---

@@ -32,6 +32,8 @@ def _make_restic(
     mod.sftp_path = sftp_path
     mod.restic_passphrase = restic_passphrase
     mod.restic_backup_time = restic_backup_time
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -48,6 +50,8 @@ def test_restic_config_declares_expected_keys_in_order() -> None:
         "sftp_path",
         "restic_passphrase",
         "restic_backup_time",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 

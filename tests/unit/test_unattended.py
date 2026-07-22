@@ -43,6 +43,8 @@ def _make_unattended(
     mod.auto_reboot_time = auto_reboot_time
     mod.apt_daily_time = apt_daily_time
     mod.apt_daily_upgrade_time = apt_daily_upgrade_time
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -58,6 +60,8 @@ def test_unattended_config_declares_all_keys() -> None:
         "auto_reboot_time",
         "apt_daily_time",
         "apt_daily_upgrade_time",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 
@@ -270,32 +274,6 @@ def test_check_command_succeeds_false() -> None:
     assert mod._check_command_succeeds(["/bin/false"], "Testwert") is False
 
 
-# --- _check_file_content ---
-
-
-def test_check_file_content_matches(tmp_path: Path) -> None:
-    """Stimmt der Dateiinhalt mit dem Soll überein, liefert die Prüfung True."""
-    mod = _make_unattended()
-    target = tmp_path / "datei.conf"
-    target.write_text("soll-inhalt\n")
-    assert mod._check_file_content(str(target), "soll-inhalt\n", "Testwert") is True
-
-
-def test_check_file_content_mismatch(tmp_path: Path) -> None:
-    """Weicht der Dateiinhalt vom Soll ab, liefert die Prüfung False."""
-    mod = _make_unattended()
-    target = tmp_path / "datei.conf"
-    target.write_text("ist-inhalt\n")
-    assert mod._check_file_content(str(target), "soll-inhalt\n", "Testwert") is False
-
-
-def test_check_file_content_missing_file_returns_false(tmp_path: Path) -> None:
-    """Fehlt die Datei, liefert die Prüfung False."""
-    mod = _make_unattended()
-    target = tmp_path / "fehlt.conf"
-    assert mod._check_file_content(str(target), "soll-inhalt\n", "Testwert") is False
-
-
 # --- start-Verzweigung (uninstall/test) ---
 
 
@@ -313,6 +291,14 @@ def test_start_dispatches_to_test(monkeypatch: pytest.MonkeyPatch) -> None:
     mod.operation = "test"
     monkeypatch.setattr(mod, "_test", lambda: 43)
     assert mod.start() == 43
+
+
+def test_start_dispatches_to_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation 'preflight' ruft preflight_managed auf."""
+    mod = _make_unattended()
+    mod.operation = "preflight"
+    monkeypatch.setattr(mod, "preflight_managed", lambda name: 44)
+    assert mod.start() == 44
 
 
 # --- _package_installed ---

@@ -3,10 +3,15 @@
 import grp
 import os
 import pwd
+from functools import partial
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pifos.action import Action
+from pifos.actions.make_dir_action import MakeDirAction
+from pifos.actions.permissions_action import PermissionsAction
+from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from secure_base.modules.postgresql import (
@@ -28,6 +33,14 @@ def _write_script(tmp_path: Path, name: str, body: str) -> str:
     return str(script)
 
 
+def _unwrap_action(step: object) -> Action:
+    """Entpackt eine von _act gebaute Schritt-Funktion und liefert die Aktion."""
+    assert isinstance(step, partial)
+    action = step.args[0]
+    assert isinstance(action, Action)
+    return action
+
+
 def _make_module(
     *,
     operation: str = "install",
@@ -39,6 +52,8 @@ def _make_module(
     mod.operation = operation
     mod.timezone = timezone
     mod.pg_dump_time = pg_dump_time
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -62,8 +77,14 @@ def _current_owner() -> tuple[str, str]:
 
 
 def test_config_declares_operation_timezone_and_pg_dump_time() -> None:
-    """CONFIG nennt operation, timezone und pg_dump_time in dieser Reihenfolge."""
-    assert Postgresql.CONFIG == ["operation", "timezone", "pg_dump_time"]
+    """CONFIG nennt operation, timezone, pg_dump_time und die Drift-Schutz-Werte."""
+    assert Postgresql.CONFIG == [
+        "operation",
+        "timezone",
+        "pg_dump_time",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
 
 # --- _validate ---
@@ -379,73 +400,92 @@ def test_install_steps_order_and_targets(tmp_path: Path) -> None:
 
     by_label = dict(steps)
 
+    # Schreibziele laufen über write_managed — die Schritte sind gebundene
+    # Aufrufe, keine WriteFileAction-Objekte mehr; geprüft wird über die
+    # gleichnamigen ManagedFile-Bausteine, die _install_steps intern nutzt.
     write_hardening = by_label["Verbindungs- und Protokolleinstellungen schreiben"]
-    assert write_hardening.dst == str(  # type: ignore[attr-defined]
+    assert callable(write_hardening) and not isinstance(write_hardening, Action)
+    hardening_mf = mod._hardening_managed_file("16", "main")
+    assert hardening_mf.dst == str(
         etc_base / "16" / "main" / "conf.d" / "secure-base-hardening.conf"
     )
-    assert write_hardening.mode == 0o640  # type: ignore[attr-defined]
-    assert write_hardening.content == mod._hardening_conf_content()  # type: ignore[attr-defined]
+    assert hardening_mf.mode == 0o640
+    assert hardening_mf.content == mod._hardening_conf_content()
 
-    chown_hardening = by_label["Eigentümer/Rechte der Härtungs-Konfiguration setzen"]
-    assert chown_hardening.mode == 0o640  # type: ignore[attr-defined]
-    assert chown_hardening.owner == "postgres"  # type: ignore[attr-defined]
-    assert chown_hardening.group == "postgres"  # type: ignore[attr-defined]
+    chown_hardening = _unwrap_action(
+        by_label["Eigentümer/Rechte der Härtungs-Konfiguration setzen"]
+    )
+    assert isinstance(chown_hardening, PermissionsAction)
+    assert chown_hardening.mode == 0o640
+    assert chown_hardening.owner == "postgres"
+    assert chown_hardening.group == "postgres"
 
     write_hba = by_label["pg_hba.conf ersetzen"]
-    assert write_hba.dst == str(etc_base / "16" / "main" / "pg_hba.conf")  # type: ignore[attr-defined]
-    assert write_hba.mode == 0o640  # type: ignore[attr-defined]
-    assert write_hba.content == _pg_hba_content()  # type: ignore[attr-defined]
+    assert callable(write_hba) and not isinstance(write_hba, Action)
+    pg_hba_mf = mod._pg_hba_managed_file("16", "main")
+    assert pg_hba_mf.dst == str(etc_base / "16" / "main" / "pg_hba.conf")
+    assert pg_hba_mf.mode == 0o640
+    assert pg_hba_mf.content == _pg_hba_content()
 
-    chown_hba = by_label["Eigentümer/Rechte von pg_hba.conf setzen"]
-    assert chown_hba.mode == 0o640  # type: ignore[attr-defined]
-    assert chown_hba.owner == "postgres"  # type: ignore[attr-defined]
-    assert chown_hba.group == "postgres"  # type: ignore[attr-defined]
+    chown_hba = _unwrap_action(by_label["Eigentümer/Rechte von pg_hba.conf setzen"])
+    assert isinstance(chown_hba, PermissionsAction)
+    assert chown_hba.mode == 0o640
+    assert chown_hba.owner == "postgres"
+    assert chown_hba.group == "postgres"
 
-    chown_data_dir = by_label["Datenverzeichnis-Rechte setzen"]
-    assert chown_data_dir.mode == 0o700  # type: ignore[attr-defined]
-    assert chown_data_dir.owner == "postgres"  # type: ignore[attr-defined]
-    assert chown_data_dir.group == "postgres"  # type: ignore[attr-defined]
+    chown_data_dir = _unwrap_action(by_label["Datenverzeichnis-Rechte setzen"])
+    assert isinstance(chown_data_dir, PermissionsAction)
+    assert chown_data_dir.mode == 0o700
+    assert chown_data_dir.owner == "postgres"
+    assert chown_data_dir.group == "postgres"
 
-    enable_step = by_label["Dienst aktivieren"]
-    assert enable_step.operation == "enable"  # type: ignore[attr-defined]
-    assert enable_step.unit == "postgresql@16-main"  # type: ignore[attr-defined]
+    enable_step = _unwrap_action(by_label["Dienst aktivieren"])
+    assert isinstance(enable_step, SystemdServiceAction)
+    assert enable_step.operation == "enable"
+    assert enable_step.unit == "postgresql@16-main"
 
-    restart_step = by_label["Dienst neu starten"]
-    assert restart_step.operation == "restart"  # type: ignore[attr-defined]
-    assert restart_step.unit == "postgresql@16-main"  # type: ignore[attr-defined]
+    restart_step = _unwrap_action(by_label["Dienst neu starten"])
+    assert isinstance(restart_step, SystemdServiceAction)
+    assert restart_step.operation == "restart"
+    assert restart_step.unit == "postgresql@16-main"
 
-    mkdir_backup_base = by_label["Sicherungsverzeichnis anlegen"]
-    assert mkdir_backup_base.path == mod.BACKUP_BASE_DIR  # type: ignore[attr-defined]
-    assert mkdir_backup_base.mode == 0o700  # type: ignore[attr-defined]
+    mkdir_backup_base = _unwrap_action(by_label["Sicherungsverzeichnis anlegen"])
+    assert isinstance(mkdir_backup_base, MakeDirAction)
+    assert mkdir_backup_base.path == mod.BACKUP_BASE_DIR
+    assert mkdir_backup_base.mode == 0o700
 
-    chown_backup_base = by_label["Sicherungsverzeichnis-Rechte setzen"]
-    assert chown_backup_base.path == mod.BACKUP_BASE_DIR  # type: ignore[attr-defined]
-    assert chown_backup_base.mode == 0o700  # type: ignore[attr-defined]
-    assert chown_backup_base.owner == "root"  # type: ignore[attr-defined]
-    assert chown_backup_base.group == "root"  # type: ignore[attr-defined]
+    chown_backup_base = _unwrap_action(by_label["Sicherungsverzeichnis-Rechte setzen"])
+    assert isinstance(chown_backup_base, PermissionsAction)
+    assert chown_backup_base.path == mod.BACKUP_BASE_DIR
+    assert chown_backup_base.mode == 0o700
+    assert chown_backup_base.owner == "root"
+    assert chown_backup_base.group == "root"
 
-    mkdir_dump_dir = by_label["Dump-Zielverzeichnis anlegen"]
-    assert mkdir_dump_dir.path == mod.DUMP_DIR  # type: ignore[attr-defined]
-    assert mkdir_dump_dir.mode == 0o700  # type: ignore[attr-defined]
+    mkdir_dump_dir = _unwrap_action(by_label["Dump-Zielverzeichnis anlegen"])
+    assert isinstance(mkdir_dump_dir, MakeDirAction)
+    assert mkdir_dump_dir.path == mod.DUMP_DIR
+    assert mkdir_dump_dir.mode == 0o700
 
-    chown_dump_dir = by_label["Dump-Zielverzeichnis-Rechte setzen"]
-    assert chown_dump_dir.path == mod.DUMP_DIR  # type: ignore[attr-defined]
-    assert chown_dump_dir.mode == 0o700  # type: ignore[attr-defined]
-    assert chown_dump_dir.owner == "root"  # type: ignore[attr-defined]
-    assert chown_dump_dir.group == "root"  # type: ignore[attr-defined]
+    chown_dump_dir = _unwrap_action(by_label["Dump-Zielverzeichnis-Rechte setzen"])
+    assert isinstance(chown_dump_dir, PermissionsAction)
+    assert chown_dump_dir.path == mod.DUMP_DIR
+    assert chown_dump_dir.mode == 0o700
+    assert chown_dump_dir.owner == "root"
+    assert chown_dump_dir.group == "root"
 
     write_dump_script = by_label["Dump-Skript schreiben"]
-    assert write_dump_script.dst == mod.DUMP_SCRIPT_PATH  # type: ignore[attr-defined]
-    assert write_dump_script.mode == 0o700  # type: ignore[attr-defined]
-    assert (
-        write_dump_script.content  # type: ignore[attr-defined]
-        == mod._build_dump_script_content()
-    )
+    assert callable(write_dump_script) and not isinstance(write_dump_script, Action)
+    dump_script_mf = mod._dump_script_managed_file()
+    assert dump_script_mf.dst == mod.DUMP_SCRIPT_PATH
+    assert dump_script_mf.mode == 0o700
+    assert dump_script_mf.content == mod._build_dump_script_content()
 
     write_dump_cron = by_label["Dump-Cron-Datei schreiben"]
-    assert write_dump_cron.dst == mod.DUMP_CRON_PATH  # type: ignore[attr-defined]
-    assert write_dump_cron.mode == 0o644  # type: ignore[attr-defined]
-    assert write_dump_cron.content == mod._build_dump_cron_content()  # type: ignore[attr-defined]
+    assert callable(write_dump_cron) and not isinstance(write_dump_cron, Action)
+    dump_cron_mf = mod._dump_cron_managed_file()
+    assert dump_cron_mf.dst == mod.DUMP_CRON_PATH
+    assert dump_cron_mf.mode == 0o644
+    assert dump_cron_mf.content == mod._build_dump_cron_content()
 
 
 def test_install_steps_raises_when_no_cluster_after_apt(tmp_path: Path) -> None:

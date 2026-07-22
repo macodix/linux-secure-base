@@ -190,3 +190,42 @@ def test_test_operation_reports_success_without_changes(
     assert any("Kein eigenständiger Funktionstest" in str(m) for m in messages)
     # test greift nicht in Dateien ein — die sysctl-Konfiguration bleibt bestehen.
     assert Path(mod.SYSCTL_CONF).exists()
+
+
+# --- Drift-Schutz ---
+
+
+def test_install_second_run_without_change_writes_nothing_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Abweichung schreibt keine der Dateien neu."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any(
+        f"{mod.SYSCTL_CONF}: unverändert — übersprungen" in str(m) for m in messages
+    )
+    assert any(
+        f"{mod.MODPROBE_CONF}: unverändert — übersprungen" in str(m) for m in messages
+    )
+
+
+def test_install_rejects_manually_changed_sysctl_conf_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine von Hand geänderte sysctl-Datei bricht install ohne Freigabe ab."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(mod.SYSCTL_CONF).write_text("# von Hand geändert\n", encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any(f"{mod.SYSCTL_CONF} weicht vom Soll ab" in str(m) for m in messages)
+    assert Path(mod.SYSCTL_CONF).read_text(encoding="utf-8") == "# von Hand geändert\n"

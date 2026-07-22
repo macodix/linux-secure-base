@@ -67,6 +67,8 @@ def _make_logging(
     mod.admin_mail = admin_mail
     mod.journald_max_use = journald_max_use
     mod.journald_max_retention = journald_max_retention
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -81,7 +83,17 @@ def test_logging_config_declares_expected_keys() -> None:
         "admin_mail",
         "journald_max_use",
         "journald_max_retention",
+        "force_overwrite",
+        "backup_run_dir",
     ]
+
+
+def test_start_dispatches_to_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation 'preflight' ruft preflight_managed auf."""
+    mod = _make_logging()
+    mod.operation = "preflight"
+    monkeypatch.setattr(mod, "preflight_managed", lambda name: 44)
+    assert mod.start() == 44
 
 
 # --- _validate ---

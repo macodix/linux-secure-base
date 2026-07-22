@@ -14,6 +14,8 @@ def _make_lynis(schedule: str) -> Lynis:
     mod = Lynis(conn=MagicMock(), loglevel=LogLevel.INFO)
     mod.operation = "install"
     mod.lynis_schedule = schedule
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -21,8 +23,13 @@ def _make_lynis(schedule: str) -> Lynis:
 
 
 def test_lynis_config_declares_operation_and_schedule() -> None:
-    """CONFIG nennt genau operation und lynis_schedule in dieser Reihenfolge."""
-    assert Lynis.CONFIG == ["operation", "lynis_schedule"]
+    """CONFIG nennt operation, lynis_schedule und die Drift-Schutz-Schlüssel."""
+    assert Lynis.CONFIG == [
+        "operation",
+        "lynis_schedule",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
 
 # --- _validate ---

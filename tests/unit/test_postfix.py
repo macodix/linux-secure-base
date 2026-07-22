@@ -53,6 +53,8 @@ def _make_postfix(
     mod.relay_port = relay_port
     mod.relay_user = relay_user
     mod.relay_password = relay_password
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -75,6 +77,8 @@ def test_postfix_config_declares_all_keys_in_order() -> None:
         "relay_port",
         "relay_user",
         "relay_password",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 
@@ -744,6 +748,7 @@ def _prepare_uninstall_fixture(
     """Baut ein Postfix-Modul mit vollständig „installierten“ eigenen Dateien."""
     mod = _make_postfix()
     mod.operation = "uninstall"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     main_cf = _write_main_cf(tmp_path, mod)
     aliases = _write_aliases(tmp_path, mod.admin_mail)
     sasl_passwd = tmp_path / "sasl_passwd"

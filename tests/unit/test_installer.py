@@ -14,6 +14,7 @@ from pifos.config.config import Config
 from pifos.errors import ConfigError, ModuleError
 from pifos.ipc import IpcMessage, LogLevel, MessageKind
 from secure_base.installer import LsbInstaller, _send_install_report, main
+from secure_base.managed_write import ManagedWriteMixin
 from secure_base.module_spec import ModuleSpec
 from secure_base.ui import StatusView
 
@@ -108,6 +109,7 @@ def _base_args(**overrides: object) -> argparse.Namespace:
         "modules": [],
         "command": "install",
         "dry_run": False,
+        "force_overwrite": False,
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -295,7 +297,9 @@ def test_main_runs_selected_modules_and_returns_0(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -314,7 +318,9 @@ def test_main_returns_1_when_a_module_fails(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -336,7 +342,9 @@ def test_main_install_aborts_after_first_failed_module(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -360,7 +368,9 @@ def test_main_check_continues_after_failed_module(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -385,7 +395,9 @@ def test_main_install_offers_ufw_enable_after_success(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
     monkeypatch.setattr(
@@ -409,7 +421,9 @@ def test_main_check_never_offers_ufw_enable(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
     monkeypatch.setattr(
@@ -474,7 +488,9 @@ def test_main_install_sends_report_with_results_and_skipped(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
     monkeypatch.setattr(
@@ -499,7 +515,9 @@ def test_main_check_sends_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
     monkeypatch.setattr(
@@ -527,7 +545,9 @@ def test_main_uninstall_runs_in_reverse_order_and_aborts(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -554,7 +574,9 @@ def test_main_test_continues_after_failure_and_needs_no_root(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -589,7 +611,9 @@ def test_main_check_without_root_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
 
@@ -614,7 +638,9 @@ def test_main_dry_run_skips_modules_and_report(
     monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
     monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: specs)
     monkeypatch.setattr(
-        installer_module, "module_config", lambda cfg, spec, op: MagicMock()
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
     )
     monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
     monkeypatch.setattr(
@@ -812,3 +838,148 @@ def test_main_returns_2_and_logs_when_configure_logging_raises_configerror(
 
     assert result == 2
     assert "Konfiguration ungültig" in caplog.text
+
+
+# --- _run_preflight (Sammel-Prüfung) ---
+
+
+class _ManagedDummy(ManagedWriteMixin, _DummyModuleCls):
+    """Dummy-Modul mit Drift-Schutz für die Sammel-Prüfung."""
+
+
+class _FakePreflightCaller:
+    """Nachbau des Aufrufers: liefert vorbereitete Modul-Antworten."""
+
+    def __init__(self, messages: list[IpcMessage]) -> None:
+        self._messages = list(messages)
+        self.logged: list[str] = []
+
+    def start_module(self, module_cls: object, config: object) -> object:
+        return MagicMock()
+
+    def send_command(self, handle: object, command: str) -> None:
+        return None
+
+    def receive_result(self, handle: object) -> IpcMessage:
+        return self._messages.pop(0)
+
+    def terminate_module(self, handle: object) -> None:
+        return None
+
+    def check_module_exit(self, handle: object) -> None:
+        return None
+
+    def write_log(self, text: str, level: LogLevel) -> None:
+        self.logged.append(text)
+
+
+def _preflight_spec() -> ModuleSpec:
+    """Spec eines Moduls mit Drift-Schutz."""
+    return ModuleSpec("dummy", "Dummy", _ManagedDummy, optional=False)  # type: ignore[arg-type]
+
+
+def test_run_preflight_passes_without_conflicts() -> None:
+    """Ergebnis 0 des Moduls lässt den Lauf zu."""
+    caller = _FakePreflightCaller(
+        [IpcMessage(kind=MessageKind.RESULT, level=None, name="r", payload=0)]
+    )
+    ok = installer_module._run_preflight(
+        caller,  # type: ignore[arg-type]
+        [_preflight_spec()],
+        MagicMock(),
+        {
+            "force_overwrite": "no",
+            "backup_run_dir": "/var/backup/secure-base/test-lauf",
+        },
+    )
+    assert ok is True
+
+
+def test_run_preflight_collects_conflicts_and_blocks() -> None:
+    """Konflikt-Meldungen werden geloggt, Ergebnis 1 blockiert den Lauf."""
+    caller = _FakePreflightCaller(
+        [
+            IpcMessage(
+                kind=MessageKind.LOG,
+                level=LogLevel.ERROR,
+                name="dummy",
+                payload="/etc/x weicht vom Soll ab",
+            ),
+            IpcMessage(kind=MessageKind.RESULT, level=None, name="r", payload=1),
+        ]
+    )
+    ok = installer_module._run_preflight(
+        caller,  # type: ignore[arg-type]
+        [_preflight_spec()],
+        MagicMock(),
+        {
+            "force_overwrite": "no",
+            "backup_run_dir": "/var/backup/secure-base/test-lauf",
+        },
+    )
+    assert ok is False
+    assert any("weicht vom Soll ab" in line for line in caller.logged)
+
+
+def test_run_preflight_skips_modules_without_managed_targets() -> None:
+    """Module ohne Drift-Schutz werden nicht gestartet."""
+    caller = _FakePreflightCaller([])
+    spec = ModuleSpec("plain", "Plain", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    ok = installer_module._run_preflight(
+        caller,  # type: ignore[arg-type]
+        [spec],
+        MagicMock(),
+        {},
+    )
+    assert ok is True
+
+
+def test_main_install_aborts_when_preflight_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Konflikte in der Sammel-Prüfung brechen install vor jedem Modul ab."""
+    _StubInstaller.fail_names = set()
+    spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
+    monkeypatch.setattr(
+        installer_module,
+        "module_config",
+        lambda cfg, spec, op, runtime=None: MagicMock(),
+    )
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+    monkeypatch.setattr(
+        installer_module, "_run_preflight", lambda caller, specs, cfg, rt: False
+    )
+
+    result = main(_base_args())
+
+    assert result == 1
+    assert _StubInstaller.last_instance is not None
+    assert _StubInstaller.last_instance.run_calls == []
+
+
+def test_main_install_builds_runtime_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install reicht Freigabe-Schalter und Lauf-Verzeichnis an die Module durch."""
+    _StubInstaller.fail_names = set()
+    captured: dict[str, str] = {}
+
+    def _fake_mc(
+        cfg: object, spec: object, op: str, runtime: dict[str, str] | None = None
+    ) -> MagicMock:
+        captured.update(runtime or {})
+        return MagicMock()
+
+    spec = ModuleSpec("base", "Grundkonfiguration", _DummyModuleCls, optional=False)  # type: ignore[arg-type]
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    monkeypatch.setattr(installer_module, "ensure_config", lambda path: MagicMock())
+    monkeypatch.setattr(installer_module, "select_modules", lambda named, cfg: [spec])
+    monkeypatch.setattr(installer_module, "module_config", _fake_mc)
+    monkeypatch.setattr(installer_module, "LsbInstaller", _StubInstaller)
+
+    assert main(_base_args(force_overwrite=True)) == 0
+    assert captured["force_overwrite"] == "yes"
+    assert captured["backup_run_dir"].startswith("/var/backup/secure-base/")

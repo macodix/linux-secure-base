@@ -82,6 +82,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trockenlauf: Module nur auflisten, nichts ausführen.",
     )
+    parser.add_argument(
+        "--force-overwrite",
+        action="store_true",
+        help=(
+            "Nur für install: vom Soll abweichende, vom Installer "
+            "verwaltete Dateien überschreiben (mit zentraler Sicherung); "
+            "ohne diese Freigabe bricht install bei Abweichungen ab."
+        ),
+    )
     return parser
 
 

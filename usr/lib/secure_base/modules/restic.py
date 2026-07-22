@@ -31,6 +31,8 @@ from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
 
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
+
 # Rechnername: gleiches Muster wie secure_base.modules.base — anchored, kein
 # Whitespace/Metazeichen, da fqdn in Dateipfade und Skriptinhalt eingeht.
 _HOSTNAME_RE = re.compile(
@@ -150,7 +152,8 @@ def _cron_content(backup_script: str, hhmm: str) -> str:
     minute, hour = _cron_fields(hhmm)
     return (
         f"# Datensicherung (restic) - täglich um {hhmm}\n"
-        "# Von secure-base/restic angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/restic angelegt"
+        " (wird bei erneutem Installer-Lauf überschrieben).\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         f"{minute} {hour} * * *  root  {backup_script}\n"
     )
@@ -198,7 +201,7 @@ def _mkdir_batch_commands(path: str) -> list[str]:
     return commands
 
 
-class Restic(Module):
+class Restic(ManagedWriteMixin, Module):
     """Datensicherung mit restic auf ein externes SFTP-Ziel."""
 
     CONFIG: ClassVar[list[str]] = [
@@ -209,6 +212,8 @@ class Restic(Module):
         "sftp_path",
         "restic_passphrase",
         "restic_backup_time",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
     # Programmpfade und Schreibziele als Klassenattribute (wie Modul base):
@@ -285,6 +290,8 @@ class Restic(Module):
             ModuleError: Bei ungültigen Konfigurationswerten.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("restic")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -546,39 +553,43 @@ class Restic(Module):
             )
         )
 
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert Backup-Skript und Cron-Datei als verwaltete Ziele.
+
+        Nicht enthalten: die Passphrase-Datei (eigene Sonderbehandlung,
+        overwrite=False plus Reparaturfall) und die Sentinel-Datei (immer
+        leer, ihre Information ist der Änderungszeitpunkt).
+        """
+        return [
+            ManagedFile(
+                dst=self._backup_script_path(),
+                content=_backup_script_content(
+                    repo=self._repo_url(),
+                    admin_mail=self.admin_mail,
+                    fqdn=self.fqdn,
+                    passphrase_file=self.PASSPHRASE_FILE,
+                    backup_paths=self.BACKUP_PATHS,
+                    sentinel_dir=self.SENTINEL_DIR,
+                    sentinel_file=self.SENTINEL_FILE,
+                ),
+                mode=0o700,
+            ),
+            ManagedFile(
+                dst=self._cron_file_path(),
+                content=_cron_content(
+                    self._backup_script_path(), self.restic_backup_time
+                ),
+                mode=0o644,
+            ),
+        ]
+
     def _step_write_backup_script(self) -> int:
         """Schreibt das Backup-Skript (vollständig eigene Datei, 0700)."""
-        content = _backup_script_content(
-            repo=self._repo_url(),
-            admin_mail=self.admin_mail,
-            fqdn=self.fqdn,
-            passphrase_file=self.PASSPHRASE_FILE,
-            backup_paths=self.BACKUP_PATHS,
-            sentinel_dir=self.SENTINEL_DIR,
-            sentinel_file=self.SENTINEL_FILE,
-        )
-        return self.run_action(
-            WriteFileAction(
-                dst=self._backup_script_path(),
-                content=content,
-                mode=0o700,
-                overwrite=True,
-                safe_mode=False,
-            )
-        )
+        return self.write_managed("restic", self._managed_files()[0])
 
     def _step_write_cron(self) -> int:
         """Schreibt die Cron-Datei (vollständig eigene Datei, 0644)."""
-        content = _cron_content(self._backup_script_path(), self.restic_backup_time)
-        return self.run_action(
-            WriteFileAction(
-                dst=self._cron_file_path(),
-                content=content,
-                mode=0o644,
-                overwrite=True,
-                safe_mode=False,
-            )
-        )
+        return self.write_managed("restic", self._managed_files()[1])
 
     def _step_write_sentinel(self) -> int:
         """Legt das Sentinel-Verzeichnis an und aktualisiert die Baseline-Datei."""
@@ -773,6 +784,7 @@ class Restic(Module):
         ok &= self._check_file_mode(self.PASSPHRASE_FILE, 0o600, "Passphrase-Datei")
         ok &= self._check_file_mode(self._backup_script_path(), 0o700, "Backup-Skript")
         ok &= self._check_file_mode(self._cron_file_path(), 0o644, "Cron-Datei")
+        ok &= self.check_managed("restic")
         ok &= self._check_command_succeeds(
             [
                 self.RESTIC_BIN,

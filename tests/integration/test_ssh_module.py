@@ -128,6 +128,8 @@ def _make_module(
     mod.main_user = _MAIN_USER
     mod.ssh_enable_login_mail = "yes"
     mod.ssh_enable_challenge_response_auth = "yes"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     return mod, conn, home
 
 
@@ -429,3 +431,48 @@ def test_test_returns_one_on_invalid_config(
     assert result == 1
     messages = _sent_messages(conn)
     assert any("sshd -t fehlgeschlagen" in str(m) for m in messages)
+
+
+# --- Drift-Schutz ---
+
+
+def test_install_second_run_without_change_writes_nothing_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Abweichung schreibt das Login-Mail-Skript
+    nicht erneut."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any(
+        f"{mod.LOGIN_MAIL_SCRIPT}: unverändert — übersprungen" in str(m)
+        for m in messages
+    )
+
+
+def test_install_rejects_manually_changed_login_mail_script_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein von Hand geändertes Login-Mail-Skript bricht install ohne Freigabe ab."""
+    mod, conn, _home = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(mod.LOGIN_MAIL_SCRIPT).write_text(
+        "#!/bin/sh\necho geändert\n", encoding="utf-8"
+    )
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any(
+        f"{mod.LOGIN_MAIL_SCRIPT} weicht vom Soll ab" in str(m) for m in messages
+    )
+    assert (
+        Path(mod.LOGIN_MAIL_SCRIPT).read_text(encoding="utf-8")
+        == "#!/bin/sh\necho geändert\n"
+    )

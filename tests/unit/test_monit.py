@@ -29,6 +29,8 @@ def _make_monit(
     mod.admin_mail = admin_mail
     mod.monit_mail_from = monit_mail_from
     mod.monit_checks = monit_checks
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -42,6 +44,8 @@ def test_monit_config_declares_expected_keys() -> None:
         "admin_mail",
         "monit_mail_from",
         "monit_checks",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 
@@ -95,6 +99,26 @@ def test_parsed_checks_ignores_empty_entries() -> None:
     """Leere Einträge (doppeltes Komma) werden übersprungen."""
     mod = _make_monit(monit_checks="system,,rootfs")
     assert mod._parsed_checks() == ["system", "rootfs"]
+
+
+# --- _managed_files / start-Verzweigung (preflight) ---
+
+
+def test_managed_files_declares_configured_checks_sorted() -> None:
+    """_managed_files deklariert genau die konfigurierten Checks, sortiert."""
+    mod = _make_monit(monit_checks="sshd,cron")
+    files = mod._managed_files()
+    assert [Path(mf.dst).name for mf in files] == ["cron", "sshd"]
+    assert all(mf.content == CHECK_CONTENT[Path(mf.dst).name] for mf in files)
+    assert all(mf.mode == 0o644 for mf in files)
+
+
+def test_start_dispatches_to_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """operation 'preflight' ruft preflight_managed auf."""
+    mod = _make_monit()
+    mod.operation = "preflight"
+    monkeypatch.setattr(mod, "preflight_managed", lambda name: 44)
+    assert mod.start() == 44
 
 
 # --- KNOWN_CHECKS / CHECK_CONTENT ---

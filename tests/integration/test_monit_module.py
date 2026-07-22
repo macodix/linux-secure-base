@@ -80,6 +80,8 @@ def _make_module(
     mod.admin_mail = "admin@example.com"
     mod.monit_mail_from = "monit@example.com"
     mod.monit_checks = "system,rootfs"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     return mod, conn
 
 
@@ -165,6 +167,42 @@ def test_install_twice_writes_no_backup_files_in_confd(
 
     confd_entries = sorted(p.name for p in Path(Monit.CONFD).iterdir())
     assert confd_entries == ["rootfs", "system"]
+
+
+def test_install_second_run_skips_unchanged_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Änderung überspringt die Check-Dateien."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    check_file = Path(Monit.CONFD) / "system"
+    before = check_file.stat().st_mtime_ns
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    assert check_file.stat().st_mtime_ns == before
+    messages = _sent_messages(conn)
+    assert f"{check_file}: unverändert — übersprungen" in messages
+
+
+def test_install_conflict_without_force_blocks_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine von Hand geänderte Check-Datei bleibt ohne Freigabe unangetastet."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    check_file = Path(Monit.CONFD) / "system"
+    check_file.write_text("von hand geändert\n", encoding="utf-8")
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 1
+    assert check_file.read_text(encoding="utf-8") == "von hand geändert\n"
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: Check system schreiben" in messages
 
 
 def test_check_reports_mismatch(

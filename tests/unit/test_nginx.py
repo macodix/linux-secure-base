@@ -35,6 +35,8 @@ def _make_nginx(
     mod.nginx_certbot_mail = nginx_certbot_mail
     mod.nginx_vhosts = nginx_vhosts
     mod.nginx_certbot_mode = nginx_certbot_mode
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -42,13 +44,15 @@ def _make_nginx(
 
 
 def test_nginx_config_declares_expected_keys_in_order() -> None:
-    """CONFIG nennt operation, admin_mail und die nginx_-Schlüssel in Reihenfolge."""
+    """CONFIG nennt operation, admin_mail, nginx_-Schlüssel und Drift-Schutz-Werte."""
     assert Nginx.CONFIG == [
         "operation",
         "admin_mail",
         "nginx_certbot_mail",
         "nginx_vhosts",
         "nginx_certbot_mode",
+        "force_overwrite",
+        "backup_run_dir",
     ]
 
 
@@ -443,10 +447,13 @@ def test_uninstall_stops_at_first_failed_step(monkeypatch: pytest.MonkeyPatch) -
         "_uninstall_steps",
         lambda: iter(
             [
-                ("Schritt 1 (scheitert)", SysCmdAction(["/bin/false"], timeout=5)),
+                (
+                    "Schritt 1 (scheitert)",
+                    mod._act(SysCmdAction(["/bin/false"], timeout=5)),
+                ),
                 (
                     "Schritt 2 (darf nicht laufen)",
-                    SysCmdAction(["/bin/true"], timeout=5),
+                    mod._act(SysCmdAction(["/bin/true"], timeout=5)),
                 ),
             ]
         ),

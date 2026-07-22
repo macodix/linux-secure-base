@@ -22,6 +22,8 @@ def _make_base(
     mod.operation = "install"
     mod.fqdn = fqdn
     mod.timezone = timezone
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = "/var/backup/secure-base/test-lauf"
     return mod
 
 
@@ -37,8 +39,14 @@ def _make_executable(tmp_path: Path, name: str, content: str) -> str:
 
 
 def test_base_config_declares_operation_fqdn_timezone() -> None:
-    """CONFIG nennt genau operation, fqdn und timezone in dieser Reihenfolge."""
-    assert Base.CONFIG == ["operation", "fqdn", "timezone"]
+    """CONFIG nennt operation, fqdn, timezone und die Drift-Schutz-Schlüssel."""
+    assert Base.CONFIG == [
+        "operation",
+        "fqdn",
+        "timezone",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
 
 # --- _validate ---

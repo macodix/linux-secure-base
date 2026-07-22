@@ -6,10 +6,10 @@ und aktiviert den Dienst. Betriebsart über den Schlüssel operation.
 """
 
 import ipaddress
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
-from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.copy_file_action import CopyFileAction
 from pifos.actions.line_in_file_action import LineInFileAction
@@ -18,6 +18,10 @@ from pifos.actions.systemd_service_action import SystemdServiceAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedWriteMixin
+
+_Step = Callable[[], int]
 
 # Loopback-Adressen, die im ignoreip-Wert immer erhalten bleiben.
 IGNOREIP_LOOPBACK: tuple[str, ...] = ("127.0.0.1/8", "::1")
@@ -47,10 +51,15 @@ def _effective_ignoreip(tokens: list[str]) -> str:
     return " ".join([*IGNOREIP_LOOPBACK, *tokens])
 
 
-class Fail2ban(Module):
+class Fail2ban(ManagedWriteMixin, Module):
     """Brute-Force-Schutz für SSH über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "ignoreip"]
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "ignoreip",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
     # Programmpfade und Schreibziele als Klassenattribute statt Literale in
     # den Schritten (siehe Modul base): feste Vorgaben, die eine
@@ -80,6 +89,8 @@ class Fail2ban(Module):
             ModuleError: Bei ungültigem ignoreip-Eintrag.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("fail2ban")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -139,8 +150,11 @@ class Fail2ban(Module):
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
         tokens = _parse_ignoreip(self.ignoreip)
-        steps: list[tuple[str, Action]] = [
-            ("Paket installieren", self.APT_ACTION_CLS(packages=["fail2ban"])),
+        steps: list[tuple[str, _Step]] = [
+            (
+                "Paket installieren",
+                lambda: self.run_action(self.APT_ACTION_CLS(packages=["fail2ban"])),
+            ),
         ]
 
         if Path(self.JAIL_LOCAL).exists():
@@ -154,21 +168,14 @@ class Fail2ban(Module):
             steps.append(
                 (
                     "jail.local anlegen",
-                    CopyFileAction(src=self.JAIL_CONF, dst=self.JAIL_LOCAL),
+                    lambda: self.run_action(
+                        CopyFileAction(src=self.JAIL_CONF, dst=self.JAIL_LOCAL)
+                    ),
                 )
             )
 
         if tokens:
-            steps.append(
-                (
-                    "ignoreip-Whitelist setzen",
-                    LineInFileAction(
-                        path=self.JAIL_LOCAL,
-                        line=f"ignoreip = {_effective_ignoreip(tokens)}",
-                        match=r"^ignoreip\s*=",
-                    ),
-                )
-            )
+            steps.append(("ignoreip-Whitelist setzen", self._step_set_ignoreip(tokens)))
         else:
             self.send_message(
                 LogLevel.INFO,
@@ -179,21 +186,27 @@ class Fail2ban(Module):
         steps.append(
             (
                 "Dienst aktivieren",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="enable", unit="fail2ban", timeout=60
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="enable", unit="fail2ban", timeout=60
+                    )
                 ),
             )
         )
         steps.append(
             (
                 "Dienst starten",
-                self.SYSTEMD_ACTION_CLS(operation="start", unit="fail2ban", timeout=60),
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="start", unit="fail2ban", timeout=60
+                    )
+                ),
             )
         )
 
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "fail2ban", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(
                     LogLevel.ERROR, "fail2ban", f"fehlgeschlagen: {label}"
                 )
@@ -215,6 +228,54 @@ class Fail2ban(Module):
             )
         return 0
 
+    def _step_set_ignoreip(self, tokens: list[str]) -> _Step:
+        """Baut den Schritt zum Setzen der ignoreip-Whitelist in jail.local.
+
+        Sichert jail.local zentral vor der ersten Änderung im Lauf (je
+        Datei und Lauf höchstens eine Sicherung, backup_before_edit ist
+        idempotent) und setzt die Aktion auf safe_mode=False.
+
+        Args:
+            tokens: Zusätzliche IP-/CIDR-Tokens aus der Konfiguration.
+
+        Returns:
+            Ausführbarer Schritt, 0 bei Erfolg.
+        """
+
+        def step() -> int:
+            if self.backup_before_edit("fail2ban", self.JAIL_LOCAL) != 0:
+                return 1
+            return self.run_action(
+                LineInFileAction(
+                    path=self.JAIL_LOCAL,
+                    line=f"ignoreip = {_effective_ignoreip(tokens)}",
+                    match=r"^ignoreip\s*=",
+                    safe_mode=False,
+                )
+            )
+
+        return step
+
+    def _step_revert_ignoreip(self) -> int:
+        """Nimmt den ignoreip-Eingriff in jail.local zurück.
+
+        Sichert jail.local zentral vor der Änderung.
+
+        Returns:
+            0 bei Erfolg, 1 bei Sicherungs- oder Aktionsfehler.
+        """
+        if self.backup_before_edit("fail2ban", self.JAIL_LOCAL) != 0:
+            return 1
+        return self.run_action(
+            LineInFileAction(
+                path=self.JAIL_LOCAL,
+                line="",
+                match=r"^ignoreip\s*=",
+                state="absent",
+                safe_mode=False,
+            )
+        )
+
     def _uninstall(self) -> int:
         """Nimmt die install-Eingriffe zurück und entfernt das Paket.
 
@@ -235,40 +296,38 @@ class Fail2ban(Module):
             )
             return 0
 
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
             (
                 "Dienst stoppen",
-                self.SYSTEMD_ACTION_CLS(operation="stop", unit="fail2ban", timeout=60),
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="stop", unit="fail2ban", timeout=60
+                    )
+                ),
             ),
             (
                 "Dienst deaktivieren",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="disable", unit="fail2ban", timeout=60
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="disable", unit="fail2ban", timeout=60
+                    )
                 ),
             ),
         ]
         if Path(self.JAIL_LOCAL).exists():
-            steps.append(
-                (
-                    "ignoreip-Eingriff zurücknehmen",
-                    LineInFileAction(
-                        path=self.JAIL_LOCAL,
-                        line="",
-                        match=r"^ignoreip\s*=",
-                        state="absent",
-                    ),
-                )
-            )
+            steps.append(("ignoreip-Eingriff zurücknehmen", self._step_revert_ignoreip))
         steps.append(
             (
                 "Paket entfernen",
-                self.APT_ACTION_CLS(packages=["fail2ban"], state="absent"),
+                lambda: self.run_action(
+                    self.APT_ACTION_CLS(packages=["fail2ban"], state="absent")
+                ),
             )
         )
 
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "fail2ban", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(
                     LogLevel.ERROR, "fail2ban", f"fehlgeschlagen: {label}"
                 )

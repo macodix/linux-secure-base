@@ -199,10 +199,16 @@ def test_main_e2e_install_real_module_subprocess(tmp_path: Path) -> None:
 
 
 def test_main_e2e_check_real_module_subprocess(tmp_path: Path) -> None:
-    """main() check, echter base-Subprozess: Rückgabe 0, Logdatei geschrieben."""
+    """main() check nach install, echter base-Subprozess: Rückgabe 0, Logdatei da.
+
+    check läuft nach einem install-Lauf: Seit dem Drift-Schutz meldet check
+    fehlende verwaltete Dateien als Abweichung (Rückgabe 1) — auf einem
+    nie installierten Stand wäre 0 falsch.
+    """
     logfile = tmp_path / "var" / "log" / "secure-base" / "secure-base-installer.log"
     assert not logfile.parent.exists()
     conf_path = _write_example(tmp_path, logfile)
+    assert main(_args(conf_path, "install")) == 0
 
     result = main(_args(conf_path, "check"))
 

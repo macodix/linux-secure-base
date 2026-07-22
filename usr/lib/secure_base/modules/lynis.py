@@ -12,15 +12,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
-from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.make_dir_action import MakeDirAction
 from pifos.actions.sys_cmd_action import SysCmdAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 # Ein Cron-Feld ist ein Wert (Zahl oder *) mit optionalem Bereich (-Zahl)
 # und optionalem Schritt (/Zahl), kommagetrennt wiederholbar.
@@ -47,7 +47,8 @@ def _pruef_script_content(berichte_dir: str) -> str:
     """
     return (
         "#!/bin/bash\n"
-        "# Von secure-base/lynis verwaltet (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/lynis verwaltet (wird bei erneutem Installer-Lauf"
+        " überschrieben).\n"
         "set -euo pipefail\n"
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         "\n"
@@ -94,10 +95,15 @@ def _doc_value(values: dict[str, str], key: str) -> str:
     return values.get(key) or "(leer/Default)"
 
 
-class Lynis(Module):
+class Lynis(ManagedWriteMixin, Module):
     """Härtungsprüfung des Systems über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "lynis_schedule"]
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "lynis_schedule",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
     # Programmpfade und Schreibziele als Klassenattribute (siehe base.py:
     # Testunterklasse ersetzt sie, ohne dieses Modul anzufassen).
@@ -125,6 +131,8 @@ class Lynis(Module):
             ModuleError: Bei ungültigem Cron-Zeitplan.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("lynis")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -190,42 +198,51 @@ class Lynis(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
             (
                 "lynis installieren",
-                self.APT_ACTION_CLS(packages=list(LYNIS_PACKAGES)),
+                lambda: self.run_action(
+                    self.APT_ACTION_CLS(packages=list(LYNIS_PACKAGES))
+                ),
             ),
             (
                 "Berichtsverzeichnis anlegen",
-                MakeDirAction(path=self.BERICHTE_DIR, mode=0o750, parents=True),
-            ),
-            (
-                "Prüfskript schreiben",
-                WriteFileAction(
-                    dst=self.PRUEF_SCRIPT,
-                    content=_pruef_script_content(self.BERICHTE_DIR),
-                    mode=0o700,
-                    overwrite=True,
-                    safe_mode=False,
+                lambda: self.run_action(
+                    MakeDirAction(path=self.BERICHTE_DIR, mode=0o750, parents=True)
                 ),
             ),
-            (
-                "Cron-Eintrag schreiben",
-                WriteFileAction(
-                    dst=self.CRON_FILE,
-                    content=_cron_content(self.lynis_schedule, self.PRUEF_SCRIPT),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
+            ("Prüfskript schreiben", self._step_write_pruef_script),
+            ("Cron-Eintrag schreiben", self._step_write_cron),
         ]
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "lynis", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(LogLevel.ERROR, "lynis", f"fehlgeschlagen: {label}")
                 return 1
         return 0
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert Prüfskript und Cron-Datei als verwaltete Ziele."""
+        return [
+            ManagedFile(
+                dst=self.PRUEF_SCRIPT,
+                content=_pruef_script_content(self.BERICHTE_DIR),
+                mode=0o700,
+            ),
+            ManagedFile(
+                dst=self.CRON_FILE,
+                content=_cron_content(self.lynis_schedule, self.PRUEF_SCRIPT),
+                mode=0o644,
+            ),
+        ]
+
+    def _step_write_pruef_script(self) -> int:
+        """Schreibt das Prüfskript (vollständig eigene Datei, 0700)."""
+        return self.write_managed("lynis", self._managed_files()[0])
+
+    def _step_write_cron(self) -> int:
+        """Schreibt die Cron-Datei (vollständig eigene Datei, 0644)."""
+        return self.write_managed("lynis", self._managed_files()[1])
 
     def _uninstall(self) -> int:
         """Entfernt Cron-Eintrag, Prüfskript und Paket.
@@ -346,16 +363,9 @@ class Lynis(Module):
         ok = True
         ok &= self._check_package_installed()
         ok &= self._check_mode(self.BERICHTE_DIR, 0o750, "Berichtsverzeichnis")
-        ok &= self._check_file_content(
-            self.PRUEF_SCRIPT, _pruef_script_content(self.BERICHTE_DIR), "Prüfskript"
-        )
         ok &= self._check_mode(self.PRUEF_SCRIPT, 0o700, "Prüfskript")
-        ok &= self._check_file_content(
-            self.CRON_FILE,
-            _cron_content(self.lynis_schedule, self.PRUEF_SCRIPT),
-            "Cron-Eintrag",
-        )
         ok &= self._check_mode(self.CRON_FILE, 0o644, "Cron-Eintrag")
+        ok &= self.check_managed("lynis")
         return 0 if ok else 1
 
     def _check_package_installed(self) -> bool:

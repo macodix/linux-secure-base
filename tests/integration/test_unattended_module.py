@@ -92,6 +92,8 @@ def _make_module(
     mod.auto_reboot_time = "23:45"
     mod.apt_daily_time = "23:15"
     mod.apt_daily_upgrade_time = "23:30"
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-lauf")
     return mod, conn
 
 
@@ -148,7 +150,7 @@ def test_check_on_debian_accepts_the_debian_block(
 
     assert result == 0
     messages = _sent_messages(conn)
-    assert "50unattended-upgrades: OK" in messages
+    assert f"{Unattended.UU_CONF}: entspricht dem Soll" in messages
 
 
 def test_check_rejects_the_wrong_distro_block(
@@ -165,7 +167,7 @@ def test_check_rejects_the_wrong_distro_block(
 
     assert result == 1
     messages = _sent_messages(conn)
-    assert "50unattended-upgrades: Inhalt weicht vom Soll ab" in messages
+    assert f"{Unattended.UU_CONF}: weicht vom Soll ab" in messages
 
 
 def test_install_on_unsupported_distro_aborts(
@@ -240,9 +242,7 @@ def test_check_reports_mismatch(
 
     assert result == 1
     messages = _sent_messages(conn)
-    assert any(
-        "50unattended-upgrades" in str(m) and "nicht lesbar" in str(m) for m in messages
-    )
+    assert f"{Unattended.UU_CONF}: fehlt" in messages
 
 
 def test_check_succeeds_after_install(
@@ -256,6 +256,49 @@ def test_check_succeeds_after_install(
     result = mod.start()
 
     assert result == 0
+
+
+# --- Drift-Schutz (verwaltete Dateien) ---
+
+
+def test_install_second_run_skips_unchanged_managed_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Änderung überspringt die vier Schreibziele."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    before = Path(tmp_path / "50unattended-upgrades").stat().st_mtime_ns
+
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    result = mod.start()
+
+    assert result == 0
+    assert Path(tmp_path / "50unattended-upgrades").stat().st_mtime_ns == before
+    messages = _sent_messages(conn)
+    assert f"{Unattended.UU_CONF}: unverändert — übersprungen" in messages
+    assert f"{Unattended.PERIODIC_CONF}: unverändert — übersprungen" in messages
+
+
+def test_install_conflict_without_force_blocks_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine von Hand geänderte verwaltete Datei bleibt ohne Freigabe unangetastet."""
+    mod, _conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(tmp_path / "50unattended-upgrades").write_text(
+        "von hand geändert\n", encoding="utf-8"
+    )
+
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    result = mod.start()
+
+    assert result == 1
+    assert (
+        Path(tmp_path / "50unattended-upgrades").read_text(encoding="utf-8")
+        == "von hand geändert\n"
+    )
+    messages = _sent_messages(conn)
+    assert "fehlgeschlagen: 50unattended-upgrades schreiben" in messages
 
 
 # --- Betriebsart uninstall ---

@@ -11,15 +11,15 @@ from pathlib import Path
 from typing import ClassVar
 from zoneinfo import available_timezones
 
-from pifos.action import Action
 from pifos.actions.apt_action import AptAction
 from pifos.actions.delete_file_action import DeleteFileAction
 from pifos.actions.sys_cmd_action import SysCmdAction
 from pifos.actions.systemd_service_action import SystemdServiceAction
-from pifos.actions.write_file_action import WriteFileAction
 from pifos.errors import ActionError, ModuleError
 from pifos.ipc import LogLevel
 from pifos.module import Module
+
+from secure_base.managed_write import ManagedFile, ManagedWriteMixin
 
 _Step = Callable[[], int]
 
@@ -43,7 +43,8 @@ SYSCTL_PARAMS = (
 def _sysctl_content() -> str:
     """Baut den Inhalt der sysctl-Datei."""
     head = (
-        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf"
+        " überschrieben).\n"
         "# Kernel-Härtung nach konv-system.md Abschnitt 3.9.\n"
     )
     body = "".join(f"{key} = {value}\n" for key, value in SYSCTL_PARAMS)
@@ -53,7 +54,8 @@ def _sysctl_content() -> str:
 def _modprobe_content() -> str:
     """Baut den Inhalt der Kernel-Modul-Sperrliste."""
     return (
-        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf überschrieben).\n"
+        "# Von secure-base/base angelegt (wird bei erneutem Installer-Lauf"
+        " überschrieben).\n"
         "# USB-Storage-Sperre nach konv-system.md Abschnitt 3.1 c.\n"
         "install usb-storage /bin/true\n"
         "blacklist usb-storage\n"
@@ -87,10 +89,16 @@ def _doc_file(path: str, lines: list[str]) -> str:
     return entry
 
 
-class Base(Module):
+class Base(ManagedWriteMixin, Module):
     """Grundkonfiguration des Systems über pifos-Aktionen."""
 
-    CONFIG: ClassVar[list[str]] = ["operation", "fqdn", "timezone"]
+    CONFIG: ClassVar[list[str]] = [
+        "operation",
+        "fqdn",
+        "timezone",
+        "force_overwrite",
+        "backup_run_dir",
+    ]
 
     # Programmpfade und Schreibziele als Klassenattribute statt Literale in
     # den Schritten: feste, sichere Vorgaben, die im Auslieferungsbaum nie
@@ -134,6 +142,8 @@ class Base(Module):
             ModuleError: Bei ungültigem fqdn oder unbekannter timezone.
         """
         self._validate()
+        if self.operation == "preflight":
+            return self.preflight_managed("base")
         if self.operation == "check":
             return self._verify()
         if self.operation == "uninstall":
@@ -164,77 +174,97 @@ class Base(Module):
         Returns:
             0 bei Erfolg, 1 beim ersten fehlgeschlagenen Schritt.
         """
-        steps: list[tuple[str, Action]] = [
+        steps: list[tuple[str, _Step]] = [
             (
                 "Rechnername setzen",
-                SysCmdAction(
-                    command=[self.HOSTNAMECTL, "set-hostname", self.fqdn], timeout=30
+                lambda: self.run_action(
+                    SysCmdAction(
+                        command=[self.HOSTNAMECTL, "set-hostname", self.fqdn],
+                        timeout=30,
+                    )
                 ),
             ),
             (
                 "Zeitzone setzen",
-                SysCmdAction(
-                    command=[self.TIMEDATECTL, "set-timezone", self.timezone],
-                    timeout=30,
+                lambda: self.run_action(
+                    SysCmdAction(
+                        command=[self.TIMEDATECTL, "set-timezone", self.timezone],
+                        timeout=30,
+                    )
                 ),
             ),
             (
                 "NTP aktivieren",
-                SysCmdAction(command=[self.TIMEDATECTL, "set-ntp", "true"], timeout=30),
-            ),
-            (
-                "sysctl schreiben",
-                WriteFileAction(
-                    dst=self.SYSCTL_CONF,
-                    content=_sysctl_content(),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
+                lambda: self.run_action(
+                    SysCmdAction(
+                        command=[self.TIMEDATECTL, "set-ntp", "true"], timeout=30
+                    )
                 ),
             ),
+            ("sysctl schreiben", self._step_write_sysctl),
             (
                 "sysctl anwenden",
-                SysCmdAction(
-                    command=[self.SYSCTL_BIN, "-p", self.SYSCTL_CONF], timeout=30
+                lambda: self.run_action(
+                    SysCmdAction(
+                        command=[self.SYSCTL_BIN, "-p", self.SYSCTL_CONF], timeout=30
+                    )
                 ),
             ),
-            (
-                "Modul-Sperrliste schreiben",
-                WriteFileAction(
-                    dst=self.MODPROBE_CONF,
-                    content=_modprobe_content(),
-                    mode=0o644,
-                    overwrite=True,
-                    safe_mode=False,
-                ),
-            ),
+            ("Modul-Sperrliste schreiben", self._step_write_modprobe),
             (
                 "autofs maskieren",
-                SysCmdAction(
-                    command=[self.SYSTEMCTL_BIN, "mask", "autofs"], timeout=30
+                lambda: self.run_action(
+                    SysCmdAction(
+                        command=[self.SYSTEMCTL_BIN, "mask", "autofs"], timeout=30
+                    )
                 ),
             ),
             (
                 "AppArmor installieren",
-                self.APT_ACTION_CLS(packages=list(self.APPARMOR_PACKAGES)),
+                lambda: self.run_action(
+                    self.APT_ACTION_CLS(packages=list(self.APPARMOR_PACKAGES))
+                ),
             ),
             (
                 "AppArmor aktivieren",
-                self.SYSTEMD_ACTION_CLS(
-                    operation="enable", unit="apparmor", timeout=60
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="enable", unit="apparmor", timeout=60
+                    )
                 ),
             ),
             (
                 "AppArmor starten",
-                self.SYSTEMD_ACTION_CLS(operation="start", unit="apparmor", timeout=60),
+                lambda: self.run_action(
+                    self.SYSTEMD_ACTION_CLS(
+                        operation="start", unit="apparmor", timeout=60
+                    )
+                ),
             ),
         ]
-        for label, action in steps:
+        for label, step in steps:
             self.send_message(LogLevel.INFO, "base", label)
-            if self.run_action(action) != 0:
+            if step() != 0:
                 self.send_message(LogLevel.ERROR, "base", f"fehlgeschlagen: {label}")
                 return 1
         return 0
+
+    def _managed_files(self) -> list[ManagedFile]:
+        """Deklariert sysctl- und modprobe-Drop-in als verwaltete Ziele."""
+        return [
+            ManagedFile(dst=self.SYSCTL_CONF, content=_sysctl_content(), mode=0o644),
+            ManagedFile(
+                dst=self.MODPROBE_CONF, content=_modprobe_content(), mode=0o644
+            ),
+        ]
+
+    def _step_write_sysctl(self) -> int:
+        """Schreibt die sysctl-Härtungsdatei (vollständig eigene Datei, 0644)."""
+        return self.write_managed("base", self._managed_files()[0])
+
+    def _step_write_modprobe(self) -> int:
+        """Schreibt die Kernel-Modul-Sperrliste (vollständig eigene Datei, 0644)."""
+        return self.write_managed("base", self._managed_files()[1])
 
     # --- uninstall ---
 
@@ -366,6 +396,7 @@ class Base(Module):
             ok &= self._check_value(
                 [self.SYSCTL_BIN, "-n", key], value, f"sysctl {key}"
             )
+        ok &= self.check_managed("base")
         return 0 if ok else 1
 
     # --- test ---

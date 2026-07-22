@@ -72,6 +72,8 @@ def _make_module(
     mod = Fail2ban(conn=conn, loglevel=LogLevel.INFO)
     mod.operation = "install"
     mod.ignoreip = ignoreip
+    mod.force_overwrite = "no"
+    mod.backup_run_dir = str(tmp_path / "backup-run")
     return mod, conn
 
 

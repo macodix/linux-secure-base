@@ -227,3 +227,45 @@ def test_test_operation_reports_missing_package(
     # Sammelnd statt abbrechend: die nachfolgende Prüfung lief trotz des
     # ersten Fehlschlags noch mit.
     assert any("Prüfskript-Selbsttest" in str(m) for m in messages)
+
+
+# --- Drift-Schutz ---
+
+
+def test_install_second_run_without_change_writes_nothing_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein zweiter install-Lauf ohne Abweichung schreibt keine der Dateien neu."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    conn.reset_mock()
+
+    result = mod.start()
+
+    assert result == 0
+    messages = _sent_messages(conn)
+    assert any(
+        f"{mod.PRUEF_SCRIPT}: unverändert — übersprungen" in str(m) for m in messages
+    )
+    assert any(
+        f"{mod.CRON_FILE}: unverändert — übersprungen" in str(m) for m in messages
+    )
+
+
+def test_install_rejects_manually_changed_pruef_script_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein von Hand geändertes Prüfskript bricht install ohne Freigabe ab."""
+    mod, conn = _make_module(tmp_path, monkeypatch)
+    assert mod.start() == 0
+    Path(mod.PRUEF_SCRIPT).write_text("#!/bin/bash\necho geändert\n", encoding="utf-8")
+
+    result = mod.start()
+
+    assert result == 1
+    messages = _sent_messages(conn)
+    assert any(f"{mod.PRUEF_SCRIPT} weicht vom Soll ab" in str(m) for m in messages)
+    assert (
+        Path(mod.PRUEF_SCRIPT).read_text(encoding="utf-8")
+        == "#!/bin/bash\necho geändert\n"
+    )
