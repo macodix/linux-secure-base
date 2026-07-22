@@ -46,4 +46,4 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 
 06 [umstellungen/06-b4bfe43-nach-7eb5452-drift-schutz-und-alt-sicherungen.md](umstellungen/06-b4bfe43-nach-7eb5452-drift-schutz-und-alt-sicherungen.md) — Drift-Schutz des Installers (Soll-Ist-Vergleich, zentrale Sicherungsablage), alte `.bak-*` neben den Konfigdateien aufräumen
 
-07 [umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md](umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md) — `--one-file-system` im Backup-Skript nachziehen: eingehängte Fremd-Dateisysteme nie mitsichern; hängende Läufe beenden
+07 [umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md](umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md) — `--one-file-system` im Backup-Skript nachziehen: eingehängte Fremd-Dateisysteme nie mitsichern
