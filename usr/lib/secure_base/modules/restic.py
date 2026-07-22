@@ -87,7 +87,11 @@ LOGFILE="$(mktemp)"
 trap 'rm -f "$LOGFILE"' EXIT
 
 run() {{
+    # --one-file-system: je Quellpfad auf dessen Dateisystem bleiben —
+    # eingehängte Fremd-Dateisysteme (sshfs, davfs, NFS, Binds) werden
+    # nie mitgesichert.
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \\
+        --one-file-system \\
         {backup_paths}
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \\
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune

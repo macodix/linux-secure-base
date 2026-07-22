@@ -80,6 +80,7 @@ trap 'rm -f "$LOGFILE"' EXIT
 
 run() {
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \
+        --one-file-system \
         /etc /home /var/log /root /var/backup
     restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
@@ -100,6 +101,8 @@ touch /var/lib/secure-base/restic-last-success 2>/dev/null || true
 ```
 chmod 700 /usr/local/sbin/<FQDN>-backup.sh
 ```
+
+`--one-file-system` hält restic je Quellpfad auf dessen Dateisystem: Eingehängte Fremd-Dateisysteme unterhalb der Quellpfade (sshfs, davfs, NFS, Bind-Mounts — etwa ein in ein Home-Verzeichnis gemounteter Netzspeicher) werden nie mitgesichert. Ohne den Schalter zieht der Lauf solche Mounts mit ins Repository oder hängt an ihnen fest. Die aufgezählten Quellpfade selbst sind davon unberührt — sie werden auch dann gesichert, wenn einer davon ein eigenes Dateisystem ist, denn der Schalter wirkt je angegebenem Pfad.
 
 Die `forget`-Politik setzt die Aufbewahrung 7 täglich / 4 wöchentlich / 6 monatlich um. Werden später weitere Datenverzeichnisse gesichert, wird die Pfadliste im `backup`-Aufruf ergänzt. Jede Änderung am Backup-Umfang löst eine RTO-Probe aus (siehe [Systembeschreibung Datensicherung, Kapitel 4 — Wiederherstellung und RTO-Probe](../systembeschreibung/05-datensicherung.md)).
 

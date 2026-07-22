@@ -168,6 +168,9 @@ def test_backup_script_content_contains_repo_mail_and_fqdn() -> None:
     assert 'RESTIC_REPO="sftp:alias:/path"' in content
     assert 'RESTIC_PASS="/root/.config/restic/restic-passphrase"' in content
     assert "/etc /home /var/log /root /var/backup" in content
+    # Eingehängte Fremd-Dateisysteme unterhalb der Quellpfade werden nie
+    # mitgesichert.
+    assert "--one-file-system" in content
     assert 'ADMIN_MAIL="admin@example.com"' in content
     assert "auf host.example.com" in content
     assert "mkdir -p /var/lib/secure-base" in content

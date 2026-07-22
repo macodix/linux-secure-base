@@ -17,7 +17,7 @@ Dieses Dokument beschreibt die Datensicherung des Grundsystems:
 
 Die Datensicherung erfolgt mit `restic` auf einen externen SFTP-Speicher. Das Repository ist verschlüsselt. Die Repo-Passphrase liegt außerhalb des Repos in `/root/.config/restic/restic-passphrase` mit Mode 600 (Verzeichnis 0700). Der Lauf wird täglich zur konfigurierten Zeit (`restic_backup_time`, Vorgabe 02:30) über `/etc/cron.d/secure-base-backup` als `root` ausgelöst (Skript `/usr/local/sbin/<FQDN>-backup.sh`, Mode 700). `<FQDN>` wird zur Installationszeit aus `secure-base.conf` eingesetzt; der Cron-Dateiname bleibt fest und punktfrei (run-parts-Namenskonvention, sonst ignoriert cron die Datei).
 
-Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log`, `/root` und `/var/backup`.
+Gesichert werden im Grundzustand `/etc`, `/home`, `/var/log`, `/root` und `/var/backup`. Der Lauf arbeitet mit `--one-file-system`: Eingehängte Fremd-Dateisysteme unterhalb dieser Pfade (sshfs, davfs, NFS, Bind-Mounts) gehören nie zum Sicherungsumfang.
 
 `/var/backup` (Mode 0700, Eigentümer `root`) ist das Sammelverzeichnis für alle lokal abgelegten Sicherungen. Das restic-Modul legt es an, auch wenn kein anderes Modul dort ablegt — ein fehlender Pfad würde bei jedem Sicherungslauf gemeldet. Die optionalen PostgreSQL-Dumps liegen unter `/var/backup/postgresql` und werden damit ohne zusätzlichen Pfad mitgesichert (siehe [postgresql-Grundsatz](08-postgresql.md)). Werden später weitere Dienste mit eigenen Datenverzeichnissen eingerichtet, kommen ggf. weitere Pfade hinzu.
 
