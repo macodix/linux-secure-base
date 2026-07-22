@@ -45,3 +45,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 05 [umstellungen/05-0235470-nach-d8c517b-cron-dateiname-und-sudo-logfile.md](umstellungen/05-0235470-nach-d8c517b-cron-dateiname-und-sudo-logfile.md) — Backup-Cron-Datei punktfrei umbenennen (lief nie), sudoers-Drop-in mit `Defaults logfile` entfernen (blockierte sudo unter sudo-rs)
 
 06 [umstellungen/06-b4bfe43-nach-7eb5452-drift-schutz-und-alt-sicherungen.md](umstellungen/06-b4bfe43-nach-7eb5452-drift-schutz-und-alt-sicherungen.md) — Drift-Schutz des Installers (Soll-Ist-Vergleich, zentrale Sicherungsablage), alte `.bak-*` neben den Konfigdateien aufräumen
+
+07 [umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md](umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md) — `--one-file-system` im Backup-Skript nachziehen: eingehängte Fremd-Dateisysteme nie mitsichern; hängende Läufe beenden
