@@ -83,6 +83,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RESTIC_REPO="{repo}"
 RESTIC_PASS="{passphrase_file}"
 ADMIN_MAIL="{admin_mail}"
+LOCKFILE="/run/secure-base-backup.lock"
 LOGFILE="$(mktemp)"
 trap 'rm -f "$LOGFILE"' EXIT
 
@@ -90,12 +91,26 @@ run() {{
     # --one-file-system: je Quellpfad auf dessen Dateisystem bleiben —
     # eingehängte Fremd-Dateisysteme (sshfs, davfs, NFS, Binds) werden
     # nie mitgesichert.
-    restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \\
+    # timeout: Ein hängender Lauf (totes Netz, fester Mount) endet als
+    # gewöhnlicher Fehler und meldet sich per Mail, statt still
+    # weiterzulaufen. 12 h + 2 h enden sicher vor dem nächsten Cron-Start.
+    timeout 12h restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \\
         --one-file-system \\
         {backup_paths}
-    restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \\
+    timeout 2h restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \\
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 }}
+
+# Höchstens ein Sicherungslauf zugleich: Ein zweiter Lauf bricht sofort ab
+# und meldet sich über die Fehler-Mail. Die Sperre hält der Kernel auf
+# Deskriptor 9 — sie kann nicht zurückbleiben.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    echo "Sicherungslauf läuft bereits (Sperre $LOCKFILE nicht frei)." >"$LOGFILE"
+    mail -s "Backup FEHLGESCHLAGEN auf {fqdn}" "$ADMIN_MAIL" \\
+        <"$LOGFILE"
+    exit 1
+fi
 
 if ! run >"$LOGFILE" 2>&1; then
     mail -s "Backup FEHLGESCHLAGEN auf {fqdn}" "$ADMIN_MAIL" \\

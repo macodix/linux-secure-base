@@ -171,6 +171,12 @@ def test_backup_script_content_contains_repo_mail_and_fqdn() -> None:
     # Eingehängte Fremd-Dateisysteme unterhalb der Quellpfade werden nie
     # mitgesichert.
     assert "--one-file-system" in content
+    # Ein hängender Lauf endet als gewöhnlicher Fehler (Zeitbegrenzung) …
+    assert "timeout 12h restic" in content
+    assert "timeout 2h restic" in content
+    # … und es läuft höchstens ein Sicherungslauf zugleich (Sperre).
+    assert 'LOCKFILE="/run/secure-base-backup.lock"' in content
+    assert "flock -n 9" in content
     assert 'ADMIN_MAIL="admin@example.com"' in content
     assert "auf host.example.com" in content
     assert "mkdir -p /var/lib/secure-base" in content

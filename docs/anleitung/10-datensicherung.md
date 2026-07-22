@@ -75,16 +75,25 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RESTIC_REPO="sftp:restic-backup:/backups/<server>"
 RESTIC_PASS="/root/.config/restic/restic-passphrase"
 ADMIN_MAIL="<admin@meine-domain.de>"
+LOCKFILE="/run/secure-base-backup.lock"
 LOGFILE="$(mktemp)"
 trap 'rm -f "$LOGFILE"' EXIT
 
 run() {
-    restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \
+    timeout 12h restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" backup \
         --one-file-system \
         /etc /home /var/log /root /var/backup
-    restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \
+    timeout 2h restic -r "$RESTIC_REPO" -p "$RESTIC_PASS" forget \
         --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 }
+
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    echo "Sicherungslauf läuft bereits (Sperre $LOCKFILE nicht frei)." >"$LOGFILE"
+    mail -s "Backup FEHLGESCHLAGEN auf $(hostname -f)" "$ADMIN_MAIL" \
+        <"$LOGFILE"
+    exit 1
+fi
 
 if ! run >"$LOGFILE" 2>&1; then
     mail -s "Backup FEHLGESCHLAGEN auf $(hostname -f)" "$ADMIN_MAIL" \
@@ -103,6 +112,8 @@ chmod 700 /usr/local/sbin/<FQDN>-backup.sh
 ```
 
 `--one-file-system` hält restic je Quellpfad auf dessen Dateisystem: Eingehängte Fremd-Dateisysteme unterhalb der Quellpfade (sshfs, davfs, NFS, Bind-Mounts — etwa ein in ein Home-Verzeichnis gemounteter Netzspeicher) werden nie mitgesichert. Ohne den Schalter zieht der Lauf solche Mounts mit ins Repository oder hängt an ihnen fest. Die aufgezählten Quellpfade selbst sind davon unberührt — sie werden auch dann gesichert, wenn einer davon ein eigenes Dateisystem ist, denn der Schalter wirkt je angegebenem Pfad.
+
+Die Zeitbegrenzung (`timeout 12h` für die Sicherung, `2h` für die Aufbewahrungspflege) sorgt dafür, dass ein hängender Lauf als gewöhnlicher Fehler endet und sich noch in derselben Nacht per Mail meldet, statt still weiterzulaufen; beide Grenzen zusammen enden sicher vor dem nächsten Cron-Start. Die Sperre (`flock`) stellt sicher, dass höchstens ein Sicherungslauf zugleich läuft: Startet cron einen zweiten, bricht der sofort ab und meldet sich über die Fehler-Mail. Die Sperrdatei verwaltet der Kernel — sie kann nicht zurückbleiben.
 
 Die `forget`-Politik setzt die Aufbewahrung 7 täglich / 4 wöchentlich / 6 monatlich um. Werden später weitere Datenverzeichnisse gesichert, wird die Pfadliste im `backup`-Aufruf ergänzt. Jede Änderung am Backup-Umfang löst eine RTO-Probe aus (siehe [Systembeschreibung Datensicherung, Kapitel 4 — Wiederherstellung und RTO-Probe](../systembeschreibung/05-datensicherung.md)).
 
