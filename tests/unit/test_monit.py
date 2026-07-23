@@ -212,7 +212,9 @@ def test_monitrc_edits_use_configured_admin_mail_and_sender() -> None:
     )
     edits = mod._monitrc_edits()
     by_marker = {marker: block for _, marker, block in edits}
-    assert by_marker["monit-alert"] == "set alert root@example.com"
+    assert (
+        by_marker["monit-alert"] == "set alert root@example.com but not on { instance }"
+    )
     assert "from:    alarm@example.com" in by_marker["monit-mail-format"]
 
 

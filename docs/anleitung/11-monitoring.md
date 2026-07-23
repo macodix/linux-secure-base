@@ -27,7 +27,7 @@ set mail-format {
              $DESCRIPTION
 }
 
-set alert <admin@meine-domain.de>
+set alert <admin@meine-domain.de> but not on { instance }
 
 set httpd port 2812 and
     use address localhost
@@ -36,6 +36,7 @@ set httpd port 2812 and
 
 - `set daemon 60` — Prüfzyklus 60 s. Ein Dienst-Ausfall wird innerhalb eines Zyklus erkannt.
 - `set mailserver localhost` — Postfix aus Kapitel 2 der Installationsanleitung übernimmt den Versand.
+- `but not on { instance }` — monits eigene Start-/Stopp-Meldung (etwa bei jedem Dienst-Neustart durch needrestart) erzeugt keine Mail; das ist Normalverhalten ohne Alarmwert. Alle Fehler-Alarme der überwachten Dienste bleiben unberührt. Abwägung: Der Verlust ist gering — ein gestoppter monit könnte ohnehin keine Mail schicken.
 - `set httpd ... allow localhost` — Status nur über Loopback abrufbar (`monit status` als root).
 - `from: …` — Absenderadresse der Alarm-Mails; im Installer aus dem Pflichtwert `MONIT_MAIL_FROM` in `secure-base.conf`.
 

@@ -34,7 +34,7 @@ Auf einem Einzelserver ohne Hochverfügbarkeit kann das lokale Monitoring einen 
 
 ## 3. Benachrichtigung
 
-Das System ist so angelegt, dass im Alarmfall eine Mail an die Administrator Email Adresse versandt wird. Auslöser einer Mail sind SSH-Login, Backup-Fehlschlag, Ressourcen-Alarm des Monitorings, fehlgeschlagenes automatisches Update und der tägliche Log-Bericht.
+Das System ist so angelegt, dass im Alarmfall eine Mail an die Administrator Email Adresse versandt wird. Auslöser einer Mail sind SSH-Login, Backup-Fehlschlag, Ressourcen-Alarm des Monitorings, fehlgeschlagenes automatisches Update und der tägliche Log-Bericht. monits eigene Start-/Stopp-Meldung (Ereignistyp instance) erzeugt keine Mail — Normalverhalten, etwa beim Dienst-Neustart durch needrestart, hat keinen Alarmwert (`set alert … but not on { instance }`).
 
 ## Versionshistorie
 

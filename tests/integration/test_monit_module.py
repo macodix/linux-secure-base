@@ -106,7 +106,7 @@ def test_install_all_steps_succeed(
     assert (Path(Monit.CONFD) / "rootfs").exists()
     monitrc_content = Path(Monit.MONITRC).read_text()
     assert "# BEGIN monit-alert" in monitrc_content
-    assert "set alert admin@example.com" in monitrc_content
+    assert "set alert admin@example.com but not on { instance }" in monitrc_content
 
 
 def test_install_writes_only_configured_checks(

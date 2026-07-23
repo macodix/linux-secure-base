@@ -314,7 +314,11 @@ class Monit(ManagedWriteMixin, Module):
             "monit-daemon": f"set daemon {DAEMON_VALUE}",
             "monit-log": f"set log {LOG_VALUE}",
             "monit-mailserver": f"set mailserver {MAILSERVER_VALUE}",
-            "monit-alert": f"set alert {self.admin_mail}",
+            # "but not on { instance }": monits eigene Start-/Stopp-Meldung
+            # (z. B. bei jedem Dienst-Neustart durch needrestart) erzeugt
+            # keine Mail — Normalverhalten, kein Alarmwert. Fehler-Alarme
+            # der überwachten Dienste bleiben unberührt.
+            "monit-alert": f"set alert {self.admin_mail} but not on {{ instance }}",
             "monit-mail-format": _mail_format_block(self.monit_mail_from),
             "monit-httpd": _httpd_block(),
         }
