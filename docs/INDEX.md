@@ -49,3 +49,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 07 [umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md](umstellungen/07-63688df-nach-3b6b79c-backup-mounts-ausschliessen.md) — `--one-file-system` im Backup-Skript nachziehen: eingehängte Fremd-Dateisysteme nie mitsichern
 
 08 [umstellungen/08-3edb859-nach-38e3a04-backup-sperre-und-zeitbegrenzung.md](umstellungen/08-3edb859-nach-38e3a04-backup-sperre-und-zeitbegrenzung.md) — Backup-Skript: Zeitbegrenzung (hängender Lauf endet als Fehler) und Sperre (höchstens ein Lauf zugleich)
+
+09 [umstellungen/09-f6e9c4c-nach-f3f8751-absender-domain.md](umstellungen/09-f6e9c4c-nach-f3f8751-absender-domain.md) — Systemmails als `root@<domain>` statt `root@<fqdn>` (`myorigin = $mydomain`; Hoster-Relays lehnen fqdn-Absender ab)
