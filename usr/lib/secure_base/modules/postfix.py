@@ -370,6 +370,12 @@ class Postfix(ManagedWriteMixin, Module):
             ("smtp_tls_loglevel", "1"),
             ("inet_interfaces", "loopback-only"),
             ("mydestination", "$myhostname, localhost.$mydomain, localhost"),
+            # Absender-Domain für unqualifizierte lokale Absender (cron,
+            # mail(1), sendmail -t ohne From): root@<domain> statt
+            # root@<fqdn> — Letzteres lehnen Hoster-Relays als Spam ab.
+            # $mydomain leitet Postfix aus myhostname ab; unabhängig vom
+            # Inhalt von /etc/mailname (Ubuntu-Default myorigin-Quelle).
+            ("myorigin", "$mydomain"),
             ("recipient_canonical_maps", f"regexp:{self.RECIPIENT_CANONICAL}"),
         ]
 

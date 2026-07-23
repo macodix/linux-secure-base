@@ -39,6 +39,11 @@ smtp_tls_loglevel = 1
 inet_interfaces = loopback-only
 mydestination = $myhostname, localhost.$mydomain, localhost
 
+# Absender-Domain für unqualifizierte lokale Absender (cron, mail(1)):
+# root@<domain> statt root@<fqdn> — Letzteres lehnen Hoster-Relays als
+# Spam ab. Ersetzt den Ubuntu-Default myorigin = /etc/mailname.
+myorigin = $mydomain
+
 # Alle ausgehenden Mails an die Administrator Email Adresse umlenken
 recipient_canonical_maps = regexp:/etc/postfix/recipient_canonical
 ```

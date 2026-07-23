@@ -10,7 +10,7 @@ Dieses Dokument beschreibt den Mail-Versand des Grundsystems für Systembenachri
 
 Der Mail-Versand dient ausschließlich Systembenachrichtigungen. 
 
-Der MTA ist `postfix` als Satellite-System (Smarthost), ohne lokalen Mail-Empfang aber mit ausgehendem Versand über einen externen SMTP-Server. Postfix ist nur an Loopback (`inet_interfaces = loopback-only`) gebunden.
+Der MTA ist `postfix` als Satellite-System (Smarthost), ohne lokalen Mail-Empfang aber mit ausgehendem Versand über einen externen SMTP-Server. Postfix ist nur an Loopback (`inet_interfaces = loopback-only`) gebunden. Unqualifizierte lokale Absender (cron, `mail`-Aufrufe der Skripte) werden über `myorigin = $mydomain` zu `root@<domain>` vervollständigt — nicht zu `root@<fqdn>`, das Hoster-Relays als Spam ablehnen.
 
 Der Versand an das Relay läuft i. d. R über Port 587 (Submission) mit SASL-Authentifizierung und erzwungenem STARTTLS (`smtp_tls_security_level = encrypt`, Verifikation des Hoster-Zertifikats mit `ca-certificates`). Die SASL-Zugangsdaten liegen in `/etc/postfix/sasl_passwd` mit Mode 600.
 

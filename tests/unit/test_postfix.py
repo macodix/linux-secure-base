@@ -152,6 +152,17 @@ def test_main_cf_settings_contains_relayhost_with_host_and_port() -> None:
     assert settings["relayhost"] == "[smtp.example.com]:587"
 
 
+def test_main_cf_settings_sets_myorigin_to_domain() -> None:
+    """myorigin ist $mydomain — unqualifizierte Absender werden root@<domain>.
+
+    Ohne die Direktive griffe der Ubuntu-Default myorigin = /etc/mailname
+    (dort steht der fqdn) und Hoster-Relays lehnen root@<fqdn> als Spam ab.
+    """
+    mod = _make_postfix()
+    settings = dict(mod._main_cf_settings())
+    assert settings["myorigin"] == "$mydomain"
+
+
 def test_main_cf_settings_references_sasl_passwd_and_recipient_canonical() -> None:
     """smtp_sasl_password_maps und recipient_canonical_maps referenzieren die
     eigenen Schreibziele SASL_PASSWD und RECIPIENT_CANONICAL."""
