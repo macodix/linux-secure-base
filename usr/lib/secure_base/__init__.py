@@ -4,4 +4,4 @@
 # ([tool.setuptools.dynamic]), Paketbau (Makefile) und Entry-Point
 # (bin/secure-base-installer) lesen sie ebenfalls von hier. Damit kommt das
 # Auslieferungspaket ohne pyproject.toml aus.
-__version__ = "0.1.3"
+__version__ = "0.2.0"

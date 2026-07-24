@@ -64,8 +64,8 @@ Der Python-Installer liegt als einzelnes, signiertes Download-Artefakt vor. Es e
 **Herunterladen:** Archiv und Signatur liegen im Repository unter `release/download/<version>/` (je Version ein eigenes Verzeichnis, im Code-Tab browsbar). `secure-base-installer --version` und die Datei `BUILD-INFO` im Paket nennen zusätzlich Commit und Datum des Baus.
 
 ```sh
-wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/release/download/v0.1.3/secure-base-installer-0.1.3.tar.gz
-wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/release/download/v0.1.3/secure-base-installer-0.1.3.tar.gz.asc
+wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/release/download/v0.2.0/secure-base-installer-0.2.0.tar.gz
+wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/release/download/v0.2.0/secure-base-installer-0.2.0.tar.gz.asc
 wget https://raw.githubusercontent.com/macodix/linux-secure-base/main/SIGNING-KEY.asc
 ```
 
