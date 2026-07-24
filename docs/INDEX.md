@@ -51,3 +51,5 @@ Anleitungen, die ein bereits laufendes Produktivsystem auf eine neue Version bri
 08 [umstellungen/08-3edb859-nach-38e3a04-backup-sperre-und-zeitbegrenzung.md](umstellungen/08-3edb859-nach-38e3a04-backup-sperre-und-zeitbegrenzung.md) — Backup-Skript: Zeitbegrenzung (hängender Lauf endet als Fehler) und Sperre (höchstens ein Lauf zugleich)
 
 09 [umstellungen/09-f6e9c4c-nach-f3f8751-absender-domain.md](umstellungen/09-f6e9c4c-nach-f3f8751-absender-domain.md) — Systemmails als `root@<domain>` statt `root@<fqdn>` (`myorigin = $mydomain`; Hoster-Relays lehnen fqdn-Absender ab)
+
+10 [umstellungen/10-468029e-nach-a9fe7a9-monit-instance-ohne-mail.md](umstellungen/10-468029e-nach-a9fe7a9-monit-instance-ohne-mail.md) — monit: keine Mail mehr über die eigene Start-/Stopp-Meldung (`set alert … but not on { instance }`)
